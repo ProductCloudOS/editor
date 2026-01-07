@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PC Editor Demo</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <div id="app">
+        <header class="app-header">
+            <h1>PC Editor Demo</h1>
+            <div class="toolbar">
+                <div class="toolbar-group">
+                    <label>Document:</label>
+                    <button id="load-sample">Load Sample</button>
+                    <button id="clear-doc">Clear</button>
+                </div>
+                <div class="toolbar-group">
+                    <label>View:</label>
+                    <button id="zoom-in">Zoom In</button>
+                    <button id="zoom-out">Zoom Out</button>
+                    <button id="fit-page">Fit Page</button>
+                    <button id="toggle-control-chars">¶</button>
+                </div>
+                <div class="toolbar-group">
+                    <label>Flowing Text:</label>
+                    <button id="clear-text">Clear</button>
+                    <button id="add-sample-text">Add Sample</button>
+                </div>
+                <div class="toolbar-group">
+                    <label>Embedded Content:</label>
+                    <button id="insert-inline-image">Image</button>
+                    <button id="insert-inline-text">Text Box</button>
+                    <div class="field-picker-container">
+                        <button id="insert-substitution-field">Field</button>
+                        <div id="field-picker" class="field-picker hidden">
+                            <div class="field-picker-list" id="field-picker-list"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="toolbar-group">
+                    <label>Position:</label>
+                    <button id="insert-float-left">Float Left</button>
+                    <button id="insert-float-right">Float Right</button>
+                </div>
+                <div class="toolbar-group">
+                    <label>Structure:</label>
+                    <button id="create-loop">Create Loop</button>
+                </div>
+            </div>
+        </header>
+
+        <div class="app-content">
+            <aside class="sidebar">
+                <div class="collapsible-section">
+                    <button class="collapsible-header expanded" data-target="view-settings">
+                        <span class="collapsible-icon"></span>
+                        <span>View</span>
+                    </button>
+                    <div class="collapsible-content" id="view-settings">
+                        <div class="view-toggles">
+                            <button id="toggle-control-chars-btn" class="toggle-btn" title="Show/hide control characters">
+                                <span class="toggle-icon">¶</span>
+                                <span class="toggle-label">Control Characters</span>
+                            </button>
+                            <button id="toggle-margin-lines-btn" class="toggle-btn active" title="Show/hide margin lines">
+                                <span class="toggle-icon">⊞</span>
+                                <span class="toggle-label">Margin Lines</span>
+                            </button>
+                            <button id="toggle-grid-btn" class="toggle-btn active" title="Show/hide grid">
+                                <span class="toggle-icon">▦</span>
+                                <span class="toggle-label">Grid</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section">
+                    <button class="collapsible-header" data-target="document-settings">
+                        <span class="collapsible-icon"></span>
+                        <span>Document Settings</span>
+                    </button>
+                    <div class="collapsible-content collapsed" id="document-settings">
+                        <div class="setting-group">
+                            <label>Margins (mm):</label>
+                            <div class="margin-controls">
+                                <div class="margin-input">
+                                    <label>Top:</label>
+                                    <input type="number" id="margin-top" min="5" max="50" step="0.5" value="20">
+                                </div>
+                                <div class="margin-input">
+                                    <label>Right:</label>
+                                    <input type="number" id="margin-right" min="5" max="50" step="0.5" value="20">
+                                </div>
+                                <div class="margin-input">
+                                    <label>Bottom:</label>
+                                    <input type="number" id="margin-bottom" min="5" max="50" step="0.5" value="20">
+                                </div>
+                                <div class="margin-input">
+                                    <label>Left:</label>
+                                    <input type="number" id="margin-left" min="5" max="50" step="0.5" value="20">
+                                </div>
+                            </div>
+                            <button id="apply-margins">Apply Margins</button>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Page Size:</label>
+                            <select id="page-size-select">
+                                <option value="A4">A4</option>
+                                <option value="Letter">Letter</option>
+                                <option value="Legal">Legal</option>
+                                <option value="A3">A3</option>
+                            </select>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Orientation:</label>
+                            <select id="page-orientation-select">
+                                <option value="portrait">Portrait</option>
+                                <option value="landscape">Landscape</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section">
+                    <button class="collapsible-header" data-target="merge-data-section">
+                        <span class="collapsible-icon"></span>
+                        <span>Merge Data</span>
+                    </button>
+                    <div class="collapsible-content collapsed" id="merge-data-section">
+                        <div class="setting-group">
+                            <label>JSON Data:</label>
+                            <textarea id="merge-data-input" rows="10" placeholder='{"customerName": "John Doe", "orderNumber": "12345"}'>{
+  "customerName": "John Doe",
+  "orderNumber": "ORD-12345",
+  "date": "January 6, 2026",
+  "amount": "150.00",
+  "items": [
+    { "item": "Calendar", "amount": "51.00" },
+    { "item": "Stamps", "amount": "15.50" },
+    { "item": "Power Adapter", "amount": "83.50" }
+  ],
+  "contact": {
+    "address": {
+      "street": "80 Collins St",
+      "city": "Melbourne",
+      "postcode": "3000"
+    },
+    "mobile": "+61455555555"
+  }
+}</textarea>
+                        </div>
+                        <button id="apply-merge">Apply Merge</button>
+                    </div>
+                </div>
+
+                <div class="collapsible-section">
+                    <button class="collapsible-header expanded" data-target="formatting-section">
+                        <span class="collapsible-icon"></span>
+                        <span>Formatting</span>
+                    </button>
+                    <div class="collapsible-content" id="formatting-section">
+                        <div class="setting-group">
+                            <label>Style:</label>
+                            <div class="format-buttons">
+                                <button id="format-bold" class="format-btn" title="Bold">B</button>
+                                <button id="format-italic" class="format-btn format-italic" title="Italic">I</button>
+                            </div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Alignment:</label>
+                            <div class="format-buttons">
+                                <button id="align-left" class="format-btn active" title="Align Left">⫷</button>
+                                <button id="align-center" class="format-btn" title="Center">☰</button>
+                                <button id="align-right" class="format-btn" title="Align Right">⫸</button>
+                                <button id="align-justify" class="format-btn" title="Justify">≡</button>
+                            </div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Font:</label>
+                            <select id="format-font-family">
+                                <option value="Arial">Arial</option>
+                                <option value="Times New Roman">Times New Roman</option>
+                                <option value="Georgia">Georgia</option>
+                                <option value="Verdana">Verdana</option>
+                                <option value="Courier New">Courier New</option>
+                            </select>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Size:</label>
+                            <select id="format-font-size">
+                                <option value="10">10</option>
+                                <option value="12">12</option>
+                                <option value="14" selected>14</option>
+                                <option value="16">16</option>
+                                <option value="18">18</option>
+                                <option value="20">20</option>
+                                <option value="24">24</option>
+                                <option value="28">28</option>
+                                <option value="32">32</option>
+                                <option value="36">36</option>
+                            </select>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Color:</label>
+                            <input type="color" id="format-color" value="#000000">
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Highlight:</label>
+                            <div class="highlight-controls">
+                                <input type="color" id="format-highlight" value="#ffff00">
+                                <button id="clear-highlight" class="small-btn">Clear</button>
+                            </div>
+                        </div>
+
+                        <p class="format-hint">Select text first, then apply formatting</p>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="field-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="field-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Substitution Field</span>
+                    </button>
+                    <div class="collapsible-content" id="field-properties">
+                        <div class="setting-group">
+                            <label>Field Name:</label>
+                            <input type="text" id="field-name-input" placeholder="Field name">
+                        </div>
+                        <div class="setting-group">
+                            <label>Default Value:</label>
+                            <input type="text" id="field-default-input" placeholder="Default value (optional)">
+                        </div>
+                        <button id="apply-field-changes">Apply Changes</button>
+                        <p class="field-hint" id="field-position-hint"></p>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="loop-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="loop-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Repeating Section</span>
+                    </button>
+                    <div class="collapsible-content" id="loop-properties">
+                        <div class="setting-group">
+                            <label>Array Field Path:</label>
+                            <input type="text" id="loop-field-path" placeholder="e.g., items">
+                        </div>
+                        <p class="field-hint" id="loop-position-hint"></p>
+                        <button id="apply-loop-changes">Apply Changes</button>
+                        <button id="delete-loop" class="danger-button" style="margin-top: 0.5rem;">Delete Loop</button>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="textbox-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="textbox-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Text Box</span>
+                    </button>
+                    <div class="collapsible-content" id="textbox-properties">
+                        <div class="setting-group">
+                            <label>Background:</label>
+                            <input type="color" id="textbox-bg-color" value="#ffffff">
+                        </div>
+                        <div class="setting-group">
+                            <label>Border Width:</label>
+                            <input type="number" id="textbox-border-width" min="0" max="10" value="1" style="width: 100%;">
+                        </div>
+                        <div class="setting-group">
+                            <label>Border Color:</label>
+                            <input type="color" id="textbox-border-color" value="#cccccc">
+                        </div>
+                        <div class="setting-group">
+                            <label>Border Style:</label>
+                            <select id="textbox-border-style">
+                                <option value="solid">Solid</option>
+                                <option value="dashed">Dashed</option>
+                                <option value="dotted">Dotted</option>
+                                <option value="none">None</option>
+                            </select>
+                        </div>
+                        <div class="setting-group">
+                            <label>Padding:</label>
+                            <input type="number" id="textbox-padding" min="0" max="20" value="4" style="width: 100%;">
+                        </div>
+                        <button id="apply-textbox-changes">Apply Changes</button>
+                        <p class="field-hint" style="margin-top: 0.5rem;">Double-click text box to edit text</p>
+                    </div>
+                </div>
+
+                <div class="collapsible-section">
+                    <button class="collapsible-header expanded" data-target="doc-info-section">
+                        <span class="collapsible-icon"></span>
+                        <span>Document Info</span>
+                    </button>
+                    <div class="collapsible-content" id="doc-info-section">
+                        <div id="doc-info">
+                            <p>Pages: <span id="page-count">1</span></p>
+                            <p>Size: <span id="page-size">A4</span></p>
+                            <p>Orientation: <span id="page-orientation">Portrait</span></p>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="editor-container">
+                <div id="editor"></div>
+            </main>
+
+        </div>
+
+        <footer class="app-footer">
+            <div class="status-bar">
+                <span id="status-message">Ready</span>
+                <span id="section-indicator" class="section-indicator section-body">Section: Body</span>
+                <span id="zoom-level">Zoom: 100%</span>
+            </div>
+        </footer>
+    </div>
+
+    <script type="module" src="./demo.ts"></script>
+</body>
+</html>

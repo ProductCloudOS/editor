@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PC Editor Example</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        #editor-container {
+            width: 100vw;
+            height: 100vh;
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <div id="editor-container"></div>
+    
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="dist/pc-editor.min.js"></script>
+    <script>
+        // Initialize the editor
+        const editor = new PCEditor.PCEditor(document.getElementById('editor-container'), {
+            pageSize: 'A4',
+            units: 'mm',
+            showGrid: true,
+            showRulers: true
+        });
+
+        // Wait for editor to be ready
+        editor.on('ready', () => {
+            console.log('Editor is ready!');
+            
+            // Load a sample document
+            editor.loadDocument({
+                version: '1.0.0',
+                pages: [{
+                    id: 'page_1',
+                    header: { 
+                        height: 30,
+                        elements: [{
+                            id: 'header_title',
+                            type: 'text',
+                            position: { x: 50, y: 10 },
+                            size: { width: 200, height: 20 },
+                            data: {
+                                content: 'Sample Document',
+                                fontFamily: 'Arial',
+                                fontSize: 18,
+                                fontWeight: 'bold',
+                                color: '#333333'
+                            }
+                        }]
+                    },
+                    content: { 
+                        elements: [{
+                            id: 'placeholder_1',
+                            type: 'placeholder',
+                            position: { x: 50, y: 50 },
+                            size: { width: 150, height: 30 },
+                            data: {
+                                key: 'name',
+                                displayText: '{{name}}',
+                                defaultValue: 'Your Name Here'
+                            }
+                        }]
+                    },
+                    footer: { 
+                        height: 20,
+                        elements: []
+                    }
+                }]
+            });
+        });
+
+        // Example: Bind data after 2 seconds
+        setTimeout(() => {
+            editor.bindData({
+                name: 'John Doe'
+            });
+        }, 2000);
+    </script>
+</body>
+</html>
