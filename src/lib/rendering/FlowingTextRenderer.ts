@@ -5,22 +5,15 @@ import {
   FlowedSubstitutionField,
   FlowedEmbeddedObject,
   RepeatingSection,
-  DEFAULT_FORMATTING
+  DEFAULT_FORMATTING,
+  TextPositionCalculator,
+  EditableTextRegion
 } from '../text';
 import { Document } from '../core/Document';
 import { Page } from '../core/Page';
 import { Point, Rect, EditingSection } from '../types';
 import { EventEmitter } from '../events/EventEmitter';
-import { BaseEmbeddedObject } from '../objects';
-
-export interface TextCursor {
-  page: number;
-  line: number;
-  position: Point;
-  height: number;
-  visible: boolean;
-  blinkState: boolean;
-}
+import { BaseEmbeddedObject, TextBoxObject } from '../objects';
 
 // Control character symbols
 const CONTROL_CHAR_COLOR = '#87CEEB'; // Light blue
@@ -39,23 +32,13 @@ export class FlowingTextRenderer extends EventEmitter {
   private flowedPages: Map<string, FlowedPage[]> = new Map();
   private headerFlowedPage: FlowedPage | null = null;
   private footerFlowedPage: FlowedPage | null = null;
-  private _activeSection: EditingSection = 'body';
-  private cursor: TextCursor = {
-    page: 0,
-    line: 0,
-    position: { x: 0, y: 0 },
-    height: 14,
-    visible: false,
-    blinkState: true  // Start visible so cursor appears immediately when shown
-  };
-  private blinkInterval: number | null = null;
+  private _focusedRegion: EditableTextRegion | null = null;
   private selectedText: { start: number; end: number } | null = null;
   private showControlCharacters: boolean = false;
 
   constructor(document: Document) {
     super();
     this.document = document;
-    this.startCursorBlink();
     this.setupFlowingContentListeners();
   }
 
@@ -66,47 +49,210 @@ export class FlowingTextRenderer extends EventEmitter {
     this.showControlCharacters = show;
   }
 
+  // ============================================
+  // On-Demand Cursor Position Calculation
+  // ============================================
+
   /**
-   * Set the active editing section.
-   * Cursor is only rendered in the active section.
+   * Find the cursor location (page, line) for a given text index in body content.
+   * Returns null if not found.
    */
-  setActiveSection(section: EditingSection): void {
-    this._activeSection = section;
+  private findCursorLocationInBody(textIndex: number): {
+    pageIndex: number;
+    lineIndex: number;
+    line: FlowedLine;
+    flowedPage: FlowedPage;
+  } | null {
+    const firstPage = this.document.pages[0];
+    if (!firstPage) return null;
+
+    const flowedPages = this.flowedPages.get(firstPage.id);
+    if (!flowedPages || flowedPages.length === 0) return null;
+
+    for (let pageIndex = 0; pageIndex < flowedPages.length; pageIndex++) {
+      const flowedPage = flowedPages[pageIndex];
+      for (let lineIndex = 0; lineIndex < flowedPage.lines.length; lineIndex++) {
+        const line = flowedPage.lines[lineIndex];
+        if (textIndex >= line.startIndex && textIndex <= line.endIndex) {
+          return { pageIndex, lineIndex, line, flowedPage };
+        }
+      }
+    }
+
+    // Cursor at end of text - return last line
+    if (flowedPages.length > 0) {
+      const lastPageIndex = flowedPages.length - 1;
+      const lastPage = flowedPages[lastPageIndex];
+      if (lastPage.lines.length > 0) {
+        const lastLineIndex = lastPage.lines.length - 1;
+        return {
+          pageIndex: lastPageIndex,
+          lineIndex: lastLineIndex,
+          line: lastPage.lines[lastLineIndex],
+          flowedPage: lastPage
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Find the cursor location (line) for a given text index in header/footer.
+   */
+  private findCursorLocationInSection(
+    textIndex: number,
+    section: 'header' | 'footer'
+  ): { lineIndex: number; line: FlowedLine; flowedPage: FlowedPage } | null {
+    const flowedPage = section === 'header' ? this.headerFlowedPage : this.footerFlowedPage;
+    if (!flowedPage || flowedPage.lines.length === 0) return null;
+
+    for (let lineIndex = 0; lineIndex < flowedPage.lines.length; lineIndex++) {
+      const line = flowedPage.lines[lineIndex];
+      if (textIndex >= line.startIndex && textIndex <= line.endIndex) {
+        return { lineIndex, line, flowedPage };
+      }
+    }
+
+    // Cursor at end - return last line
+    const lastLineIndex = flowedPage.lines.length - 1;
+    return {
+      lineIndex: lastLineIndex,
+      line: flowedPage.lines[lastLineIndex],
+      flowedPage
+    };
+  }
+
+  /**
+   * Calculate the cursor position for rendering.
+   * This is called on-demand during rendering instead of caching.
+   */
+  private calculateCursorPosition(
+    ctx: CanvasRenderingContext2D
+  ): { x: number; y: number; height: number; pageIndex: number } | null {
+    const activeContent = this.getActiveFlowingContent();
+    if (!activeContent) return null;
+
+    const textIndex = activeContent.getCursorPosition();
+    const firstPage = this.document.pages[0];
+    if (!firstPage) return null;
+
+    if (this.getActiveSection() === 'body') {
+      const location = this.findCursorLocationInBody(textIndex);
+      if (!location) return null;
+
+      const contentBounds = firstPage.getContentBounds();
+      const maxWidth = contentBounds.size.width;
+      const alignmentOffset = TextPositionCalculator.getAlignmentOffset(location.line, maxWidth);
+      const xOffset = TextPositionCalculator.getXPositionForTextIndex(location.line, textIndex, ctx);
+
+      // Calculate Y position
+      let y = contentBounds.position.y;
+
+      // Add heights of previous pages
+      const flowedPages = this.flowedPages.get(firstPage.id) || [];
+      for (let p = 0; p < location.pageIndex; p++) {
+        for (const line of flowedPages[p].lines) {
+          y += line.height;
+        }
+      }
+
+      // Add heights of lines before cursor line on current page
+      for (let l = 0; l < location.lineIndex; l++) {
+        y += location.flowedPage.lines[l].height;
+      }
+
+      return {
+        x: contentBounds.position.x + alignmentOffset + xOffset,
+        y,
+        height: location.line.height,
+        pageIndex: location.pageIndex
+      };
+    } else {
+      // Header or footer
+      const section = this.getActiveSection() as 'header' | 'footer';
+      const location = this.findCursorLocationInSection(textIndex, section);
+      if (!location) return null;
+
+      const bounds = section === 'header'
+        ? firstPage.getHeaderBounds()
+        : firstPage.getFooterBounds();
+      const maxWidth = bounds.size.width;
+      const alignmentOffset = TextPositionCalculator.getAlignmentOffset(location.line, maxWidth);
+      const xOffset = TextPositionCalculator.getXPositionForTextIndex(location.line, textIndex, ctx);
+
+      // Calculate Y position
+      let y = bounds.position.y;
+      for (let l = 0; l < location.lineIndex; l++) {
+        y += location.flowedPage.lines[l].height;
+      }
+
+      return {
+        x: bounds.position.x + alignmentOffset + xOffset,
+        y,
+        height: location.line.height,
+        pageIndex: 0
+      };
+    }
+  }
+
+  /**
+   * Set the focused region.
+   * This replaces the old setActiveSection method.
+   * The region provides both the FlowingTextContent and section type.
+   */
+  setFocusedRegion(region: EditableTextRegion | null): void {
+    this._focusedRegion = region;
+  }
+
+  /**
+   * Get the focused region.
+   */
+  getFocusedRegion(): EditableTextRegion | null {
+    return this._focusedRegion;
   }
 
   /**
    * Get the currently active section.
+   * Returns the section type derived from the focused region.
    */
   getActiveSection(): EditingSection {
-    return this._activeSection;
+    if (this._focusedRegion) {
+      const type = this._focusedRegion.type;
+      if (type === 'textbox') {
+        // Text boxes are treated as part of the body section for legacy compatibility
+        return 'body';
+      }
+      return type;
+    }
+    // Default to body if no region is focused
+    return 'body';
+  }
+
+  /**
+   * Get the FlowingTextContent for the focused region.
+   */
+  private getActiveFlowingContent() {
+    if (this._focusedRegion) {
+      return this._focusedRegion.flowingContent;
+    }
+    // Default to body if no region is focused
+    const firstPage = this.document.pages[0];
+    return firstPage?.flowingContent || null;
   }
 
   private setupFlowingContentListeners(): void {
-    // Listen to cursor position changes from the first page's flowing content (body)
+    // Listen to content changes from the first page's flowing content (body)
     if (this.document.pages.length > 0) {
       const firstPage = this.document.pages[0];
 
-      firstPage.flowingContent.on('cursor-moved', (data) => {
-        if (this._activeSection === 'body') {
-          this.updateCursorFromTextPosition(data.position);
-        }
-      });
-
       firstPage.flowingContent.on('content-changed', () => {
-        // Defer cursor position update to allow text reflow to complete
-        setTimeout(() => {
-          if (this._activeSection === 'body') {
-            const cursorPos = firstPage.flowingContent.getCursorPosition();
-            this.updateCursorFromTextPosition(cursorPos);
-          }
-        }, 10);
-
         // Forward the event so CanvasManager can check for empty pages
         this.emit('content-changed');
       });
 
       firstPage.flowingContent.on('selection-changed', (data) => {
-        if (this._activeSection === 'body') {
+        if (this.getActiveSection() === 'body') {
           // Update the selection display
           if (data.selection) {
             this.setTextSelection(data.selection.start, data.selection.end);
@@ -120,19 +266,13 @@ export class FlowingTextRenderer extends EventEmitter {
     }
 
     // Listen to header content changes
-    this.document.headerFlowingContent.on('cursor-moved', (data) => {
-      if (this._activeSection === 'header') {
-        this.updateCursorFromHeaderFooter(data.position, 'header');
-      }
-    });
-
     this.document.headerFlowingContent.on('content-changed', () => {
       this.emit('header-content-changed');
       this.emit('content-changed');
     });
 
     this.document.headerFlowingContent.on('selection-changed', (data) => {
-      if (this._activeSection === 'header') {
+      if (this.getActiveSection() === 'header') {
         if (data.selection) {
           this.setTextSelection(data.selection.start, data.selection.end);
         } else {
@@ -143,19 +283,13 @@ export class FlowingTextRenderer extends EventEmitter {
     });
 
     // Listen to footer content changes
-    this.document.footerFlowingContent.on('cursor-moved', (data) => {
-      if (this._activeSection === 'footer') {
-        this.updateCursorFromHeaderFooter(data.position, 'footer');
-      }
-    });
-
     this.document.footerFlowingContent.on('content-changed', () => {
       this.emit('footer-content-changed');
       this.emit('content-changed');
     });
 
     this.document.footerFlowingContent.on('selection-changed', (data) => {
-      if (this._activeSection === 'footer') {
+      if (this.getActiveSection() === 'footer') {
         if (data.selection) {
           this.setTextSelection(data.selection.start, data.selection.end);
         } else {
@@ -164,127 +298,6 @@ export class FlowingTextRenderer extends EventEmitter {
         this.emit('selection-changed', data);
       }
     });
-  }
-
-  /**
-   * Update cursor position based on text position in header or footer.
-   */
-  private updateCursorFromHeaderFooter(textIndex: number, section: 'header' | 'footer'): void {
-    const flowedPage = section === 'header' ? this.headerFlowedPage : this.footerFlowedPage;
-    if (!flowedPage || flowedPage.lines.length === 0) return;
-
-    // Find which line contains this text index
-    for (let lineIdx = 0; lineIdx < flowedPage.lines.length; lineIdx++) {
-      const line = flowedPage.lines[lineIdx];
-      if (textIndex >= line.startIndex && textIndex <= line.endIndex) {
-        this.cursor.page = 0;
-        this.cursor.line = lineIdx;
-        this.cursor.visible = true;
-        this.restartCursorBlink();
-
-        // Calculate X position (including alignment offset)
-        const xOffset = this.getXPositionForTextIndex(line, textIndex);
-
-        // Get bounds from page to calculate absolute position
-        const firstPage = this.document.pages[0];
-        if (firstPage) {
-          const bounds = section === 'header'
-            ? firstPage.getHeaderBounds()
-            : firstPage.getFooterBounds();
-          const alignmentOffset = this.getAlignmentOffset(line, bounds.size.width);
-          this.cursor.position.x = bounds.position.x + alignmentOffset + xOffset;
-
-          // Calculate Y position based on line index
-          let cursorY = bounds.position.y;
-          for (let i = 0; i < lineIdx; i++) {
-            cursorY += flowedPage.lines[i].height;
-          }
-          this.cursor.position.y = cursorY;
-          this.cursor.height = line.height;
-
-          console.log(`Cursor position: x=${this.cursor.position.x.toFixed(1)}, y=${this.cursor.position.y.toFixed(1)}, xOffset=${xOffset.toFixed(1)}`);
-        }
-
-        this.emit('cursor-moved', { page: 0, line: lineIdx, textIndex });
-        return;
-      }
-    }
-  }
-  
-  private updateCursorFromTextPosition(textIndex: number): void {
-    // First, force a reflow of the text to ensure we have up-to-date line information
-    const firstPage = this.document.pages[0];
-    if (!firstPage) return;
-    
-    // Create a temporary canvas for text measurement if needed
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    // Get the content bounds for proper text flow calculation
-    const contentBounds = firstPage.getContentBounds();
-    const contentRect: Rect = {
-      x: contentBounds.position.x,
-      y: contentBounds.position.y,
-      width: contentBounds.size.width,
-      height: contentBounds.size.height
-    };
-    
-    // Reflow the text
-    const flowedPages = this.flowTextForPage(firstPage, ctx, contentRect);
-    this.flowedPages.set(firstPage.id, flowedPages);
-    
-    // Now find which line contains this text index
-    let foundPage = 0;
-
-    // Helper to get the next line (may be on next page)
-    const getNextLine = (pageIdx: number, lineIdx: number) => {
-      const page = flowedPages[pageIdx];
-      if (lineIdx + 1 < page.lines.length) {
-        return page.lines[lineIdx + 1];
-      }
-      // Check first line of next page
-      const nextPage = flowedPages[pageIdx + 1];
-      if (nextPage && nextPage.lines.length > 0) {
-        return nextPage.lines[0];
-      }
-      return null;
-    };
-
-    // Search through all flowed pages
-    for (let pageIdx = 0; pageIdx < flowedPages.length; pageIdx++) {
-      const page = flowedPages[pageIdx];
-
-      for (let lineIdx = 0; lineIdx < page.lines.length; lineIdx++) {
-        const line = page.lines[lineIdx];
-
-        if (textIndex >= line.startIndex && textIndex <= line.endIndex) {
-          // Check if we're at a wrapped line boundary - if so, cursor belongs on next line
-          // A wrapped boundary occurs when this line's endIndex equals the next line's startIndex
-          const nextLine = getNextLine(pageIdx, lineIdx);
-          if (textIndex === line.endIndex && nextLine && textIndex === nextLine.startIndex) {
-            // Skip this line - cursor should appear at start of next line
-            continue;
-          }
-
-          foundPage = pageIdx;
-          this.setCursor(foundPage, lineIdx, textIndex);
-
-          // Trigger a render to show the updated cursor
-          this.emit('cursor-moved', { page: foundPage, line: lineIdx, textIndex });
-          return;
-        }
-      }
-    }
-    
-    // If we didn't find the position (e.g., cursor at very end), place it at the end of the last line
-    if (flowedPages.length > 0) {
-      const lastPage = flowedPages[flowedPages.length - 1];
-      if (lastPage.lines.length > 0) {
-        this.setCursor(flowedPages.length - 1, lastPage.lines.length - 1, textIndex);
-        this.emit('cursor-moved', { page: flowedPages.length - 1, line: lastPage.lines.length - 1, textIndex });
-      }
-    }
   }
 
   renderPageFlowingText(
@@ -311,23 +324,25 @@ export class FlowingTextRenderer extends EventEmitter {
       
       // Render the first flowed page
       if (flowedPages.length > 0) {
-        this.renderFlowedPage(flowedPages[0], ctx, contentBounds);
+        this.renderFlowedPage(flowedPages[0], ctx, contentBounds, 0);
       }
     } else {
       // For subsequent pages, get the flowed content from the first page
       const firstPageFlowed = this.flowedPages.get(this.document.pages[0].id);
       if (firstPageFlowed && firstPageFlowed.length > pageIndex) {
-        this.renderFlowedPage(firstPageFlowed[pageIndex], ctx, contentBounds);
+        this.renderFlowedPage(firstPageFlowed[pageIndex], ctx, contentBounds, pageIndex);
       }
     }
 
     // Render cursor if visible and on this page (only when body is active)
-    if (this._activeSection === 'body' && this.cursor.visible && this.cursor.page === pageIndex) {
-      this.renderCursor(ctx);
+    // Use FlowingTextContent's isCursorVisible() for proper blink state
+    const bodyFlowingContent = page.flowingContent;
+    if (this.getActiveSection() === 'body' && bodyFlowingContent.isCursorVisible()) {
+      this.renderCursor(ctx, pageIndex);
     }
 
     // Render selection if any (only when body is active)
-    if (this._activeSection === 'body' && this.selectedText) {
+    if (this.getActiveSection() === 'body' && this.selectedText) {
       const flowedPagesForSelection = pageIndex === 0
         ? this.flowedPages.get(page.id)
         : this.flowedPages.get(this.document.pages[0].id);
@@ -363,29 +378,11 @@ export class FlowingTextRenderer extends EventEmitter {
 
     if (flowedPages.length > 0) {
       this.headerFlowedPage = flowedPages[0];
-      this.renderFlowedPage(flowedPages[0], ctx, bounds);
+      this.renderFlowedPage(flowedPages[0], ctx, bounds, 0);
 
-      // Render cursor if header is active
-      if (isActive && this.cursor.visible) {
-        // Get the current cursor position from the FlowingTextContent
-        const cursorTextIndex = this.document.headerFlowingContent.getCursorPosition();
-
-        // Find which line the cursor is on and update position
-        let cursorY = bounds.y;
-        for (let lineIndex = 0; lineIndex < flowedPages[0].lines.length; lineIndex++) {
-          const line = flowedPages[0].lines[lineIndex];
-          if (cursorTextIndex >= line.startIndex && cursorTextIndex <= line.endIndex) {
-            // Update cursor position for this line (including alignment offset)
-            this.cursor.line = lineIndex;
-            const alignmentOffset = this.getAlignmentOffset(line, bounds.width);
-            this.cursor.position.x = bounds.x + alignmentOffset + this.getXPositionForTextIndex(line, cursorTextIndex);
-            this.cursor.position.y = cursorY;
-            this.cursor.height = line.height;
-            break;
-          }
-          cursorY += line.height;
-        }
-        this.renderCursor(ctx);
+      // Render cursor if header is active (position calculated on-demand)
+      if (isActive && this.document.headerFlowingContent.isCursorVisible()) {
+        this.renderCursor(ctx, 0);
       }
 
       // Render selection if any and header is active
@@ -422,29 +419,11 @@ export class FlowingTextRenderer extends EventEmitter {
 
     if (flowedPages.length > 0) {
       this.footerFlowedPage = flowedPages[0];
-      this.renderFlowedPage(flowedPages[0], ctx, bounds);
+      this.renderFlowedPage(flowedPages[0], ctx, bounds, 0);
 
-      // Render cursor if footer is active
-      if (isActive && this.cursor.visible) {
-        // Get the current cursor position from the FlowingTextContent
-        const cursorTextIndex = this.document.footerFlowingContent.getCursorPosition();
-
-        // Find which line the cursor is on and update position
-        let cursorY = bounds.y;
-        for (let lineIndex = 0; lineIndex < flowedPages[0].lines.length; lineIndex++) {
-          const line = flowedPages[0].lines[lineIndex];
-          if (cursorTextIndex >= line.startIndex && cursorTextIndex <= line.endIndex) {
-            // Update cursor position for this line (including alignment offset)
-            this.cursor.line = lineIndex;
-            const alignmentOffset = this.getAlignmentOffset(line, bounds.width);
-            this.cursor.position.x = bounds.x + alignmentOffset + this.getXPositionForTextIndex(line, cursorTextIndex);
-            this.cursor.position.y = cursorY;
-            this.cursor.height = line.height;
-            break;
-          }
-          cursorY += line.height;
-        }
-        this.renderCursor(ctx);
+      // Render cursor if footer is active (position calculated on-demand)
+      if (isActive && this.document.footerFlowingContent.isCursorVisible()) {
+        this.renderCursor(ctx, 0);
       }
 
       // Render selection if any and footer is active
@@ -457,147 +436,301 @@ export class FlowingTextRenderer extends EventEmitter {
   }
 
   /**
-   * Handle click in header area.
-   * @returns 'text' if click was handled, false otherwise
+   * Unified click handler for any EditableTextRegion.
+   *
+   * @param region The text region that was clicked
+   * @param point Click point in canvas coordinates
+   * @param pageIndex The page index where the click occurred
+   * @param ctx Canvas context for text measurement
+   * @returns Object with textIndex and lineIndex if click was in text, or null
    */
-  handleHeaderClick(point: Point, page: Page): boolean | string {
-    const headerBounds = page.getHeaderBounds();
-
-    // Check if click is within header bounds
-    if (point.y < headerBounds.position.y ||
-        point.y >= headerBounds.position.y + headerBounds.size.height) {
-      return false;
+  handleRegionClick(
+    region: EditableTextRegion,
+    point: Point,
+    pageIndex: number,
+    ctx: CanvasRenderingContext2D
+  ): { textIndex: number; lineIndex: number } | null {
+    // Convert global point to local coordinates
+    const localPoint = region.globalToLocal(point, pageIndex);
+    if (!localPoint) {
+      return null; // Click is outside this region
     }
 
-    // If no lines yet (empty header), set cursor to position 0
-    if (!this.headerFlowedPage || this.headerFlowedPage.lines.length === 0) {
-      this.cursor.page = 0;
-      this.cursor.line = 0;
-      this.cursor.visible = true;
-      this.cursor.position.x = headerBounds.position.x;
-      this.cursor.position.y = headerBounds.position.y;
-      this.cursor.height = 14; // Default cursor height for empty content
-      this.restartCursorBlink();
-      this.document.headerFlowingContent.setCursorPosition(0);
-      this.emit('text-clicked', { textIndex: 0, line: 0, section: 'header' });
-      return 'text';
+    // Get flowed lines from the renderer's cache based on region type
+    // (Regions don't maintain their own cache - renderer is the source of truth)
+    const flowedLines = this.getFlowedLinesForRegion(region, pageIndex);
+    const maxWidth = this.getAvailableWidthForRegion(region, pageIndex);
+
+    // Handle empty content - cursor at position 0
+    if (flowedLines.length === 0) {
+      region.flowingContent.setCursorPosition(0);
+      region.flowingContent.resetCursorBlink();
+
+      this.emit('text-clicked', { textIndex: 0, line: 0, section: region.type });
+      return { textIndex: 0, lineIndex: 0 };
     }
 
-    const relativeY = point.y - headerBounds.position.y;
-    const relativeX = point.x - headerBounds.position.x;
-    const maxWidth = headerBounds.size.width;
+    // Find line at Y position using TextPositionCalculator
+    const lineResult = TextPositionCalculator.findLineAtY(flowedLines, localPoint.y);
 
-    let currentY = 0;
-    for (let lineIndex = 0; lineIndex < this.headerFlowedPage.lines.length; lineIndex++) {
-      const line = this.headerFlowedPage.lines[lineIndex];
+    if (lineResult) {
+      const { line, lineIndex } = lineResult;
 
-      if (relativeY >= currentY && relativeY < currentY + line.height) {
-        // Found the line, now find the character position
-        // Subtract alignment offset so x is relative to text start
-        const alignmentOffset = this.getAlignmentOffset(line, maxWidth);
-        const textIndex = this.getTextIndexInLine(line, relativeX - alignmentOffset);
-        console.log(`Click: x=${point.x.toFixed(1)}, y=${point.y.toFixed(1)}, textPosition=${textIndex}`);
+      // Calculate alignment offset for this line
+      const alignmentOffset = TextPositionCalculator.getAlignmentOffset(line, maxWidth);
+      const bounds = region.getRegionBounds(pageIndex);
 
-        // Update cursor
-        this.cursor.page = 0;
-        this.cursor.line = lineIndex;
-        this.cursor.visible = true;
-        this.restartCursorBlink();
-
-        // Set cursor position in header's FlowingTextContent
-        this.document.headerFlowingContent.setCursorPosition(textIndex);
-
-        this.emit('text-clicked', { textIndex, line: lineIndex, section: 'header' });
-        return 'text';
+      // Check for inline element click in any region (body, header, footer)
+      if (bounds) {
+        const lineY = bounds.y + lineResult.lineY;
+        const lineStartX = bounds.x + alignmentOffset;
+        const inlineElement = this.getInlineElementAtPoint(line, point, lineY, lineStartX);
+        if (inlineElement) {
+          this.emit('inline-element-clicked', { element: inlineElement, point, section: region.type });
+          return null; // Let inline element handler manage this
+        }
       }
 
-      currentY += line.height;
+      // Find text index at X position
+      const textX = localPoint.x - alignmentOffset;
+      const textIndex = TextPositionCalculator.getTextIndexAtX(line, textX, ctx);
+
+      // Set cursor position in the region's FlowingTextContent
+      region.flowingContent.setCursorPosition(textIndex);
+      region.flowingContent.resetCursorBlink();
+
+      this.emit('text-clicked', { textIndex, line: lineIndex, section: region.type });
+      return { textIndex, lineIndex };
     }
 
-    // Click is below all lines - set cursor to end of last line
-    const lastLineIndex = this.headerFlowedPage.lines.length - 1;
-    const lastLine = this.headerFlowedPage.lines[lastLineIndex];
+    // Click is below all lines - position cursor at end of last line
+    const lastLineIndex = flowedLines.length - 1;
+    const lastLine = flowedLines[lastLineIndex];
     const textIndex = lastLine.endIndex;
 
-    this.cursor.page = 0;
-    this.cursor.line = lastLineIndex;
-    this.cursor.visible = true;
-    this.restartCursorBlink();
-    this.document.headerFlowingContent.setCursorPosition(textIndex);
-    this.emit('text-clicked', { textIndex, line: lastLineIndex, section: 'header' });
-    return 'text';
+    region.flowingContent.setCursorPosition(textIndex);
+    region.flowingContent.resetCursorBlink();
+
+    this.emit('text-clicked', { textIndex, line: lastLineIndex, section: region.type });
+    return { textIndex, lineIndex: lastLineIndex };
   }
 
   /**
-   * Handle click in footer area.
-   * @returns 'text' if click was handled, false otherwise
+   * Get flowed lines for a region from the renderer's cache.
+   * This is the source of truth for flowed content.
    */
-  handleFooterClick(point: Point, page: Page): boolean | string {
-    const footerBounds = page.getFooterBounds();
+  private getFlowedLinesForRegion(region: EditableTextRegion, pageIndex: number): FlowedLine[] {
+    switch (region.type) {
+      case 'header':
+        return this.headerFlowedPage?.lines || [];
+      case 'footer':
+        return this.footerFlowedPage?.lines || [];
+      case 'body': {
+        // Get the page ID for this page index
+        const page = this.document.pages[pageIndex];
+        if (!page) return [];
+        const flowedPages = this.flowedPages.get(page.id);
+        // For body, we use the first flowed page (pageIndex within the flowedPages array)
+        // Since body content flows across pages, we need the lines for this specific page
+        if (flowedPages && flowedPages.length > 0) {
+          // The flowedPages array contains pages of content that flowed from the body
+          // For a single page document, pageIndex 0 maps to flowedPages[0]
+          return flowedPages[0]?.lines || [];
+        }
+        return [];
+      }
+      case 'textbox':
+        // Text boxes maintain their own flowed lines
+        return region.getFlowedLines(pageIndex);
+      default:
+        return [];
+    }
+  }
 
-    // Check if click is within footer bounds
-    if (point.y < footerBounds.position.y ||
-        point.y >= footerBounds.position.y + footerBounds.size.height) {
-      return false;
+  /**
+   * Get available width for a region.
+   */
+  private getAvailableWidthForRegion(region: EditableTextRegion, pageIndex: number): number {
+    const bounds = region.getRegionBounds(pageIndex);
+    return bounds?.width || 0;
+  }
+
+  /**
+   * Unified rendering method for any EditableTextRegion.
+   * This can render body, header, footer, or text box content.
+   *
+   * @param region The text region to render
+   * @param ctx Canvas rendering context
+   * @param pageIndex The page index to render for
+   * @param options Rendering options
+   */
+  renderRegion(
+    region: EditableTextRegion,
+    ctx: CanvasRenderingContext2D,
+    pageIndex: number,
+    options: {
+      renderCursor?: boolean;
+      renderSelection?: boolean;
+      clipToBounds?: boolean;
+    } = {}
+  ): void {
+    const {
+      renderCursor = true,
+      renderSelection = true,
+      clipToBounds = false
+    } = options;
+
+    const bounds = region.getRegionBounds(pageIndex);
+    if (!bounds) return;
+
+    // Get flowed lines from the renderer's cache (source of truth)
+    const flowedLines = this.getFlowedLinesForRegion(region, pageIndex);
+    const maxWidth = this.getAvailableWidthForRegion(region, pageIndex);
+    const flowingContent = region.flowingContent;
+
+    // Get cursor position for field selection highlighting
+    const cursorTextIndex = flowingContent.getCursorPosition();
+
+    // Setup clipping if requested (useful for text boxes)
+    if (clipToBounds) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height);
+      ctx.clip();
     }
 
-    // If no lines yet (empty footer), set cursor to position 0
-    if (!this.footerFlowedPage || this.footerFlowedPage.lines.length === 0) {
-      this.cursor.page = 0;
-      this.cursor.line = 0;
-      this.cursor.visible = true;
-      this.cursor.position.x = footerBounds.position.x;
-      this.cursor.position.y = footerBounds.position.y;
-      this.cursor.height = 14; // Default cursor height for empty content
-      this.restartCursorBlink();
-      this.document.footerFlowingContent.setCursorPosition(0);
-      this.emit('text-clicked', { textIndex: 0, line: 0, section: 'footer' });
-      return 'text';
+    // Render selection highlight first (behind text)
+    if (renderSelection && flowingContent.hasFocus()) {
+      const selection = flowingContent.getSelection();
+      if (selection && selection.start !== selection.end) {
+        this.renderRegionSelection(flowedLines, ctx, bounds, maxWidth, selection);
+      }
     }
 
-    const relativeY = point.y - footerBounds.position.y;
-    const relativeX = point.x - footerBounds.position.x;
-    const maxWidth = footerBounds.size.width;
+    // Render each line
+    let y = bounds.y;
+    for (let lineIndex = 0; lineIndex < flowedLines.length; lineIndex++) {
+      const line = flowedLines[lineIndex];
 
-    let currentY = 0;
-    for (let lineIndex = 0; lineIndex < this.footerFlowedPage.lines.length; lineIndex++) {
-      const line = this.footerFlowedPage.lines[lineIndex];
-
-      if (relativeY >= currentY && relativeY < currentY + line.height) {
-        // Found the line, now find the character position
-        // Subtract alignment offset so x is relative to text start
-        const alignmentOffset = this.getAlignmentOffset(line, maxWidth);
-        const textIndex = this.getTextIndexInLine(line, relativeX - alignmentOffset);
-        console.log(`Click: x=${point.x.toFixed(1)}, y=${point.y.toFixed(1)}, textPosition=${textIndex}`);
-
-        // Update cursor
-        this.cursor.page = 0;
-        this.cursor.line = lineIndex;
-        this.cursor.visible = true;
-        this.restartCursorBlink();
-
-        // Set cursor position in footer's FlowingTextContent
-        this.document.footerFlowingContent.setCursorPosition(textIndex);
-
-        this.emit('text-clicked', { textIndex, line: lineIndex, section: 'footer' });
-        return 'text';
+      // Skip lines that are outside the visible bounds
+      if (clipToBounds && y + line.height < bounds.y) {
+        y += line.height;
+        continue;
+      }
+      if (clipToBounds && y > bounds.y + bounds.height) {
+        break;
       }
 
-      currentY += line.height;
+      this.renderFlowedLine(line, ctx, { x: bounds.x, y }, maxWidth, pageIndex, cursorTextIndex);
+      y += line.height;
     }
 
-    // Click is below all lines - set cursor to end of last line
-    const lastLineIndex = this.footerFlowedPage.lines.length - 1;
-    const lastLine = this.footerFlowedPage.lines[lastLineIndex];
-    const textIndex = lastLine.endIndex;
+    // Render cursor if this region is active and cursor should be shown
+    if (renderCursor && flowingContent.hasFocus() && flowingContent.isCursorVisible()) {
+      this.renderRegionCursor(flowedLines, ctx, bounds, maxWidth, cursorTextIndex);
+    }
 
-    this.cursor.page = 0;
-    this.cursor.line = lastLineIndex;
-    this.cursor.visible = true;
-    this.restartCursorBlink();
-    this.document.footerFlowingContent.setCursorPosition(textIndex);
-    this.emit('text-clicked', { textIndex, line: lastLineIndex, section: 'footer' });
-    return 'text';
+    if (clipToBounds) {
+      ctx.restore();
+    }
+  }
+
+  /**
+   * Render selection highlight for a region.
+   */
+  private renderRegionSelection(
+    flowedLines: FlowedLine[],
+    ctx: CanvasRenderingContext2D,
+    bounds: Rect,
+    maxWidth: number,
+    selection: { start: number; end: number }
+  ): void {
+    const selStart = Math.min(selection.start, selection.end);
+    const selEnd = Math.max(selection.start, selection.end);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 102, 204, 0.3)';
+
+    let y = bounds.y;
+    for (const line of flowedLines) {
+      // Check if this line overlaps with selection
+      if (selEnd > line.startIndex && selStart < line.endIndex) {
+        const lineSelStart = Math.max(selStart, line.startIndex);
+        const lineSelEnd = Math.min(selEnd, line.endIndex);
+
+        const alignmentOffset = TextPositionCalculator.getAlignmentOffset(line, maxWidth);
+        const startX = bounds.x + alignmentOffset + TextPositionCalculator.getXPositionForTextIndex(line, lineSelStart, ctx);
+        const endX = bounds.x + alignmentOffset + TextPositionCalculator.getXPositionForTextIndex(line, lineSelEnd, ctx);
+
+        ctx.fillRect(startX, y, endX - startX, line.height);
+      }
+      y += line.height;
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * Render cursor for a region.
+   */
+  private renderRegionCursor(
+    flowedLines: FlowedLine[],
+    ctx: CanvasRenderingContext2D,
+    bounds: Rect,
+    maxWidth: number,
+    cursorTextIndex: number
+  ): void {
+    // Find the line containing the cursor
+    let y = bounds.y;
+    for (const line of flowedLines) {
+      if (cursorTextIndex >= line.startIndex && cursorTextIndex <= line.endIndex) {
+        const alignmentOffset = TextPositionCalculator.getAlignmentOffset(line, maxWidth);
+        const cursorX = bounds.x + alignmentOffset + TextPositionCalculator.getXPositionForTextIndex(line, cursorTextIndex, ctx);
+
+        ctx.save();
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(cursorX, y);
+        ctx.lineTo(cursorX, y + line.height);
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
+      y += line.height;
+    }
+
+    // Cursor at end of content (after last line)
+    if (flowedLines.length > 0) {
+      const lastLine = flowedLines[flowedLines.length - 1];
+      const alignmentOffset = TextPositionCalculator.getAlignmentOffset(lastLine, maxWidth);
+      const cursorX = bounds.x + alignmentOffset + TextPositionCalculator.getXPositionForTextIndex(lastLine, cursorTextIndex, ctx);
+
+      // Calculate Y for last line
+      y = bounds.y;
+      for (let i = 0; i < flowedLines.length - 1; i++) {
+        y += flowedLines[i].height;
+      }
+
+      ctx.save();
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cursorX, y);
+      ctx.lineTo(cursorX, y + lastLine.height);
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      // Empty content - render cursor at start
+      ctx.save();
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(bounds.x, bounds.y);
+      ctx.lineTo(bounds.x, bounds.y + 14); // Default height
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   private flowTextForPage(
@@ -612,7 +745,8 @@ export class FlowingTextRenderer extends EventEmitter {
   private renderFlowedPage(
     flowedPage: FlowedPage,
     ctx: CanvasRenderingContext2D,
-    bounds: Rect
+    bounds: Rect,
+    pageIndex: number
   ): void {
     let y = bounds.y;
 
@@ -623,18 +757,7 @@ export class FlowingTextRenderer extends EventEmitter {
       const currentPage = this.document.pages[0];
       const cursorTextIndex = currentPage ? currentPage.flowingContent.getCursorPosition() : 0;
 
-      this.renderFlowedLine(line, ctx, { x: bounds.x, y }, bounds.width, cursorTextIndex);
-
-      // Update cursor position if it's on this line (only for body content when body is active)
-      // Header/footer cursor positions are handled separately in updateCursorFromHeaderFooter
-      if (this._activeSection === 'body' && this.cursor.visible && this.cursor.line === lineIndex) {
-
-        // Include alignment offset in cursor X position
-        const alignmentOffset = this.getAlignmentOffset(line, bounds.width);
-        this.cursor.position.x = bounds.x + alignmentOffset + this.getXPositionForTextIndex(line, cursorTextIndex);
-        this.cursor.position.y = y;
-        this.cursor.height = line.height;
-      }
+      this.renderFlowedLine(line, ctx, { x: bounds.x, y }, bounds.width, pageIndex, cursorTextIndex);
 
       y += line.height;
     }
@@ -645,6 +768,7 @@ export class FlowingTextRenderer extends EventEmitter {
     ctx: CanvasRenderingContext2D,
     position: Point,
     maxWidth: number,
+    pageIndex: number,
     cursorTextIndex?: number
   ): void {
     // Calculate alignment offset
@@ -691,7 +815,7 @@ export class FlowingTextRenderer extends EventEmitter {
         // Check for embedded object
         const embeddedObj = embeddedObjectMap.get(charIndex);
         if (embeddedObj) {
-          x = this.renderEmbeddedObject(embeddedObj, ctx, { x, y: position.y }, line, maxWidth, position.x);
+          x = this.renderEmbeddedObject(embeddedObj, ctx, { x, y: position.y }, line, maxWidth, position.x, pageIndex);
           continue;
         }
 
@@ -851,7 +975,8 @@ export class FlowingTextRenderer extends EventEmitter {
     position: Point,
     line: FlowedLine,
     maxWidth: number,
-    lineStartX: number
+    lineStartX: number,
+    pageIndex: number
   ): number {
     const object = embeddedObj.object;
     let elementX = position.x;
@@ -874,14 +999,38 @@ export class FlowingTextRenderer extends EventEmitter {
     // Store the rendered position for hit detection
     object.renderedPosition = { x: elementX, y: elementY };
 
-    // Save context and translate to object position
-    ctx.save();
-    ctx.translate(elementX, elementY);
+    // Check if this is a TextBoxObject - delegate text rendering to renderRegion
+    if (object instanceof TextBoxObject) {
+      const textBox = object as TextBoxObject;
 
-    // Render the object
-    object.render(ctx);
+      // Flow text before rendering (populates _flowedLines)
+      textBox.reflow(ctx);
 
-    ctx.restore();
+      // Save context and translate to object position
+      ctx.save();
+      ctx.translate(elementX, elementY);
+
+      // Render container (background, border, selection indicators)
+      textBox.render(ctx);
+
+      ctx.restore();
+
+      // Render text content using unified renderRegion
+      // (uses absolute coordinates from getRegionBounds)
+      this.renderRegion(textBox, ctx, pageIndex, {
+        renderCursor: true,
+        renderSelection: true,
+        clipToBounds: true
+      });
+    } else {
+      // For other embedded objects, render normally
+      ctx.save();
+      ctx.translate(elementX, elementY);
+
+      object.render(ctx);
+
+      ctx.restore();
+    }
 
     // Draw selection/resize handles if selected
     if (object.selected) {
@@ -998,12 +1147,12 @@ export class FlowingTextRenderer extends EventEmitter {
   private isCursorAfterFieldOrObject(): boolean {
     let flowingContent;
 
-    if (this._activeSection === 'body') {
+    if (this.getActiveSection() === 'body') {
       const page = this.document.pages[0];
       flowingContent = page?.flowingContent;
-    } else if (this._activeSection === 'header') {
+    } else if (this.getActiveSection() === 'header') {
       flowingContent = this.document.headerFlowingContent;
-    } else if (this._activeSection === 'footer') {
+    } else if (this.getActiveSection() === 'footer') {
       flowingContent = this.document.footerFlowingContent;
     }
 
@@ -1028,20 +1177,27 @@ export class FlowingTextRenderer extends EventEmitter {
     return false;
   }
 
-  private renderCursor(ctx: CanvasRenderingContext2D): void {
-    if (!this.cursor.blinkState) return;
+  private renderCursor(ctx: CanvasRenderingContext2D, pageIndex: number): void {
+    // Use the active FlowingTextContent's cursor visibility (handles blinking)
+    const activeContent = this.getActiveFlowingContent();
+    if (!activeContent || !activeContent.isCursorVisible()) return;
 
     // Don't render cursor if it's positioned right after a field or selected object
     if (this.isCursorAfterFieldOrObject()) return;
 
-    console.log(`renderCursor: x=${this.cursor.position.x.toFixed(1)}, y=${this.cursor.position.y.toFixed(1)}, height=${this.cursor.height.toFixed(1)}, activeSection=${this._activeSection}`);
+    // Calculate cursor position on-demand
+    const cursorPos = this.calculateCursorPosition(ctx);
+    if (!cursorPos) return;
+
+    // Only render cursor on the page it's on
+    if (cursorPos.pageIndex !== pageIndex) return;
 
     ctx.save();
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(this.cursor.position.x, this.cursor.position.y);
-    ctx.lineTo(this.cursor.position.x, this.cursor.position.y + this.cursor.height);
+    ctx.moveTo(cursorPos.x, cursorPos.y);
+    ctx.lineTo(cursorPos.x, cursorPos.y + cursorPos.height);
     ctx.stroke();
     ctx.restore();
   }
@@ -1139,64 +1295,6 @@ export class FlowingTextRenderer extends EventEmitter {
     }
 
     return null;
-  }
-
-  handleClick(point: Point, pageId: string): boolean | string {
-    const flowedPages = this.flowedPages.get(pageId);
-    if (!flowedPages || flowedPages.length === 0) {
-      return false;
-    }
-
-    const page = this.document.getPage(pageId);
-    if (!page) {
-      return false;
-    }
-
-    // Find which line was clicked
-    const contentBounds = page.getContentBounds();
-    const relativeY = point.y - contentBounds.position.y;
-    const relativeX = point.x - contentBounds.position.x;
-    const maxWidth = contentBounds.size.width;
-
-    let currentY = 0;
-    for (let lineIndex = 0; lineIndex < flowedPages[0].lines.length; lineIndex++) {
-      const line = flowedPages[0].lines[lineIndex];
-
-      if (relativeY >= currentY && relativeY < currentY + line.height) {
-        // First check if we clicked on an inline element
-        const lineY = contentBounds.position.y + currentY;
-        const alignmentOffset = this.getAlignmentOffset(line, maxWidth);
-        const lineStartX = contentBounds.position.x + alignmentOffset;
-        const inlineElement = this.getInlineElementAtPoint(line, point, lineY, lineStartX);
-        if (inlineElement) {
-          // Clicked on an inline element, emit event but don't claim the click
-          // The inline element event handler will handle selection
-          this.emit('inline-element-clicked', { element: inlineElement, point });
-          return 'inline-element';
-        }
-
-        // Found the line, now find the character position
-        // Subtract alignment offset so x is relative to text start
-        const textIndex = this.getTextIndexInLine(line, relativeX - alignmentOffset);
-        
-        // Update cursor
-        const boundsRect: Rect = {
-          x: contentBounds.position.x,
-          y: contentBounds.position.y,
-          width: contentBounds.size.width,
-          height: contentBounds.size.height
-        };
-        this.setCursor(0, lineIndex, textIndex, boundsRect);
-        page.flowingContent.setCursorPosition(textIndex);
-        
-        this.emit('text-clicked', { textIndex, line: lineIndex });
-        return 'text';
-      }
-      
-      currentY += line.height;
-    }
-
-    return false;
   }
 
   private getTextIndexInLine(line: FlowedLine, x: number): number {
@@ -1352,36 +1450,6 @@ export class FlowingTextRenderer extends EventEmitter {
     return null;
   }
 
-  setCursor(page: number, line: number, textIndex: number, bounds?: Rect): void {
-    this.cursor.page = page;
-    this.cursor.line = line;
-    this.cursor.visible = true;
-    this.restartCursorBlink();
-    
-    // Calculate cursor x position
-    const flowedPages = this.flowedPages.get(this.document.pages[page]?.id);
-    if (flowedPages && flowedPages[0] && flowedPages[0].lines[line]) {
-      const lineData = flowedPages[0].lines[line];
-      const xOffset = this.getXPositionForTextIndex(lineData, textIndex);
-      
-      // If bounds are provided, add the left margin offset
-      if (bounds) {
-        this.cursor.position.x = bounds.x + xOffset;
-      } else {
-        // Try to get bounds from the page
-        const pageObj = this.document.pages[page];
-        if (pageObj) {
-          const contentBounds = pageObj.getContentBounds();
-          this.cursor.position.x = contentBounds.position.x + xOffset;
-        } else {
-          this.cursor.position.x = xOffset;
-        }
-      }
-    }
-
-    this.emit('cursor-changed', { page, line, textIndex });
-  }
-
   private getXPositionForTextIndex(line: FlowedLine, textIndex: number): number {
     if (textIndex <= line.startIndex) return 0;
     // For justify mode, return the full justified width at end of line
@@ -1489,10 +1557,10 @@ export class FlowingTextRenderer extends EventEmitter {
    */
   moveCursorVertical(direction: -1 | 1, pageId: string): number | null {
     // Handle header/footer sections
-    if (this._activeSection === 'header') {
+    if (this.getActiveSection() === 'header') {
       return this.moveCursorVerticalInSection(direction, this.headerFlowedPage, pageId, 'header');
     }
-    if (this._activeSection === 'footer') {
+    if (this.getActiveSection() === 'footer') {
       return this.moveCursorVerticalInSection(direction, this.footerFlowedPage, pageId, 'footer');
     }
 
@@ -1503,8 +1571,13 @@ export class FlowingTextRenderer extends EventEmitter {
     const page = this.document.getPage(pageId);
     if (!page) return null;
 
-    const currentLine = this.cursor.line;
-    const currentPage = this.cursor.page;
+    // Get current text index and find cursor location
+    const textIndex = page.flowingContent.getCursorPosition();
+    const location = this.findCursorLocationInBody(textIndex);
+    if (!location) return null;
+
+    const currentLine = location.lineIndex;
+    const currentPage = location.pageIndex;
 
     // Get the page's flowed content
     const flowedPage = flowedPages[currentPage];
@@ -1516,6 +1589,9 @@ export class FlowingTextRenderer extends EventEmitter {
     const contentBounds = page.getContentBounds();
     const maxWidth = contentBounds.size.width;
 
+    // Get current X position for maintaining horizontal position
+    const cursorRelativeX = this.calculateCursorRelativeX();
+
     // Check if we need to move to adjacent page
     if (targetLine < 0) {
       // Move to previous page
@@ -1524,7 +1600,7 @@ export class FlowingTextRenderer extends EventEmitter {
         if (prevPage && prevPage.lines.length > 0) {
           const lastLineIndex = prevPage.lines.length - 1;
           const targetLineData = prevPage.lines[lastLineIndex];
-          return this.getTextIndexAtVisualX(targetLineData, this.getCursorRelativeX(pageId), maxWidth);
+          return this.getTextIndexAtVisualX(targetLineData, cursorRelativeX, maxWidth);
         }
       }
       // At top of document - move to start of text
@@ -1540,7 +1616,7 @@ export class FlowingTextRenderer extends EventEmitter {
         const nextPage = flowedPages[currentPage + 1];
         if (nextPage && nextPage.lines.length > 0) {
           const targetLineData = nextPage.lines[0];
-          return this.getTextIndexAtVisualX(targetLineData, this.getCursorRelativeX(pageId), maxWidth);
+          return this.getTextIndexAtVisualX(targetLineData, cursorRelativeX, maxWidth);
         }
       }
       // At bottom of document - move to end of text
@@ -1554,7 +1630,7 @@ export class FlowingTextRenderer extends EventEmitter {
 
     // Move within the same page
     const targetLineData = flowedPage.lines[targetLine];
-    return this.getTextIndexAtVisualX(targetLineData, this.getCursorRelativeX(pageId), maxWidth);
+    return this.getTextIndexAtVisualX(targetLineData, cursorRelativeX, maxWidth);
   }
 
   /**
@@ -1563,18 +1639,25 @@ export class FlowingTextRenderer extends EventEmitter {
   private moveCursorVerticalInSection(
     direction: -1 | 1,
     flowedPage: FlowedPage | null,
-    pageId: string,
+    _pageId: string,
     section: 'header' | 'footer'
   ): number | null {
     if (!flowedPage || flowedPage.lines.length === 0) return null;
 
-    const page = this.document.getPage(pageId);
+    const page = this.document.pages[0];
     if (!page) return null;
 
     const bounds = section === 'header' ? page.getHeaderBounds() : page.getFooterBounds();
     const maxWidth = bounds.size.width;
 
-    const currentLine = this.cursor.line;
+    // Get current text index and find cursor location
+    const flowingContent = section === 'header'
+      ? this.document.headerFlowingContent
+      : this.document.footerFlowingContent;
+    const textIndex = flowingContent.getCursorPosition();
+    const location = this.findCursorLocationInSection(textIndex, section);
+
+    const currentLine = location ? location.lineIndex : 0;
     const targetLine = currentLine + direction;
 
     // Clamp to valid line range
@@ -1591,29 +1674,64 @@ export class FlowingTextRenderer extends EventEmitter {
 
     // Move to target line, maintaining X position
     const targetLineData = flowedPage.lines[targetLine];
-    return this.getTextIndexAtVisualX(targetLineData, this.getCursorRelativeXForSection(pageId, section), maxWidth);
+    const cursorRelativeX = this.calculateCursorRelativeXForSection(section);
+    return this.getTextIndexAtVisualX(targetLineData, cursorRelativeX, maxWidth);
   }
 
   /**
-   * Get the cursor's X position relative to the section area.
+   * Calculate the cursor's X position relative to the section area (on-demand).
    */
-  private getCursorRelativeXForSection(pageId: string, section: 'header' | 'footer'): number {
-    const page = this.document.getPage(pageId);
-    if (!page) return 0;
+  private calculateCursorRelativeXForSection(section: 'header' | 'footer'): number {
+    const flowingContent = section === 'header'
+      ? this.document.headerFlowingContent
+      : this.document.footerFlowingContent;
+    const textIndex = flowingContent.getCursorPosition();
+    const location = this.findCursorLocationInSection(textIndex, section);
+    if (!location) return 0;
 
-    const bounds = section === 'header' ? page.getHeaderBounds() : page.getFooterBounds();
-    return this.cursor.position.x - bounds.position.x;
+    // Create temporary canvas for measurement
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return 0;
+
+    const firstPage = this.document.pages[0];
+    if (!firstPage) return 0;
+
+    const bounds = section === 'header'
+      ? firstPage.getHeaderBounds()
+      : firstPage.getFooterBounds();
+    const maxWidth = bounds.size.width;
+
+    const alignmentOffset = TextPositionCalculator.getAlignmentOffset(location.line, maxWidth);
+    const xOffset = TextPositionCalculator.getXPositionForTextIndex(location.line, textIndex, ctx);
+
+    return alignmentOffset + xOffset;
   }
 
   /**
-   * Get the cursor's X position relative to the content area.
+   * Calculate the cursor's X position relative to the content area (on-demand).
    */
-  private getCursorRelativeX(pageId: string): number {
-    const page = this.document.getPage(pageId);
-    if (!page) return 0;
+  private calculateCursorRelativeX(): number {
+    const firstPage = this.document.pages[0];
+    if (!firstPage) return 0;
 
-    const contentBounds = page.getContentBounds();
-    return this.cursor.position.x - contentBounds.position.x;
+    const flowingContent = firstPage.flowingContent;
+    const textIndex = flowingContent.getCursorPosition();
+    const location = this.findCursorLocationInBody(textIndex);
+    if (!location) return 0;
+
+    // Create temporary canvas for measurement
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return 0;
+
+    const contentBounds = firstPage.getContentBounds();
+    const maxWidth = contentBounds.size.width;
+
+    const alignmentOffset = TextPositionCalculator.getAlignmentOffset(location.line, maxWidth);
+    const xOffset = TextPositionCalculator.getXPositionForTextIndex(location.line, textIndex, ctx);
+
+    return alignmentOffset + xOffset;
   }
 
   /**
@@ -1626,38 +1744,6 @@ export class FlowingTextRenderer extends EventEmitter {
     const alignmentOffset = this.getAlignmentOffset(line, maxWidth);
     const textX = visualX - alignmentOffset;
     return this.getTextIndexInLine(line, textX);
-  }
-
-  showCursor(): void {
-    this.cursor.visible = true;
-    this.restartCursorBlink();
-  }
-
-  hideCursor(): void {
-    this.cursor.visible = false;
-    this.stopCursorBlink();
-  }
-
-  private startCursorBlink(): void {
-    this.blinkInterval = window.setInterval(() => {
-      this.cursor.blinkState = !this.cursor.blinkState;
-      this.emit('cursor-blink');
-    }, 500);
-  }
-
-  private restartCursorBlink(): void {
-    this.cursor.blinkState = true;
-    this.stopCursorBlink();
-    this.startCursorBlink();
-    // Emit immediately to trigger a render with cursor visible
-    this.emit('cursor-blink');
-  }
-
-  private stopCursorBlink(): void {
-    if (this.blinkInterval) {
-      clearInterval(this.blinkInterval);
-      this.blinkInterval = null;
-    }
   }
 
   setTextSelection(start: number, end: number): void {
@@ -2024,7 +2110,6 @@ export class FlowingTextRenderer extends EventEmitter {
   }
 
   destroy(): void {
-    this.stopCursorBlink();
     this.removeAllListeners();
   }
 }

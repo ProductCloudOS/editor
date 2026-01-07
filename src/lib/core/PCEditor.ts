@@ -17,7 +17,7 @@ import { DataBinder } from '../data/DataBinder';
 import { PDFGenerator } from '../rendering/PDFGenerator';
 import { LayoutEngine } from '../layout/LayoutEngine';
 import { BaseEmbeddedObject, ObjectPosition, TextBoxObject } from '../objects';
-import { SubstitutionFieldConfig, TextFormattingStyle, SubstitutionField, RepeatingSection, FlowingTextContent, TextAlignment } from '../text';
+import { SubstitutionFieldConfig, TextFormattingStyle, SubstitutionField, RepeatingSection, FlowingTextContent, TextAlignment, Focusable } from '../text';
 
 export class PCEditor extends EventEmitter {
   private container: HTMLElement;
@@ -540,169 +540,101 @@ export class PCEditor extends EventEmitter {
   }
   
   private handleKeyDown(e: KeyboardEvent): void {
-    // Check if we're editing a text box - route keyboard to it
-    const editingTextBox = this.canvasManager.getEditingTextBox();
-    if (editingTextBox) {
-      this.handleTextBoxKeyDown(e, editingTextBox);
+    // Use the unified focus system to get the currently focused control
+    const focusedControl = this.canvasManager.getFocusedControl();
+    if (!focusedControl) return;
+
+    // Vertical navigation needs layout context - handle specially
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      this.handleVerticalNavigation(e, focusedControl);
       return;
     }
 
-    // Get the flowing content for the active section
-    const flowingContent = this.getActiveFlowingContent();
-    if (!flowingContent) return;
+    // Delegate to the focused control's handleKeyDown
+    const handled = focusedControl.handleKeyDown(e);
 
-    // Handle different key events
-    switch (e.key) {
-      case 'Backspace':
-        e.preventDefault();
-        // Delete selection if any, otherwise delete character before cursor
-        if (!flowingContent.deleteSelection()) {
-          const cursorPos = flowingContent.getCursorPosition();
-          if (cursorPos > 0) {
-            flowingContent.deleteText(cursorPos - 1, 1);
-          }
-        }
-        break;
+    if (handled) {
+      this.canvasManager.render();
 
-      case 'Delete':
-        e.preventDefault();
-        // Delete selection if any, otherwise delete character after cursor
-        if (!flowingContent.deleteSelection()) {
-          const deletePos = flowingContent.getCursorPosition();
-          if (deletePos < flowingContent.getText().length) {
-            flowingContent.deleteText(deletePos, 1);
-          }
-        }
-        break;
-        
-      case 'ArrowLeft':
-        e.preventDefault();
-        if (e.shiftKey) {
-          flowingContent.selectLeft();
+      // Handle text box-specific post-processing
+      const editingTextBox = this.canvasManager.getEditingTextBox();
+      if (editingTextBox) {
+        // If Escape was pressed, the text box exits editing mode
+        if (!editingTextBox.editing) {
+          this.canvasManager.setEditingTextBox(null);
         } else {
-          flowingContent.clearSelection();
-          flowingContent.moveCursorLeft();
+          // Emit cursor changed event for text box so UI can update
+          this.emit('textbox-cursor-changed', {
+            textBox: editingTextBox,
+            cursorPosition: editingTextBox.flowingContent.getCursorPosition(),
+            selection: editingTextBox.flowingContent.getSelection()
+          });
         }
-        break;
-
-      case 'ArrowRight':
-        e.preventDefault();
-        if (e.shiftKey) {
-          flowingContent.selectRight();
-        } else {
-          flowingContent.clearSelection();
-          flowingContent.moveCursorRight();
-        }
-        break;
-
-      case 'ArrowUp':
-        e.preventDefault();
-        if (e.shiftKey) {
-          // Set anchor if not already set (starting selection)
-          if (!flowingContent.hasSelectionAnchor()) {
-            flowingContent.setSelectionAnchor();
-          }
-        } else {
-          flowingContent.clearSelection();
-        }
-        this.moveCursorVertical(flowingContent, -1);
-        break;
-
-      case 'ArrowDown':
-        e.preventDefault();
-        if (e.shiftKey) {
-          // Set anchor if not already set (starting selection)
-          if (!flowingContent.hasSelectionAnchor()) {
-            flowingContent.setSelectionAnchor();
-          }
-        } else {
-          flowingContent.clearSelection();
-        }
-        this.moveCursorVertical(flowingContent, 1);
-        break;
-
-      case 'Enter':
-        e.preventDefault();
-        // Delete selection first if any
-        flowingContent.deleteSelection();
-        flowingContent.insertText('\n');
-        break;
-
-      case 'Tab':
-        e.preventDefault();
-        // Delete selection first if any
-        flowingContent.deleteSelection();
-        flowingContent.insertText('\t');
-        break;
-
-      default:
-        // Handle regular text input
-        if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-          e.preventDefault();
-          // Delete selection first if any
-          flowingContent.deleteSelection();
-          flowingContent.insertText(e.key);
-        }
-        break;
-    }
-  }
-  
-  private moveCursorVertical(flowingContent: FlowingTextContent, direction: -1 | 1): void {
-    // Use visual vertical movement that maintains X position
-    const newTextIndex = this.canvasManager.moveCursorVertical(direction);
-    if (newTextIndex !== null) {
-      flowingContent.setCursorPosition(newTextIndex);
+      }
     }
   }
 
   /**
-   * Handle keyboard events when editing a text box.
-   * Uses the Focusable interface's handleKeyDown method.
+   * Handle vertical navigation for the focused control.
+   * This needs special handling because it requires layout context.
    */
-  private handleTextBoxKeyDown(e: KeyboardEvent, textBox: TextBoxObject): void {
-    // Handle vertical navigation specially (needs canvas context)
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      e.preventDefault();
+  private handleVerticalNavigation(e: KeyboardEvent, _focusedControl: Focusable): void {
+    const direction = e.key === 'ArrowUp' ? -1 : 1;
+    const editingTextBox = this.canvasManager.getEditingTextBox();
+
+    // Get the FlowingTextContent for selection handling
+    const flowingContent = editingTextBox
+      ? editingTextBox.flowingContent
+      : this.getActiveFlowingContent();
+
+    // Handle shift+arrow for selection
+    if (e.shiftKey) {
+      if (!flowingContent.hasSelectionAnchor()) {
+        flowingContent.setSelectionAnchor();
+      }
+    } else {
+      flowingContent.clearSelection();
+    }
+
+    if (editingTextBox) {
+      // Text box vertical navigation needs canvas context
       const pageId = this.canvasManager.getEditingTextBoxPageId();
       if (pageId) {
         const ctx = this.canvasManager.getContext(pageId);
         if (ctx) {
-          const flowingContent = textBox.flowingContent;
-
-          // Handle shift+arrow for selection
-          if (e.shiftKey) {
-            if (!flowingContent.hasSelectionAnchor()) {
-              flowingContent.setSelectionAnchor();
-            }
-          } else {
-            flowingContent.clearSelection();
-          }
-
-          const direction = e.key === 'ArrowUp' ? -1 : 1;
-          textBox.moveCursorVertical(direction, ctx);
+          editingTextBox.moveCursorVertical(direction, ctx);
           this.canvasManager.render();
+
+          // Emit cursor changed event for text box
+          this.emit('textbox-cursor-changed', {
+            textBox: editingTextBox,
+            cursorPosition: editingTextBox.flowingContent.getCursorPosition(),
+            selection: editingTextBox.flowingContent.getSelection()
+          });
         }
       }
-      return;
-    }
-
-    // Delegate to the text box's handleKeyDown (Focusable interface)
-    const handled = textBox.handleKeyDown(e);
-
-    // If the text box handled the event, render to update display
-    if (handled) {
-      this.canvasManager.render();
-
-      // If Escape was pressed, the text box exits editing mode
-      // Check if text box is no longer editing and clear the editing state
-      if (!textBox.editing) {
-        this.canvasManager.setEditingTextBox(null);
+    } else {
+      // Body/header/footer vertical navigation
+      const newTextIndex = this.canvasManager.moveCursorVertical(direction);
+      if (newTextIndex !== null) {
+        flowingContent.setCursorPosition(newTextIndex);
+        flowingContent.resetCursorBlink();
       }
+      this.canvasManager.render();
     }
   }
 
   enableTextInput(): void {
     this.keyboardListenerActive = true;
+    // Only show the main cursor if NOT editing a text box
+    // When editing a text box, the text box manages its own cursor
+    if (this.canvasManager.isEditingTextBox()) {
+      // When editing a text box, we only need keyboard input active
+      // Don't show main cursor or refocus (we're already focused)
+      this.emit('text-input-enabled');
+      return;
+    }
     this.canvasManager.showTextCursor();
     this.container.focus();
     this.emit('text-input-enabled');
@@ -762,12 +694,21 @@ export class PCEditor extends EventEmitter {
     const textBox = this.canvasManager.getEditingTextBox();
     if (!textBox) return null;
 
+    // If there's a selection, get formatting at selection start
+    const selection = textBox.flowingContent.getSelection();
+    if (selection && selection.start !== selection.end) {
+      return textBox.flowingContent.getFormattingAt(selection.start);
+    }
+
+    // Otherwise use cursor position
     const cursorPos = textBox.flowingContent.getCursorPosition();
     return textBox.flowingContent.getFormattingAt(cursorPos);
   }
 
   /**
-   * Set the alignment for the current paragraph in the editing text box.
+   * Set the alignment for the current paragraph or selection in the editing text box.
+   * If there's a text selection, applies to all paragraphs in the selection.
+   * Otherwise applies to the paragraph at cursor.
    */
   setTextBoxAlignment(alignment: TextAlignment): void {
     const textBox = this.canvasManager.getEditingTextBox();
@@ -775,7 +716,14 @@ export class PCEditor extends EventEmitter {
       throw new Error('No text box is being edited');
     }
 
-    textBox.flowingContent.setAlignment(alignment);
+    const selection = textBox.flowingContent.getSelection();
+    if (selection && selection.start !== selection.end) {
+      // Apply to all paragraphs in the selection range
+      textBox.flowingContent.setAlignmentForRange(selection.start, selection.end, alignment);
+    } else {
+      // Apply to paragraph at cursor
+      textBox.flowingContent.setAlignment(alignment);
+    }
     this.canvasManager.render();
   }
 

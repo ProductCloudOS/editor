@@ -19,7 +19,13 @@ export {
   EmbeddedObjectManager,
   RepeatingSectionManager,
   TextMeasurer,
-  TextLayout
+  TextLayout,
+  TextPositionCalculator,
+  BaseTextRegion,
+  RegionManager,
+  BodyTextRegion,
+  HeaderTextRegion,
+  FooterTextRegion
 } from './text';
 
 export type {
@@ -35,7 +41,13 @@ export type {
   FlowedEmbeddedObject,
   ObjectPosition,
   TextAlignment,
-  ParagraphFormatting
+  ParagraphFormatting,
+  EditableTextRegion,
+  RegionType,
+  LineAtYResult,
+  PageBoundsProvider,
+  HeaderBoundsProvider,
+  FooterBoundsProvider
 } from './text';
 
 // Objects module exports

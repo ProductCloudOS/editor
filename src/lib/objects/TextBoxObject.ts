@@ -1,7 +1,9 @@
 import { BaseEmbeddedObject } from './BaseEmbeddedObject';
-import { TextBoxObjectConfig, EmbeddedObjectData, Point, TextBoxBorder, BorderSide, DEFAULT_BORDER_SIDE } from './types';
+import { TextBoxObjectConfig, EmbeddedObjectData, Point, TextBoxBorder, BorderSide, DEFAULT_BORDER_SIDE, Rect } from './types';
 import { FlowingTextContent } from '../text/FlowingTextContent';
-import { FlowedLine, TextFormattingStyle, Focusable } from '../text/types';
+import { FlowedLine, FlowedPage, Focusable } from '../text/types';
+import { TextPositionCalculator } from '../text/TextPositionCalculator';
+import { EditableTextRegion, RegionType } from '../text/EditableTextRegion';
 
 /**
  * Default text box styling.
@@ -33,8 +35,9 @@ function createBorder(partial?: Partial<TextBoxBorder>, legacyBorderColor?: stri
 /**
  * Text box object - editable text within a box with flowing text support.
  * Implements Focusable for unified focus management, delegating to internal FlowingTextContent.
+ * Implements EditableTextRegion for unified text interaction.
  */
-export class TextBoxObject extends BaseEmbeddedObject implements Focusable {
+export class TextBoxObject extends BaseEmbeddedObject implements Focusable, EditableTextRegion {
   private _content: string;
   private _fontFamily: string;
   private _fontSize: number;
@@ -49,6 +52,9 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable {
 
   // Cached flowed lines for rendering
   private _flowedLines: FlowedLine[] = [];
+
+  // Cached flowed page for EditableTextRegion interface
+  private _flowedPage: FlowedPage | null = null;
 
   constructor(config: TextBoxObjectConfig) {
     super(config);
@@ -78,6 +84,9 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable {
   get objectType(): string {
     return 'textbox';
   }
+
+  // EditableTextRegion type property
+  readonly type: RegionType = 'textbox';
 
   get content(): string {
     return this._content;
@@ -201,9 +210,9 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable {
   }
 
   /**
-   * Get the text area offset (padding + border).
+   * Get the text area offset (padding + border) from the top-left of the text box.
    */
-  private getTextOffset(): { x: number; y: number } {
+  getTextOffset(): { x: number; y: number } {
     const borderLeft = this._border.left.style !== 'none' ? this._border.left.width : 0;
     const borderTop = this._border.top.style !== 'none' ? this._border.top.width : 0;
 
@@ -213,6 +222,30 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable {
     };
   }
 
+  /**
+   * Get the text area bounds in global coordinates.
+   * This is the area where text is rendered, inside padding and borders.
+   * Returns null if the text box hasn't been positioned yet.
+   */
+  getTextAreaBounds(): { x: number; y: number; width: number; height: number } | null {
+    if (!this._renderedPosition) {
+      return null;
+    }
+    const offset = this.getTextOffset();
+    const textBounds = this.getTextBounds();
+    return {
+      x: this._renderedPosition.x + offset.x,
+      y: this._renderedPosition.y + offset.y,
+      width: textBounds.width,
+      height: textBounds.height
+    };
+  }
+
+  /**
+   * Render the text box container (background, border, indicators).
+   * Text content is rendered separately by FlowingTextRenderer.renderRegion().
+   * @param ctx Canvas rendering context (should be translated to text box position)
+   */
   render(ctx: CanvasRenderingContext2D): void {
     // Draw background
     this.renderBackground(ctx);
@@ -220,8 +253,7 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable {
     // Draw border
     this.renderBorder(ctx);
 
-    // Draw text content
-    this.renderFlowingContent(ctx);
+    // Text content is rendered by FlowingTextRenderer.renderRegion()
 
     // Draw selection border if selected
     if (this._selected) {
@@ -282,195 +314,16 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable {
     ctx.setLineDash([]);
   }
 
-  private renderFlowingContent(ctx: CanvasRenderingContext2D): void {
-    const textBounds = this.getTextBounds();
-    const offset = this.getTextOffset();
-
-    if (textBounds.width <= 0 || textBounds.height <= 0) return;
-
-    // Flow the text - use a large height to get all lines, then clip during render
-    const pages = this._flowingContent.flowText(textBounds.width, 10000, ctx);
-    this._flowedLines = pages.length > 0 ? pages[0].lines : [];
-
-    // Clip to text bounds
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(offset.x, offset.y, textBounds.width, textBounds.height);
-    ctx.clip();
-
-    // Render selection highlight first (behind text)
-    if (this._editing) {
-      this.renderSelection(ctx, offset);
-    }
-
-    // Render lines
-    let y = offset.y;
-    for (const line of this._flowedLines) {
-      if (y + line.height > offset.y + textBounds.height) break; // Clip overflow
-
-      this.renderLine(ctx, line, offset.x, y);
-      y += line.height;
-    }
-
-    // Render cursor if editing and cursor is visible
-    if (this._editing && this._flowingContent.isCursorVisible()) {
-      this.renderCursor(ctx, offset);
-    }
-
-    ctx.restore();
-  }
-
-  private renderLine(ctx: CanvasRenderingContext2D, line: FlowedLine, startX: number, y: number): void {
-    let x = startX;
-
-    // Apply alignment offset
-    const textBounds = this.getTextBounds();
-    if (line.alignment === 'center') {
-      x += (textBounds.width - line.width) / 2;
-    } else if (line.alignment === 'right') {
-      x += textBounds.width - line.width;
-    }
-
-    for (const run of line.runs) {
-      ctx.font = this.getFontString(run.formatting);
-      ctx.fillStyle = run.formatting.color;
-      ctx.textBaseline = 'top';
-
-      // Draw background if set
-      if (run.formatting.backgroundColor) {
-        const metrics = ctx.measureText(run.text);
-        ctx.fillStyle = run.formatting.backgroundColor;
-        ctx.fillRect(x, y, metrics.width, line.height);
-        ctx.fillStyle = run.formatting.color;
-      }
-
-      // Handle justify spacing
-      if (line.alignment === 'justify' && line.extraWordSpacing) {
-        // Render character by character with extra spacing after whitespace
-        for (let i = 0; i < run.text.length; i++) {
-          const char = run.text[i];
-          ctx.fillText(char, x, y);
-          x += ctx.measureText(char).width;
-          if (/\s/.test(char)) {
-            x += line.extraWordSpacing;
-          }
-        }
-      } else {
-        ctx.fillText(run.text, x, y);
-        x += ctx.measureText(run.text).width;
-      }
-    }
-  }
-
-  private getFontString(formatting: TextFormattingStyle): string {
-    const style = formatting.fontStyle || 'normal';
-    const weight = formatting.fontWeight || 'normal';
-    return `${style} ${weight} ${formatting.fontSize}px ${formatting.fontFamily}`;
-  }
-
-  private renderCursor(ctx: CanvasRenderingContext2D, offset: { x: number; y: number }): void {
-    const cursorPos = this._flowingContent.getCursorPosition();
-    const cursorXY = this.getCursorXY(ctx, cursorPos, offset);
-
-    if (cursorXY) {
-      ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(cursorXY.x, cursorXY.y);
-      ctx.lineTo(cursorXY.x, cursorXY.y + cursorXY.height);
-      ctx.stroke();
-    }
-  }
-
-  private getCursorXY(ctx: CanvasRenderingContext2D, textIndex: number, offset: { x: number; y: number }): { x: number; y: number; height: number } | null {
-    let y = offset.y;
-
-    for (const line of this._flowedLines) {
-      if (textIndex >= line.startIndex && textIndex <= line.endIndex) {
-        // Cursor is on this line
-        const x = offset.x + this.getXPositionInLine(ctx, line, textIndex);
-        return { x, y, height: line.height };
-      }
-      y += line.height;
-    }
-
-    // If no lines or cursor at end, position at end of last line or start
-    if (this._flowedLines.length === 0) {
-      return { x: offset.x, y: offset.y, height: this._fontSize * 1.2 };
-    }
-
-    const lastLine = this._flowedLines[this._flowedLines.length - 1];
-    y = offset.y;
-    for (let i = 0; i < this._flowedLines.length - 1; i++) {
-      y += this._flowedLines[i].height;
-    }
-    const x = offset.x + this.getXPositionInLine(ctx, lastLine, textIndex);
-    return { x, y, height: lastLine.height };
-  }
-
+  /**
+   * Get X position for a text index within a line.
+   * Used for vertical cursor navigation.
+   */
   private getXPositionInLine(ctx: CanvasRenderingContext2D, line: FlowedLine, textIndex: number): number {
     const textBounds = this.getTextBounds();
-    let x = 0;
-
-    // Apply alignment offset
-    if (line.alignment === 'center') {
-      x = (textBounds.width - line.width) / 2;
-    } else if (line.alignment === 'right') {
-      x = textBounds.width - line.width;
-    }
-
-    // Accumulate character widths up to textIndex
-    for (const run of line.runs) {
-      ctx.font = this.getFontString(run.formatting);
-
-      for (let i = 0; i < run.text.length; i++) {
-        const charIndex = run.startIndex + i;
-        if (charIndex >= textIndex) {
-          return x;
-        }
-
-        const char = run.text[i];
-        x += ctx.measureText(char).width;
-
-        // Add justify spacing after whitespace
-        if (line.alignment === 'justify' && line.extraWordSpacing && /\s/.test(char)) {
-          x += line.extraWordSpacing;
-        }
-      }
-    }
-
-    return x;
-  }
-
-  private renderSelection(ctx: CanvasRenderingContext2D, offset: { x: number; y: number }): void {
-    const selection = this._flowingContent.getSelection();
-    if (!selection || selection.start === selection.end) return;
-
-    const selStart = Math.min(selection.start, selection.end);
-    const selEnd = Math.max(selection.start, selection.end);
-
-    ctx.fillStyle = 'rgba(0, 102, 204, 0.3)'; // Selection highlight color
-
-    let y = offset.y;
-    const textBounds = this.getTextBounds();
-
-    for (const line of this._flowedLines) {
-      if (y + line.height > offset.y + textBounds.height) break;
-
-      // Check if this line overlaps with selection
-      if (selEnd > line.startIndex && selStart < line.endIndex) {
-        // Calculate X positions for selection start/end within this line
-        const lineSelStart = Math.max(selStart, line.startIndex);
-        const lineSelEnd = Math.min(selEnd, line.endIndex);
-
-        const startX = offset.x + this.getXPositionInLine(ctx, line, lineSelStart);
-        const endX = offset.x + this.getXPositionInLine(ctx, line, lineSelEnd);
-
-        ctx.fillRect(startX, y, endX - startX, line.height);
-      }
-
-      y += line.height;
-    }
+    // Use TextPositionCalculator for alignment offset and X position
+    const alignmentOffset = TextPositionCalculator.getAlignmentOffset(line, textBounds.width);
+    const xInLine = TextPositionCalculator.getXPositionForTextIndex(line, textIndex, ctx);
+    return alignmentOffset + xInLine;
   }
 
   private renderEditingBorder(ctx: CanvasRenderingContext2D): void {
@@ -532,36 +385,9 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable {
    */
   private getTextIndexAtX(ctx: CanvasRenderingContext2D, line: FlowedLine, targetX: number): number {
     const textBounds = this.getTextBounds();
-    let alignmentOffset = 0;
-
-    if (line.alignment === 'center') {
-      alignmentOffset = (textBounds.width - line.width) / 2;
-    } else if (line.alignment === 'right') {
-      alignmentOffset = textBounds.width - line.width;
-    }
-
+    const alignmentOffset = TextPositionCalculator.getAlignmentOffset(line, textBounds.width);
     const x = targetX - alignmentOffset;
-    let currentX = 0;
-
-    for (const run of line.runs) {
-      ctx.font = this.getFontString(run.formatting);
-
-      for (let i = 0; i < run.text.length; i++) {
-        const char = run.text[i];
-        const charWidth = ctx.measureText(char).width;
-        const extraSpacing = (line.alignment === 'justify' && line.extraWordSpacing && /\s/.test(char))
-          ? line.extraWordSpacing : 0;
-
-        // Check if target X is within this character
-        if (x <= currentX + charWidth / 2) {
-          return run.startIndex + i;
-        }
-
-        currentX += charWidth + extraSpacing;
-      }
-    }
-
-    return line.endIndex;
+    return TextPositionCalculator.getTextIndexAtX(line, x, ctx);
   }
 
   // ============================================
@@ -632,95 +458,6 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable {
       this.editing = true;
       this.emit('edit-requested', { object: this });
     }
-  }
-
-  /**
-   * Handle click within the text box (for cursor positioning when editing).
-   * Point is in local coordinates (relative to text box origin).
-   */
-  handleTextClick(point: Point, ctx: CanvasRenderingContext2D): boolean {
-    if (!this._editing) return false;
-
-    const offset = this.getTextOffset();
-    const textBounds = this.getTextBounds();
-
-    // Check if click is in text area
-    if (point.x < offset.x || point.x > offset.x + textBounds.width ||
-        point.y < offset.y || point.y > offset.y + textBounds.height) {
-      return false;
-    }
-
-    // Find text index at click position
-    const textIndex = this.getTextIndexAtPoint(point, ctx, offset);
-    if (textIndex !== null) {
-      this._flowingContent.setCursorPosition(textIndex);
-      this._flowingContent.resetCursorBlink(); // Reset cursor blink
-      this.emit('cursor-moved', { textIndex });
-      return true;
-    }
-
-    return false;
-  }
-
-  private getTextIndexAtPoint(point: Point, ctx: CanvasRenderingContext2D, offset: { x: number; y: number }): number | null {
-    const relativeY = point.y - offset.y;
-    const relativeX = point.x - offset.x;
-
-    // Find line at Y position
-    let y = 0;
-    for (const line of this._flowedLines) {
-      if (relativeY >= y && relativeY < y + line.height) {
-        // Found the line, find character at X
-        return this.getTextIndexInLine(ctx, line, relativeX);
-      }
-      y += line.height;
-    }
-
-    // If below all lines, return end of text
-    if (this._flowedLines.length > 0) {
-      return this._flowedLines[this._flowedLines.length - 1].endIndex;
-    }
-
-    return 0;
-  }
-
-  private getTextIndexInLine(ctx: CanvasRenderingContext2D, line: FlowedLine, relativeX: number): number {
-    const textBounds = this.getTextBounds();
-    let alignmentOffset = 0;
-
-    if (line.alignment === 'center') {
-      alignmentOffset = (textBounds.width - line.width) / 2;
-    } else if (line.alignment === 'right') {
-      alignmentOffset = textBounds.width - line.width;
-    }
-
-    const x = relativeX - alignmentOffset;
-    let currentX = 0;
-
-    for (const run of line.runs) {
-      ctx.font = this.getFontString(run.formatting);
-
-      for (let i = 0; i < run.text.length; i++) {
-        const char = run.text[i];
-        const charWidth = ctx.measureText(char).width;
-        const extraSpacing = (line.alignment === 'justify' && line.extraWordSpacing && /\s/.test(char))
-          ? line.extraWordSpacing : 0;
-
-        // Check if click is within this character
-        if (x >= currentX && x < currentX + charWidth + extraSpacing) {
-          // Return index before or after character based on midpoint
-          if (x < currentX + charWidth / 2) {
-            return run.startIndex + i;
-          } else {
-            return run.startIndex + i + 1;
-          }
-        }
-
-        currentX += charWidth + extraSpacing;
-      }
-    }
-
-    return line.endIndex;
   }
 
   /**
@@ -819,5 +556,127 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable {
       width: Math.max(contentSize.width, minSize.width),
       height: Math.max(contentSize.height, minSize.height)
     };
+  }
+
+  // ============================================
+  // EditableTextRegion Interface Implementation
+  // ============================================
+
+  /**
+   * Get the bounds of the text area within this text box on a specific page.
+   * Text boxes are single-page objects, so pageIndex is ignored.
+   * Returns the text area bounds (accounting for padding/borders) in canvas coordinates.
+   * This is the area where text is rendered, used by FlowingTextRenderer.renderRegion().
+   */
+  getRegionBounds(_pageIndex: number): Rect | null {
+    return this.getTextAreaBounds();
+  }
+
+  /**
+   * Convert a point from global (canvas) coordinates to local (text box) coordinates.
+   * @param point Point in canvas coordinates
+   * @param pageIndex The page index (ignored for text boxes)
+   * @returns Point in local coordinates, or null if point is outside this text box
+   */
+  globalToLocal(point: Point, pageIndex: number): Point | null {
+    const bounds = this.getRegionBounds(pageIndex);
+    if (!bounds) return null;
+
+    // Check if point is within bounds
+    if (point.x < bounds.x || point.x > bounds.x + bounds.width ||
+        point.y < bounds.y || point.y > bounds.y + bounds.height) {
+      return null;
+    }
+
+    return {
+      x: point.x - bounds.x,
+      y: point.y - bounds.y
+    };
+  }
+
+  /**
+   * Convert a point from local (text box) coordinates to global (canvas) coordinates.
+   * @param point Point in local coordinates
+   * @param pageIndex The page index (ignored for text boxes)
+   * @returns Point in canvas coordinates
+   */
+  localToGlobal(point: Point, pageIndex: number): Point {
+    const bounds = this.getRegionBounds(pageIndex);
+    if (!bounds) {
+      return point;
+    }
+
+    return {
+      x: point.x + bounds.x,
+      y: point.y + bounds.y
+    };
+  }
+
+  /**
+   * Get the flowed lines for this text box.
+   * Text boxes don't span pages, so pageIndex is ignored.
+   */
+  getFlowedLines(_pageIndex: number): FlowedLine[] {
+    return this._flowedLines;
+  }
+
+  /**
+   * Get all flowed pages for this text box.
+   * Text boxes have a single "page" of content.
+   */
+  getFlowedPages(): FlowedPage[] {
+    return this._flowedPage ? [this._flowedPage] : [];
+  }
+
+  /**
+   * Get the available width for text in this text box.
+   */
+  getAvailableWidth(): number {
+    return this.getTextBounds().width;
+  }
+
+  /**
+   * Text boxes do not span multiple pages.
+   */
+  spansMultiplePages(): boolean {
+    return false;
+  }
+
+  /**
+   * Text boxes are always on a single page.
+   */
+  getPageCount(): number {
+    return 1;
+  }
+
+  /**
+   * Check if a point is within this text box region.
+   * @param point Point in canvas coordinates
+   * @param pageIndex The page index (ignored for text boxes)
+   */
+  containsPointInRegion(point: Point, pageIndex: number): boolean {
+    const bounds = this.getRegionBounds(pageIndex);
+    if (!bounds) return false;
+
+    return point.x >= bounds.x && point.x <= bounds.x + bounds.width &&
+           point.y >= bounds.y && point.y <= bounds.y + bounds.height;
+  }
+
+  /**
+   * Trigger a reflow of text in this text box.
+   * @param ctx Canvas context for text measurement
+   */
+  reflow(ctx: CanvasRenderingContext2D): void {
+    const textBounds = this.getTextBounds();
+    if (textBounds.width <= 0 || textBounds.height <= 0) {
+      this._flowedLines = [];
+      this._flowedPage = null;
+      return;
+    }
+
+    // Flow the text - use a large height to get all lines
+    const pages = this._flowingContent.flowText(textBounds.width, 10000, ctx);
+    this._flowedLines = pages.length > 0 ? pages[0].lines : [];
+    this._flowedPage = pages.length > 0 ? pages[0] : null;
   }
 }

@@ -31,3 +31,12 @@ export { TextMeasurer } from './TextMeasurer';
 export type { EmbeddedMeasurement } from './TextMeasurer';
 export { TextLayout } from './TextLayout';
 export type { LayoutContext } from './TextLayout';
+export { TextPositionCalculator } from './TextPositionCalculator';
+export type { LineAtYResult } from './TextPositionCalculator';
+export { BaseTextRegion } from './EditableTextRegion';
+export type { EditableTextRegion, RegionType } from './EditableTextRegion';
+export { RegionManager } from './RegionManager';
+
+// Region implementations
+export { BodyTextRegion, HeaderTextRegion, FooterTextRegion } from './regions';
+export type { PageBoundsProvider, HeaderBoundsProvider, FooterBoundsProvider } from './regions';

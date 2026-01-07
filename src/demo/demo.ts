@@ -51,6 +51,7 @@ function setupEditorEventLogging(): void {
         updateStatus(`Loop "${section.fieldPath}" selected`);
       }
       hideTextBoxPane();
+      hideFormattingPane();
       return; // Don't hide loop pane or continue processing
     }
 
@@ -72,7 +73,8 @@ function setupEditorEventLogging(): void {
       } else {
         updateStatus(`Cursor at position ${selection.position}`);
       }
-      // Update formatting pane to reflect the formatting at cursor
+      // Show and update formatting pane for text cursor
+      showFormattingPane();
       updateFormattingPane();
     } else if (selection.type === 'text') {
       console.log(`[Editor Event] selection-change: text selection from ${selection.start} to ${selection.end}`);
@@ -81,10 +83,13 @@ function setupEditorEventLogging(): void {
       } else {
         updateStatus(`Text selected: ${selection.end - selection.start} characters`);
       }
-      // Update formatting pane to reflect the selection's formatting
+      // Show and update formatting pane for text selection
+      showFormattingPane();
       updateFormattingPane();
     } else if (selection.type === 'elements') {
       console.log(`[Editor Event] selection-change: elements selected: ${selection.elementIds.join(', ')}`);
+      // Hide formatting pane for element selections
+      hideFormattingPane();
       // Check if one of the selected elements is a text box
       const embeddedTextBox = getSelectedEmbeddedTextBox(selection.elementIds);
       if (embeddedTextBox && !embeddedTextBox.editing) {
@@ -95,6 +100,8 @@ function setupEditorEventLogging(): void {
       }
     } else {
       console.log('[Editor Event] selection-change: no selection');
+      // Hide formatting pane when nothing is selected
+      hideFormattingPane();
     }
   });
 
@@ -144,6 +151,26 @@ function setupEditorEventLogging(): void {
     console.log('[Editor Event] substitution-field-added', event);
     updateStatus(`Field "${event.field?.fieldName || 'unknown'}" added`);
     updateDocumentInfo();
+  });
+
+  // Text box editing events
+  editor.on('textbox-editing-started', (event: any) => {
+    console.log('[Editor Event] textbox-editing-started', event);
+    // Show formatting pane and hide textbox pane when entering edit mode
+    hideTextBoxPane();
+    showFormattingPane();
+    updateFormattingPane();
+    updateStatus(`Editing text box: ${event.textBox?.id || 'unknown'}`);
+  });
+
+  editor.on('textbox-editing-ended', () => {
+    console.log('[Editor Event] textbox-editing-ended');
+    // The selection-change event will handle showing the appropriate pane
+  });
+
+  editor.on('textbox-cursor-changed', () => {
+    // Update formatting pane when cursor moves within text box
+    updateFormattingPane();
   });
 
   // Text events
@@ -231,18 +258,28 @@ function setupEventHandlers(): void {
   document.getElementById('apply-merge')?.addEventListener('click', applyMergeData);
 
   // Formatting controls
+  // Prevent buttons from stealing focus (which clears text selection)
+  const preventFocusSteal = (e: MouseEvent) => e.preventDefault();
+
+  document.getElementById('format-bold')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('format-bold')?.addEventListener('click', toggleBold);
+  document.getElementById('format-italic')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('format-italic')?.addEventListener('click', toggleItalic);
   document.getElementById('format-font-family')?.addEventListener('change', applyFontFamily);
   document.getElementById('format-font-size')?.addEventListener('change', applyFontSize);
   document.getElementById('format-color')?.addEventListener('input', applyTextColor);
   document.getElementById('format-highlight')?.addEventListener('input', applyHighlight);
+  document.getElementById('clear-highlight')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('clear-highlight')?.addEventListener('click', clearHighlight);
 
   // Alignment controls
+  document.getElementById('align-left')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('align-left')?.addEventListener('click', () => setAlignment('left'));
+  document.getElementById('align-center')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('align-center')?.addEventListener('click', () => setAlignment('center'));
+  document.getElementById('align-right')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('align-right')?.addEventListener('click', () => setAlignment('right'));
+  document.getElementById('align-justify')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('align-justify')?.addEventListener('click', () => setAlignment('justify'));
 
   // Field controls
@@ -497,6 +534,7 @@ function insertEmbeddedImage(position: 'inline' | 'float-left' | 'float-right'):
 
     editor.insertEmbeddedObject(imageObject, position);
     updateStatus(`Inserted ${position} image`);
+    editor.enableTextInput();
   } catch (error) {
     updateStatus('Failed to insert image', 'error');
     console.error('Image insertion error:', error);
@@ -510,15 +548,16 @@ function insertEmbeddedTextBox(position: 'inline' | 'float-left' | 'float-right'
     const textBoxObject = new TextBoxObject({
       id: `textbox_${Date.now()}`,
       textIndex: 0,
-      size: { width: 100, height: 24 },
+      size: { width: 200, height: 48 },
       content: 'Text Box',
       fontFamily: 'Arial',
       fontSize: 12,
-      color: '#0066cc'
+      color: '#000000'
     });
 
     editor.insertEmbeddedObject(textBoxObject, position);
     updateStatus(`Inserted ${position} text box`);
+    editor.enableTextInput();
   } catch (error) {
     updateStatus('Failed to insert text box', 'error');
     console.error('Text box insertion error:', error);
@@ -667,6 +706,7 @@ function insertFieldWithName(fieldName: string): void {
       defaultValue: `[${fieldName}]`
     });
     updateStatus(`Inserted field "${fieldName}"`);
+    editor.enableTextInput();
   } catch (error) {
     updateStatus('Failed to insert field', 'error');
     console.error('Field insertion error:', error);
@@ -796,6 +836,8 @@ function applyFormattingToSelection(formatting: Record<string, any>): void {
     updateStatus('Formatting applied');
     // Update the formatting pane to reflect the new formatting
     updateFormattingPane();
+    // Restore focus to the editor so selection is preserved
+    editor.enableTextInput();
   } catch (error) {
     updateStatus('Failed to apply formatting', 'error');
     console.error('Formatting error:', error);
@@ -1251,10 +1293,32 @@ function updateTextBoxPane(textBox: TextBoxObject | null): void {
  */
 function hideTextBoxPane(): void {
   const textboxSection = document.getElementById('textbox-section');
+
   if (textboxSection) {
     textboxSection.style.display = 'none';
   }
+
   currentSelectedTextBox = null;
+}
+
+/**
+ * Show the formatting pane.
+ */
+function showFormattingPane(): void {
+  const formattingPane = document.getElementById('formatting-pane');
+  if (formattingPane) {
+    formattingPane.style.display = 'block';
+  }
+}
+
+/**
+ * Hide the formatting pane.
+ */
+function hideFormattingPane(): void {
+  const formattingPane = document.getElementById('formatting-pane');
+  if (formattingPane) {
+    formattingPane.style.display = 'none';
+  }
 }
 
 /**

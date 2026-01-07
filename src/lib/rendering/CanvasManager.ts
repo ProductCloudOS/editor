@@ -7,6 +7,13 @@ import { BaseElement } from '../elements/BaseElement';
 import { FlowingTextRenderer } from './FlowingTextRenderer';
 import { TextBoxObject } from '../objects/TextBoxObject';
 import { Focusable } from '../text/types';
+import {
+  RegionManager,
+  BodyTextRegion,
+  HeaderTextRegion,
+  FooterTextRegion,
+  FlowingTextContent
+} from '../text';
 
 // Double-click detection constants
 const DOUBLE_CLICK_THRESHOLD = 300; // ms
@@ -39,6 +46,7 @@ export class CanvasManager extends EventEmitter {
   private _editingTextBoxPageId: string | null = null;
   private _focusedControl: Focusable | null = null;
   private isSelectingTextInTextBox: boolean = false;
+  private regionManager: RegionManager;
 
   constructor(container: HTMLElement, document: Document, options: Required<Omit<EditorOptions, 'customPageSize'>> & { customPageSize?: PageDimensions }) {
     super();
@@ -46,7 +54,38 @@ export class CanvasManager extends EventEmitter {
     this.document = document;
     this.options = options;
     this.flowingTextRenderer = new FlowingTextRenderer(document);
+    this.regionManager = new RegionManager();
     this.setupFlowingTextListeners();
+    this.initializeRegions();
+  }
+
+  /**
+   * Initialize text regions from the document.
+   */
+  private initializeRegions(): void {
+    const page = this.document.pages[0];
+    if (!page) return;
+
+    // Create body region
+    const bodyRegion = new BodyTextRegion(
+      page.flowingContent,
+      (pageIndex: number) => this.document.pages[pageIndex] || null
+    );
+    this.regionManager.setBodyRegion(bodyRegion);
+
+    // Create header region
+    const headerRegion = new HeaderTextRegion(
+      this.document.headerFlowingContent,
+      (pageIndex: number) => this.document.pages[pageIndex] || null
+    );
+    this.regionManager.setHeaderRegion(headerRegion);
+
+    // Create footer region
+    const footerRegion = new FooterTextRegion(
+      this.document.footerFlowingContent,
+      (pageIndex: number) => this.document.pages[pageIndex] || null
+    );
+    this.regionManager.setFooterRegion(footerRegion);
   }
 
   async initialize(): Promise<void> {
@@ -318,41 +357,25 @@ export class CanvasManager extends EventEmitter {
     // Check if clicking inside an editing text box - start text selection
     if (this.editingTextBox && this._editingTextBoxPageId === pageId) {
       const textBox = this.editingTextBox;
-      const renderedPos = textBox.renderedPosition;
-      if (renderedPos) {
-        const textBoxBounds = {
-          x: renderedPos.x,
-          y: renderedPos.y,
-          width: textBox.width,
-          height: textBox.height
-        };
+      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const ctx = this.contexts.get(pageId);
 
-        if (point.x >= textBoxBounds.x && point.x <= textBoxBounds.x + textBoxBounds.width &&
-            point.y >= textBoxBounds.y && point.y <= textBoxBounds.y + textBoxBounds.height) {
-          // Click inside editing text box - start text selection
-          const localPoint = {
-            x: point.x - textBoxBounds.x,
-            y: point.y - textBoxBounds.y
-          };
-          const ctx = this.contexts.get(pageId);
-          if (ctx) {
-            const flowingContent = textBox.flowingContent;
+      if (ctx && pageIndex >= 0 && textBox.containsPointInRegion(point, pageIndex)) {
+        const flowingContent = textBox.flowingContent;
 
-            // Clear any existing selection
-            flowingContent.clearSelection();
+        // Clear any existing selection
+        flowingContent.clearSelection();
 
-            // Position cursor and set selection anchor
-            textBox.handleTextClick(localPoint, ctx);
-            flowingContent.setSelectionAnchor();
+        // Position cursor using unified region click handler
+        this.flowingTextRenderer.handleRegionClick(textBox, point, pageIndex, ctx);
+        flowingContent.setSelectionAnchor();
 
-            // Start text selection mode in text box
-            this.isSelectingTextInTextBox = true;
+        // Start text selection mode in text box
+        this.isSelectingTextInTextBox = true;
 
-            this.render();
-            e.preventDefault();
-            return;
-          }
-        }
+        this.render();
+        e.preventDefault();
+        return;
       }
     }
 
@@ -431,18 +454,12 @@ export class CanvasManager extends EventEmitter {
     // Handle text selection in text box
     if (this.isSelectingTextInTextBox && this.editingTextBox && this._editingTextBoxPageId === pageId) {
       const textBox = this.editingTextBox;
-      const renderedPos = textBox.renderedPosition;
-      if (renderedPos) {
-        const localPoint = {
-          x: point.x - renderedPos.x,
-          y: point.y - renderedPos.y
-        };
-        const ctx = this.contexts.get(pageId);
-        if (ctx) {
-          // Update cursor position (selection extends from anchor)
-          textBox.handleTextClick(localPoint, ctx);
-          this.render();
-        }
+      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const ctx = this.contexts.get(pageId);
+      if (ctx && pageIndex >= 0) {
+        // Update cursor position (selection extends from anchor)
+        this.flowingTextRenderer.handleRegionClick(textBox, point, pageIndex, ctx);
+        this.render();
       }
       e.preventDefault();
       return;
@@ -714,46 +731,78 @@ export class CanvasManager extends EventEmitter {
       return;
     }
 
-    // If no regular element was clicked, try flowing text based on active section
-    let textClickResult: boolean | string = false;
+    // If no regular element was clicked, try flowing text using unified region click handler
+    const ctx = this.contexts.get(pageId);
+    const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
 
-    if (this._activeSection === 'header' && page) {
-      textClickResult = this.flowingTextRenderer.handleHeaderClick(point, page);
-      if (textClickResult === 'text') {
-        // Don't call clearSelection() as it triggers render() which can interfere
-        // with the cursor position that handleHeaderClick just set
-        this.render();
-        return;
-      }
-    } else if (this._activeSection === 'footer' && page) {
-      textClickResult = this.flowingTextRenderer.handleFooterClick(point, page);
-      if (textClickResult === 'text') {
-        // Don't call clearSelection() as it triggers render() which can interfere
-        // with the cursor position that handleFooterClick just set
-        this.render();
-        return;
-      }
-    } else {
-      // Body text
-      textClickResult = this.flowingTextRenderer.handleClick(point, pageId);
-      if (textClickResult === 'text') {
-        // Regular text click - clear element selection
-        this.clearSelection();
-        // Also clear any text selection since this is a single click
-        if (page && page.flowingContent) {
-          page.flowingContent.clearSelection();
+    if (ctx && pageIndex >= 0) {
+      // Get the appropriate region based on active section
+      const region = this.getRegionForActiveSection();
+
+      if (region) {
+        const result = this.flowingTextRenderer.handleRegionClick(region, point, pageIndex, ctx);
+
+        if (result) {
+          // Text was clicked
+          if (this._activeSection === 'body') {
+            // For body text, clear element selection and text selection
+            this.clearSelection();
+            if (page && page.flowingContent) {
+              page.flowingContent.clearSelection();
+            }
+          }
+          // For header/footer, don't clear selection to preserve cursor position
+          this.render();
+          return;
         }
-        this.render();
-        return;
-      } else if (textClickResult === 'inline-element') {
-        // Inline element click - let the event handler deal with selection
-        // Don't clear selection here, don't trigger additional renders
-        return;
+      }
+
+      // Check for inline elements in any region (handleRegionClick returns null for inline element clicks)
+      // The inline-element-clicked event is emitted by handleRegionClick
+      // Check if we should return without clearing selection
+      const activeRegion = this.getRegionForActiveSection();
+      if (activeRegion) {
+        const localPoint = activeRegion.globalToLocal(point, pageIndex);
+        if (localPoint) {
+          // Point is in active region but no text was clicked - might be inline element
+          // The event was already emitted, just return
+          return;
+        }
       }
     }
 
     // Nothing was clicked, clear selection
     this.clearSelection();
+  }
+
+  /**
+   * Get the EditableTextRegion for the currently active section.
+   */
+  private getRegionForActiveSection() {
+    switch (this._activeSection) {
+      case 'header':
+        return this.regionManager.getHeaderRegion();
+      case 'footer':
+        return this.regionManager.getFooterRegion();
+      case 'body':
+      default:
+        return this.regionManager.getBodyRegion();
+    }
+  }
+
+  /**
+   * Get the FlowingTextContent for the currently active section.
+   */
+  private getFlowingContentForActiveSection(): FlowingTextContent | null {
+    switch (this._activeSection) {
+      case 'header':
+        return this.document.headerFlowingContent;
+      case 'footer':
+        return this.document.footerFlowingContent;
+      case 'body':
+      default:
+        return this.document.pages[0]?.flowingContent || null;
+    }
   }
 
   private getMousePosition(e: MouseEvent): Point {
@@ -1054,9 +1103,9 @@ export class CanvasManager extends EventEmitter {
       if (targetFlowingContent) break;
     }
 
-    // If not part of a range selection, hide cursor and position after object
+    // If not part of a range selection, position cursor after object
+    // (cursor visibility is handled by isCursorAfterFieldOrObject check in FlowingTextRenderer)
     if (!isPartOfRangeSelection && targetFlowingContent) {
-      this.flowingTextRenderer.hideCursor();
       // Position cursor after the object (textIndex + 1 for the replacement char)
       const textIndex = embeddedObject.textIndex ?? obj.textIndex;
       if (textIndex !== undefined) {
@@ -1259,12 +1308,17 @@ export class CanvasManager extends EventEmitter {
   }
 
   showTextCursor(): void {
-    this.flowingTextRenderer.showCursor();
+    // Focus the active section's FlowingTextContent to show cursor
+    const flowingContent = this.getFlowingContentForActiveSection();
+    if (flowingContent) {
+      this.setFocus(flowingContent);
+    }
     this.render();
   }
 
   hideTextCursor(): void {
-    this.flowingTextRenderer.hideCursor();
+    // Blur the focused control to hide cursor
+    this.setFocus(null);
     this.render();
   }
 
@@ -1410,18 +1464,20 @@ export class CanvasManager extends EventEmitter {
     if (this._activeSection !== section) {
       const previousSection = this._activeSection;
       this._activeSection = section;
-      this.flowingTextRenderer.setActiveSection(section);
+
+      // Get the appropriate region and set it as focused
+      let region = null;
+      if (section === 'body') {
+        region = this.regionManager.getBodyRegion();
+      } else if (section === 'header') {
+        region = this.regionManager.getHeaderRegion();
+      } else if (section === 'footer') {
+        region = this.regionManager.getFooterRegion();
+      }
+      this.flowingTextRenderer.setFocusedRegion(region);
 
       // Use the unified focus system to manage focus on the appropriate FlowingTextContent
-      const page = this.document.pages[0];
-      let flowingContent: Focusable | null = null;
-      if (section === 'body' && page?.flowingContent) {
-        flowingContent = page.flowingContent;
-      } else if (section === 'header' && this.document.headerFlowingContent) {
-        flowingContent = this.document.headerFlowingContent;
-      } else if (section === 'footer' && this.document.footerFlowingContent) {
-        flowingContent = this.document.footerFlowingContent;
-      }
+      const flowingContent = region?.flowingContent as Focusable | null;
       this.setFocus(flowingContent);
 
       this.render();
@@ -1470,27 +1526,17 @@ export class CanvasManager extends EventEmitter {
 
     if (flowingContent) {
       const embeddedObjects = flowingContent.getEmbeddedObjects();
+      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
       for (const [, obj] of embeddedObjects.entries()) {
         if (obj instanceof TextBoxObject && obj.renderedPosition) {
-          // Check if point is inside the text box
-          const textBoxBounds = {
-            x: obj.renderedPosition.x,
-            y: obj.renderedPosition.y,
-            width: obj.width,
-            height: obj.height
-          };
-          if (point.x >= textBoxBounds.x && point.x <= textBoxBounds.x + textBoxBounds.width &&
-              point.y >= textBoxBounds.y && point.y <= textBoxBounds.y + textBoxBounds.height) {
+          // Check if point is inside the text box using region interface
+          if (obj.containsPointInRegion(point, pageIndex)) {
             // Enter editing mode for this text box
             this.setEditingTextBox(obj, pageId);
-            // Position cursor at click point
-            const localPoint = {
-              x: point.x - textBoxBounds.x,
-              y: point.y - textBoxBounds.y
-            };
+            // Position cursor at click point using unified region click handler
             const ctx = this.contexts.get(pageId);
-            if (ctx) {
-              obj.handleTextClick(localPoint, ctx);
+            if (ctx && pageIndex >= 0) {
+              this.flowingTextRenderer.handleRegionClick(obj, point, pageIndex, ctx);
             }
             this.render();
             return;
@@ -1505,18 +1551,20 @@ export class CanvasManager extends EventEmitter {
       this.setActiveSection(targetSection);
     }
 
-    // If clicking in header/footer, also handle text click and render
-    if (targetSection === 'header') {
-      const result = this.flowingTextRenderer.handleHeaderClick(point, page);
-      if (result === 'text') {
-        // Note: Don't call clearSelection() as it would reset the cursor position
-        this.render();
-      }
-    } else if (targetSection === 'footer') {
-      const result = this.flowingTextRenderer.handleFooterClick(point, page);
-      if (result === 'text') {
-        // Note: Don't call clearSelection() as it would reset the cursor position
-        this.render();
+    // If clicking in header/footer, also handle text click using unified handler
+    if (targetSection === 'header' || targetSection === 'footer') {
+      const ctx = this.contexts.get(pageId);
+      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const region = targetSection === 'header'
+        ? this.regionManager.getHeaderRegion()
+        : this.regionManager.getFooterRegion();
+
+      if (ctx && pageIndex >= 0 && region) {
+        const result = this.flowingTextRenderer.handleRegionClick(region, point, pageIndex, ctx);
+        if (result) {
+          // Note: Don't call clearSelection() as it would reset the cursor position
+          this.render();
+        }
       }
     }
   }
@@ -1536,10 +1584,9 @@ export class CanvasManager extends EventEmitter {
 
     if (textBox) {
       // Use the unified focus system to handle focus/blur and cursor blink
+      // This blurs the previous control, hiding its cursor
       this.setFocus(textBox);
 
-      // Hide the main document cursor and clear any text selection
-      this.flowingTextRenderer.hideCursor();
       // Clear selection in main flowing content
       const page = this.document.pages[0];
       if (page?.flowingContent) {
@@ -1550,10 +1597,15 @@ export class CanvasManager extends EventEmitter {
       this.selectInlineElement({ type: 'embedded-object', object: textBox, textIndex: textBox.textIndex });
       this.emit('textbox-editing-started', { textBox });
     } else {
-      // Clear focus (this will blur the previous text box)
-      this.setFocus(null);
-      // Show the main document cursor again
-      this.flowingTextRenderer.showCursor();
+      // Restore focus to the active section's FlowingTextContent
+      // This starts the cursor blink in the focused control
+      const activeFlowingContent = this.getFlowingContentForActiveSection();
+      if (activeFlowingContent) {
+        this.setFocus(activeFlowingContent);
+      } else {
+        // Clear focus if no active section
+        this.setFocus(null);
+      }
       this.emit('textbox-editing-ended', {});
     }
   }

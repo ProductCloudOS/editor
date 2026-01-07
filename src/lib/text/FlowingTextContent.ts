@@ -645,6 +645,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
           this.clearSelection();
           this.moveCursorLeft();
         }
+        this.resetCursorBlink();
         return true;
 
       case 'ArrowRight':
@@ -655,6 +656,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
           this.clearSelection();
           this.moveCursorRight();
         }
+        this.resetCursorBlink();
         return true;
 
       case 'ArrowUp':
