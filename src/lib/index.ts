@@ -55,6 +55,9 @@ export {
   BaseEmbeddedObject,
   ImageObject,
   TextBoxObject,
+  TableObject,
+  TableRow,
+  TableCell,
   EmbeddedObjectFactory
 } from './objects';
 
@@ -63,6 +66,12 @@ export type {
   EmbeddedObjectData,
   ImageObjectConfig,
   TextBoxObjectConfig,
+  TableObjectConfig,
+  TableCellConfig,
+  TableRowConfig,
+  TableColumnConfig,
+  CellAddress,
+  CellRange,
   ResizeHandle,
   Size,
   Point,

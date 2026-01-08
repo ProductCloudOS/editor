@@ -111,6 +111,8 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     });
 
     this.textState.on('cursor-moved', (data) => {
+      // Note: Pending formatting is NOT cleared here because cursor also moves
+      // during text insertion. It's cleared in explicit navigation methods instead.
       this.emit('cursor-moved', { position: data.position });
     });
 
@@ -183,6 +185,27 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
   insertText(text: string, position?: number): void {
     const insertAt = position ?? this.textState.getCursorPosition();
 
+    // Determine what formatting to apply to the new text:
+    // 1. If pending formatting exists, use it
+    // 2. Otherwise, inherit from surrounding text (char before, or char after if at start)
+    const pendingFormatting = this.formatting.getPendingFormatting();
+    let formattingToApply: Partial<TextFormattingStyle> | null = null;
+
+    if (pendingFormatting) {
+      formattingToApply = pendingFormatting;
+    } else {
+      // Inherit from surrounding text
+      const currentText = this.textState.getText();
+      if (insertAt > 0) {
+        // Use formatting from character before cursor
+        formattingToApply = this.formatting.getFormattingAt(insertAt - 1);
+      } else if (currentText.length > 0) {
+        // At start - use formatting from first character
+        formattingToApply = this.formatting.getFormattingAt(0);
+      }
+      // If empty text, formattingToApply stays null and default formatting is used
+    }
+
     // Shift formatting, fields, objects, and sections after the insertion point
     this.formatting.shiftFormatting(insertAt, text.length);
     this.substitutionFields.shiftFields(insertAt, text.length);
@@ -194,6 +217,11 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
 
     // Now shift paragraph formatting with the complete content
     this.paragraphFormatting.shiftParagraphs(insertAt, text.length, this.textState.getText());
+
+    // Apply formatting to the newly inserted text
+    if (formattingToApply && text.length > 0) {
+      this.formatting.applyFormatting(insertAt, insertAt + text.length, formattingToApply);
+    }
   }
 
   /**
@@ -216,22 +244,28 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
 
   /**
    * Set the cursor position.
+   * Clears pending formatting since this is explicit cursor navigation.
    */
   setCursorPosition(position: number): void {
+    this.formatting.clearPendingFormatting();
     this.textState.setCursorPosition(position);
   }
 
   /**
    * Move cursor left, skipping over substitution fields.
+   * Clears pending formatting since this is explicit cursor navigation.
    */
   moveCursorLeft(): void {
+    this.formatting.clearPendingFormatting();
     this.textState.moveCursorLeft();
   }
 
   /**
    * Move cursor right, skipping over substitution fields.
+   * Clears pending formatting since this is explicit cursor navigation.
    */
   moveCursorRight(): void {
+    this.formatting.clearPendingFormatting();
     this.textState.moveCursorRight();
   }
 
@@ -333,6 +367,13 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
         this.substitutionFields.setFieldFormatting(field.textIndex, mergedFormatting);
       }
     }
+
+    // Emit content-changed to trigger reflow (e.g., for table cells)
+    this.emit('content-changed', {
+      type: 'formatting',
+      start,
+      end
+    });
   }
 
   /**
@@ -347,6 +388,70 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
    */
   setDefaultFormatting(formatting: Partial<TextFormattingStyle>): void {
     this.formatting.setDefaultFormatting(formatting);
+  }
+
+  // ============================================
+  // Pending Formatting (cursor-only state)
+  // ============================================
+
+  /**
+   * Set pending formatting to apply to the next inserted character.
+   * Used when formatting is applied with just a cursor (no selection).
+   */
+  setPendingFormatting(formatting: Partial<TextFormattingStyle>): void {
+    this.formatting.setPendingFormatting(formatting);
+  }
+
+  /**
+   * Get the current pending formatting, if any.
+   */
+  getPendingFormatting(): Partial<TextFormattingStyle> | null {
+    return this.formatting.getPendingFormatting();
+  }
+
+  /**
+   * Check if there is pending formatting.
+   */
+  hasPendingFormatting(): boolean {
+    return this.formatting.hasPendingFormatting();
+  }
+
+  /**
+   * Clear pending formatting.
+   */
+  clearPendingFormatting(): void {
+    this.formatting.clearPendingFormatting();
+  }
+
+  /**
+   * Get the effective formatting at cursor, considering pending formatting.
+   * If pending formatting exists, merge it with the formatting at cursor position.
+   * Otherwise, return the formatting at the position before cursor (or default if at start).
+   */
+  getEffectiveFormattingAtCursor(): TextFormattingStyle {
+    const cursorPos = this.getCursorPosition();
+    const pending = this.getPendingFormatting();
+
+    // Get base formatting: from character before cursor, or default if at start
+    let baseFormatting: TextFormattingStyle;
+    if (cursorPos > 0) {
+      baseFormatting = this.formatting.getFormattingAt(cursorPos - 1);
+    } else {
+      // At start of line - use formatting at cursor position or default
+      const text = this.getText();
+      if (text.length > 0) {
+        baseFormatting = this.formatting.getFormattingAt(0);
+      } else {
+        baseFormatting = this.formatting.defaultFormatting;
+      }
+    }
+
+    // Merge pending formatting if exists
+    if (pending) {
+      return { ...baseFormatting, ...pending };
+    }
+
+    return baseFormatting;
   }
 
   // ============================================
@@ -614,7 +719,11 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
    * @returns true if the event was handled, false otherwise
    */
   handleKeyDown(e: KeyboardEvent): boolean {
-    if (!this._hasFocus) return false;
+    console.log('[FlowingTextContent.handleKeyDown] Key:', e.key, '_hasFocus:', this._hasFocus);
+    if (!this._hasFocus) {
+      console.log('[FlowingTextContent.handleKeyDown] No focus, returning false');
+      return false;
+    }
 
     switch (e.key) {
       case 'Backspace':

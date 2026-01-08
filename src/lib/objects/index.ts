@@ -24,5 +24,22 @@ export { BaseEmbeddedObject } from './BaseEmbeddedObject';
 export { ImageObject } from './ImageObject';
 export { TextBoxObject } from './TextBoxObject';
 
+// Table
+export { TableObject, TableRow, TableCell } from './table';
+export type {
+  TableObjectConfig,
+  TableObjectData,
+  TableRowConfig,
+  TableRowData,
+  TableCellConfig,
+  TableCellData,
+  TableColumnConfig,
+  CellAddress,
+  CellRange,
+  CellBorder,
+  CellPadding,
+  VerticalAlign
+} from './table';
+
 // Factory
 export { EmbeddedObjectFactory } from './EmbeddedObjectFactory';

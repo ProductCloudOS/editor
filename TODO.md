@@ -1,46 +1,21 @@
 # PC Editor TODO List
 
-## High Priority
+## Defects
 
-### Core Functionality
-- [ ] **Fix properties panel not showing element details**
-  - Properties panel should display element information when selected
-  - Currently broken for both regular and inline elements
-  - Need to verify selection event propagation to demo interface
+(No open defects)
 
-- [ ] **Complete inline element resize functionality**
-  - Basic resize detection works but resize operations may need refinement
-  - Test all resize handles (corners and edges)
-  - Ensure resize triggers text reflow when needed
+## New Features
 
-### Data Systems
-- [ ] **Implement data binding system**
-  - Currently has placeholder framework but needs full implementation
-  - Support for JSON data binding to placeholder elements
-  - Real-time data updates and template rendering
-
-- [ ] **Build PDF generation using pdf-lib**
-  - Export documents as PDF files
-  - Preserve layout, fonts, and element positioning
-  - Support multi-page documents with proper page breaks
-
-## Medium Priority
-
-### User Experience
-- [ ] **Improve text editing capabilities**
-  - Add text selection within flowing text
-  - Implement cut/copy/paste operations
-  - Add undo/redo functionality
-
-- [ ] **Enhance element management**
-  - Element grouping and ungrouping
-  - Element locking/unlocking controls
-  - Layer management UI (bring forward, send backward)
-
-- [ ] **Expand element types**
-  - Shape elements (rectangles, circles, lines)
-  - Chart/graph elements
-  - Table elements with row/column management
+- [ ] FEATURE-0001 Remove the 'regular' elements from the project entirely, including all support for them in the demo app
+- [ ] FEATURE-0002 Support the ability to add a loop to rows in a table.  Only rows and not columns needs to be supported.  A loop in a table should replicate the rows during a merge just like text is replicated normally
+- [ ] FEATURE-0003 Add a table pane on the right that appears when a table is selected that supports: column/row addition, column/row deletion, cell merging, cell background, borders, header row or column, how many header rows/columns different format for headers vs normal  
+- [ ] FEATURE-0004 Tables need to span multiple pages and have the headers replicate at the top of each page that the table crosses over
+- [ ] FEATURE-0005 Add a 'page number' field.  This will act list a substitution field but, instead of being replaced by text when data is merged, it should be replaced by the page number when the document is rendered to PDF
+- [ ] FEATURE-0006 Implement the image object properly.  When an image is created it should have the image data passed in, in an appropriate format, when it is created.  The client (in our case the demo) is responsible for getting the data in the first place.  A formatting pane (like the text box pane) supporting how the image resizes (freely, locked aspect ration, tiled) and giving the option to change the image should also be created
+- [ ] FEATURE-0007 Different positioning of objects
+- [ ] FEATURE-0008 Implement the PDF Generation function such that it looks identical to the canvas but without control characters, selection marks, cursors, grids, loops or any other operational render.  Also, the demo app should automatically apply data merge prior to creating the PDF.  This should be in the control of the client application though and not the editor
+- [ ] FEATURE-0009 Undo/Redo functionality
+- [ ] FEATURE-0010 Serialisation/Deserialise of document contents
 
 ### Performance & Polish
 - [ ] **Optimize rendering performance**
@@ -52,43 +27,6 @@
   - Keyboard navigation for canvas elements
   - Screen reader announcements for state changes
   - High contrast mode support
-
-## Low Priority
-
-### Advanced Features
-- [ ] **Collaborative editing support**
-  - Real-time multi-user editing
-  - Conflict resolution for simultaneous edits
-  - User cursor indicators
-
-- [ ] **Template system**
-  - Pre-defined document templates
-  - Template marketplace/library
-  - Custom template creation tools
-
-- [ ] **Advanced text formatting**
-  - Rich text editor integration
-  - Font management and embedding
-  - Advanced paragraph and character formatting
-
-### Developer Experience
-- [ ] **Comprehensive testing suite**
-  - Unit tests for all core components
-  - Integration tests for user workflows  
-  - Visual regression tests for rendering
-  - Performance benchmarks
-
-- [ ] **Documentation improvements**
-  - API documentation with examples
-  - Architecture decision records
-  - Tutorial and getting started guide
-
-- [ ] **Build system enhancements**
-  - Source maps for debugging
-  - Bundle size optimization
-  - Multiple output formats (ESM, CommonJS, UMD)
-
-## Technical Debt
 
 ### Code Quality
 - [ ] **Remove debug logging**
@@ -119,6 +57,27 @@
 
 ## Completed Recently ✅
 
+- ✅ BUG-0019 Multi-Page Loop Indicators - Fixed vertical connector lines and horizontal continuation lines rendering across page boundaries. Simplified overlap detection and fixed sections retrieval to use first page's flowingContent for all pages.
+- ✅ BUG-0018 Pending Formatting - Implemented pending formatting for cursor-only state. Formatting applied with no selection now affects next typed characters. Inherits from surrounding text when no pending formatting exists.
+- ✅ BUG-0021 Header/Body Logic Unification - Unified header/footer rendering to use renderRegion, added section detection to handleClick, fixed cursor-changed event to update active section
+- ✅ BUG-0020 Field Selection in Header - Fixed by unifying header rendering through renderRegion which correctly gets cursor position from region's FlowingTextContent
+- ✅ BUG-0017 Header Field/Object Deselection - Fixed by adding section detection in handleClick and updating active section before processing clicks
+- ✅ BUG-0016 Escape Returns Focus - Added focus return to parent FlowingTextContent when Escape exits editing or clears selection
+- ✅ BUG-0003 Header Text Box Resize - Fixed getResizeHandleAt and resize handling to check all flowing content sources (body, header, footer)
+- ✅ BUG-0014 Table Resize - Changed set size override to only adjust last column/row instead of proportional distribution
+- ✅ BUG-0015 Internal Divider Resize - Modified TableResizeHandler to adjust both adjacent columns/rows inversely, keeping total table size constant
+- ✅ BUG-0013 Merge Data in Tables/Text Boxes - Added substituteFieldsInEmbeddedObjects() to process fields in embedded objects
+- ✅ BUG-0011 Selection Blocking Object Click - Moved element/embedded object checks before text selection early-return in handleClick
+- ✅ BUG-0012 Table Cell Formatting Pane Update - Added tablecell-cursor-changed event for clicks and keyboard navigation
+- ✅ BUG-0007 Field Insertion in Table Cells - Updated insertSubstitutionField/insertEmbeddedObject to use getEditingFlowingContent()
+- ✅ BUG-0008 Table Cell Font Formatting - Added content-changed event emission to applyFormatting() to trigger table cell reflow
+- ✅ BUG-0010 Table Cell Drag Selection Sensitivity - Added minimum drag distance threshold before cell range selection activates
+- ✅ BUG-0009 Table Cell Selection Clearing - Added clearSelection() call when navigating between table cells
+- ✅ BUG-0004 Table Cell Text Selection - Added text selection mode for click and drag within focused table cells
+- ✅ BUG-0005 Table Cell Shift+Arrow Selection - Added shift key handling to table cell vertical navigation for text selection
+- ✅ BUG-0006 Text Box Formatting Pane - Fixed selection-change handler to keep formatting pane visible when a text box is being edited
+- ✅ BUG-0001 Selection Clearing on Editor blur - Added cursor suspend/resume and focus event handler to preserve selection when editor loses browser focus
+- ✅ BUG-0002 Table Last Row/Column Resize - Added size setter override to TableObject to redistribute size proportionally among all columns/rows
 - ✅ Fixed broken selection system affecting all elements
 - ✅ Restored resize handle visibility for regular elements  
 - ✅ Fixed inline element click detection and event handling
@@ -130,22 +89,3 @@
 - ✅ Added newline support for Enter key in flowing text
 - ✅ Built complete multi-page document system with text reflow
 
-## Notes
-
-### Development Priorities
-1. **Stability First**: Fix existing functionality before adding new features
-2. **User Experience**: Focus on core editing workflows that users need daily  
-3. **Performance**: Ensure editor remains responsive with large documents
-4. **Extensibility**: Design new features to be modular and testable
-
-### Known Issues to Monitor
-- Canvas rendering performance with many inline elements
-- Text cursor positioning accuracy during rapid text changes
-- Memory usage with very large documents
-- Browser compatibility for advanced canvas features
-
-### Future Architecture Considerations
-- Consider virtual scrolling for very large documents
-- Evaluate WebAssembly for performance-critical operations
-- Plan for potential migration to OffscreenCanvas for background rendering
-- Design plugin system for custom element types

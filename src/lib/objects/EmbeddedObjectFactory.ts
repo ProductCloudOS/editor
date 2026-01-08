@@ -1,6 +1,7 @@
 import { BaseEmbeddedObject } from './BaseEmbeddedObject';
 import { ImageObject } from './ImageObject';
 import { TextBoxObject } from './TextBoxObject';
+import { TableObject, TableObjectData } from './table';
 import { EmbeddedObjectData } from './types';
 
 /**
@@ -135,6 +136,11 @@ export class EmbeddedObjectFactory {
       }
 
       return textBox;
+    });
+
+    // Register table object
+    this.register('table', (data) => {
+      return TableObject.fromData(data as TableObjectData);
     });
 
     this.initialized = true;

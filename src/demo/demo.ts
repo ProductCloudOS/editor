@@ -1,10 +1,11 @@
-import { PCEditor, DocumentData, ImageObject, TextBoxObject, EditorSelection, SubstitutionField, RepeatingSection, EditingSection, TextAlignment } from '../lib';
+import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, SubstitutionField, RepeatingSection, EditingSection, TextAlignment } from '../lib';
 import { sampleDocument } from './sample-data';
 
 let editor: PCEditor;
 let currentSelectedField: SubstitutionField | null = null;
 let currentSelectedSection: RepeatingSection | null = null;
 let currentSelectedTextBox: TextBoxObject | null = null;
+let currentSelectedTable: TableObject | null = null;
 
 function initializeEditor(): void {
   const container = document.getElementById('editor');
@@ -66,6 +67,10 @@ function setupEditorEventLogging(): void {
       hideTextBoxPane();
     }
 
+    // Check if a table is selected or focused
+    const selectedTable = editor.getSelectedTable?.() || editor.getFocusedTable?.();
+    updateTableTools(selectedTable);
+
     if (selection.type === 'cursor') {
       console.log(`[Editor Event] selection-change: cursor at position ${selection.position}`);
       if (selectedField) {
@@ -88,15 +93,22 @@ function setupEditorEventLogging(): void {
       updateFormattingPane();
     } else if (selection.type === 'elements') {
       console.log(`[Editor Event] selection-change: elements selected: ${selection.elementIds.join(', ')}`);
-      // Hide formatting pane for element selections
-      hideFormattingPane();
       // Check if one of the selected elements is a text box
       const embeddedTextBox = getSelectedEmbeddedTextBox(selection.elementIds);
-      if (embeddedTextBox && !embeddedTextBox.editing) {
-        updateTextBoxPane(embeddedTextBox);
-        updateStatus(`Text box selected: ${embeddedTextBox.id}`);
+      if (embeddedTextBox && embeddedTextBox.editing) {
+        // Text box is being edited - keep formatting pane visible and update it
+        showFormattingPane();
+        updateFormattingPane();
+        updateStatus('Editing text box');
       } else {
-        updateStatus(`Elements selected: ${selection.elementIds.length}`);
+        // Not editing a text box - hide formatting pane
+        hideFormattingPane();
+        if (embeddedTextBox) {
+          updateTextBoxPane(embeddedTextBox);
+          updateStatus(`Text box selected: ${embeddedTextBox.id}`);
+        } else {
+          updateStatus(`Elements selected: ${selection.elementIds.length}`);
+        }
       }
     } else {
       console.log('[Editor Event] selection-change: no selection');
@@ -153,23 +165,49 @@ function setupEditorEventLogging(): void {
     updateDocumentInfo();
   });
 
-  // Text box editing events
-  editor.on('textbox-editing-started', (event: any) => {
-    console.log('[Editor Event] textbox-editing-started', event);
-    // Show formatting pane and hide textbox pane when entering edit mode
+  // Unified text editing events
+  editor.on('text-editing-started', (event: { source: 'body' | 'textbox' | 'tablecell' }) => {
+    console.log('[Editor Event] text-editing-started', event);
+    // Show formatting pane when editing any text
     hideTextBoxPane();
     showFormattingPane();
     updateFormattingPane();
-    updateStatus(`Editing text box: ${event.textBox?.id || 'unknown'}`);
+
+    switch (event.source) {
+      case 'body':
+        updateStatus('Editing document body');
+        break;
+      case 'textbox':
+        updateStatus('Editing text box');
+        break;
+      case 'tablecell':
+        updateStatus('Editing table cell');
+        break;
+    }
+  });
+
+  editor.on('text-editing-ended', (event: { source: 'body' | 'textbox' | 'tablecell' | null }) => {
+    console.log('[Editor Event] text-editing-ended', event);
+    // Hide formatting pane when not editing text
+    hideFormattingPane();
+  });
+
+  // Legacy text box editing events (for backwards compatibility)
+  editor.on('textbox-editing-started', (event: any) => {
+    console.log('[Editor Event] textbox-editing-started', event);
   });
 
   editor.on('textbox-editing-ended', () => {
     console.log('[Editor Event] textbox-editing-ended');
-    // The selection-change event will handle showing the appropriate pane
   });
 
   editor.on('textbox-cursor-changed', () => {
     // Update formatting pane when cursor moves within text box
+    updateFormattingPane();
+  });
+
+  editor.on('tablecell-cursor-changed', () => {
+    // Update formatting pane when cursor moves within table cell
     updateFormattingPane();
   });
 
@@ -239,12 +277,39 @@ function setupEventHandlers(): void {
   document.getElementById('clear-text')?.addEventListener('click', clearFlowingText);
   document.getElementById('add-sample-text')?.addEventListener('click', addSampleFlowingText);
 
+  // Prevent buttons from stealing focus - define early so it's available for all sections
+  const preventFocusSteal = (e: MouseEvent) => e.preventDefault();
+
+  // Save editing context before focus is stolen (for dropdowns/color pickers that need focus)
+  const saveSelectionBeforeFocusSteal = () => {
+    editor?.saveEditingContext();
+  };
+
   // Embedded content controls
+  document.getElementById('insert-inline-image')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-inline-image')?.addEventListener('click', () => insertEmbeddedImage('inline'));
+  document.getElementById('insert-inline-text')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-inline-text')?.addEventListener('click', () => insertEmbeddedTextBox('inline'));
+  document.getElementById('insert-inline-table')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('insert-inline-table')?.addEventListener('click', () => insertEmbeddedTable('inline'));
+  document.getElementById('insert-substitution-field')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-substitution-field')?.addEventListener('click', toggleFieldPicker);
+  document.getElementById('insert-float-left')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-float-left')?.addEventListener('click', () => insertEmbeddedImage('float-left'));
+  document.getElementById('insert-float-right')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-float-right')?.addEventListener('click', () => insertEmbeddedImage('float-right'));
+
+  // Table tools
+  document.getElementById('table-add-row')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-add-row')?.addEventListener('click', tableAddRow);
+  document.getElementById('table-add-col')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-add-col')?.addEventListener('click', tableAddColumn);
+  document.getElementById('table-merge')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-merge')?.addEventListener('click', tableMergeCells);
+  document.getElementById('table-split')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-split')?.addEventListener('click', tableSplitCell);
+  document.getElementById('table-header')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-header')?.addEventListener('click', tableToggleHeader);
 
   // Document settings controls
   document.getElementById('apply-margins')?.addEventListener('click', applyMargins);
@@ -258,16 +323,18 @@ function setupEventHandlers(): void {
   document.getElementById('apply-merge')?.addEventListener('click', applyMergeData);
 
   // Formatting controls
-  // Prevent buttons from stealing focus (which clears text selection)
-  const preventFocusSteal = (e: MouseEvent) => e.preventDefault();
-
   document.getElementById('format-bold')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('format-bold')?.addEventListener('click', toggleBold);
   document.getElementById('format-italic')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('format-italic')?.addEventListener('click', toggleItalic);
+  // For controls that need focus (dropdowns, color pickers), save selection on mousedown
+  document.getElementById('format-font-family')?.addEventListener('mousedown', saveSelectionBeforeFocusSteal);
   document.getElementById('format-font-family')?.addEventListener('change', applyFontFamily);
+  document.getElementById('format-font-size')?.addEventListener('mousedown', saveSelectionBeforeFocusSteal);
   document.getElementById('format-font-size')?.addEventListener('change', applyFontSize);
+  document.getElementById('format-color')?.addEventListener('mousedown', saveSelectionBeforeFocusSteal);
   document.getElementById('format-color')?.addEventListener('input', applyTextColor);
+  document.getElementById('format-highlight')?.addEventListener('mousedown', saveSelectionBeforeFocusSteal);
   document.getElementById('format-highlight')?.addEventListener('input', applyHighlight);
   document.getElementById('clear-highlight')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('clear-highlight')?.addEventListener('click', clearHighlight);
@@ -283,14 +350,19 @@ function setupEventHandlers(): void {
   document.getElementById('align-justify')?.addEventListener('click', () => setAlignment('justify'));
 
   // Field controls
+  document.getElementById('apply-field-changes')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('apply-field-changes')?.addEventListener('click', applyFieldChanges);
 
   // Loop controls
+  document.getElementById('create-loop')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('create-loop')?.addEventListener('click', createLoop);
+  document.getElementById('apply-loop-changes')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('apply-loop-changes')?.addEventListener('click', applyLoopChanges);
+  document.getElementById('delete-loop')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('delete-loop')?.addEventListener('click', deleteLoop);
 
   // Text box controls
+  document.getElementById('apply-textbox-changes')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('apply-textbox-changes')?.addEventListener('click', applyTextBoxChanges);
 }
 
@@ -564,6 +636,53 @@ function insertEmbeddedTextBox(position: 'inline' | 'float-left' | 'float-right'
   }
 }
 
+function insertEmbeddedTable(position: 'inline' | 'float-left' | 'float-right'): void {
+  if (!editor) return;
+
+  try {
+    // Create a 3x3 table with sample content
+    const tableObject = new TableObject({
+      id: `table_${Date.now()}`,
+      textIndex: 0,
+      size: { width: 300, height: 100 }, // Initial size, will be recalculated
+      rows: 3,
+      columns: 3,
+      columnWidths: [100, 100, 100],
+      defaultFontFamily: 'Arial',
+      defaultFontSize: 12,
+      defaultColor: '#000000',
+      defaultCellPadding: 4,
+      defaultBorderWidth: 1,
+      defaultBorderColor: '#000000'
+    });
+
+    // Add some sample content to cells
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 3; col++) {
+        const cell = tableObject.getCell(row, col);
+        if (cell) {
+          if (row === 0) {
+            cell.content = `Header ${col + 1}`;
+            cell.backgroundColor = '#f0f0f0';
+          } else {
+            cell.content = `Cell ${row},${col + 1}`;
+          }
+        }
+      }
+    }
+
+    // Set the first row as a header row (will repeat on page breaks)
+    tableObject.setHeaderRow(0, true);
+
+    editor.insertEmbeddedObject(tableObject, position);
+    updateStatus(`Inserted ${position} table`);
+    editor.enableTextInput();
+  } catch (error) {
+    updateStatus('Failed to insert table', 'error');
+    console.error('Table insertion error:', error);
+  }
+}
+
 /**
  * Extract all field paths from merge data object.
  * Handles nested objects and arrays (arrays show path without index, since 0th is default).
@@ -735,13 +854,8 @@ function toggleFieldPicker(): void {
 function updateFormattingPane(): void {
   if (!editor) return;
 
-  // Get formatting from text box if editing one, otherwise from main text
-  let formatting;
-  if (editor.isEditingTextBox()) {
-    formatting = editor.getTextBoxFormattingAtCursor();
-  } else {
-    formatting = editor.getSelectionFormatting();
-  }
+  // Get formatting from whatever text is being edited (body, textbox, or table cell)
+  const formatting = editor.getUnifiedFormattingAtCursor();
   if (!formatting) return;
 
   // Update Bold button
@@ -789,57 +903,40 @@ function updateFormattingPane(): void {
   }
 
   // Update Alignment buttons
-  let alignment;
-  if (editor.isEditingTextBox()) {
-    alignment = editor.getTextBoxAlignmentAtCursor();
-  } else {
-    alignment = editor.getAlignmentAtCursor();
-  }
+  const alignment = editor.getUnifiedAlignmentAtCursor();
   updateAlignmentButtons(alignment);
 }
 
-function getSelection(): { start: number; end: number; isTextBox: boolean } | null {
+function getSelection(): { start: number; end: number } | null {
   if (!editor) return null;
 
-  // Check if editing a text box first
-  if (editor.isEditingTextBox()) {
-    const textBoxSelection = editor.getTextBoxSelection();
-    if (textBoxSelection && textBoxSelection.start !== textBoxSelection.end) {
-      return { ...textBoxSelection, isTextBox: true };
-    }
-    return null;
-  }
-
-  // Fall back to main text selection
-  const selection = editor.getSelection();
-  if (selection.type === 'text') {
-    return { start: selection.start, end: selection.end, isTextBox: false };
-  }
-  return null;
+  // Use unified selection API with fallback to saved context
+  // This handles cases where focus was stolen by dropdowns
+  return editor.getSavedOrCurrentSelection();
 }
 
 function applyFormattingToSelection(formatting: Record<string, any>): void {
   const selection = getSelection();
-  if (!selection) {
-    updateStatus('Select text first to apply formatting', 'error');
-    return;
-  }
 
   try {
-    if (selection.isTextBox) {
-      // Apply formatting to text box
-      editor.applyTextBoxFormatting(selection.start, selection.end, formatting);
+    if (selection) {
+      // Apply formatting to the selected range
+      editor.applyFormattingWithFallback(selection.start, selection.end, formatting);
+      updateStatus('Formatting applied');
     } else {
-      // Apply formatting to main text
-      editor.applyTextFormatting(selection.start, selection.end, formatting);
+      // No selection - set pending formatting for next character typed
+      editor.setPendingFormatting(formatting);
+      updateStatus('Formatting set for next character');
     }
-    updateStatus('Formatting applied');
+    // Clear the saved context now that we've used it
+    editor.clearSavedEditingContext();
     // Update the formatting pane to reflect the new formatting
     updateFormattingPane();
     // Restore focus to the editor so selection is preserved
     editor.enableTextInput();
   } catch (error) {
-    updateStatus('Failed to apply formatting', 'error');
+    // If no text is being edited, show error
+    updateStatus('Click in text to apply formatting', 'error');
     console.error('Formatting error:', error);
   }
 }
@@ -915,13 +1012,8 @@ function setAlignment(alignment: TextAlignment): void {
   if (!editor) return;
 
   try {
-    if (editor.isEditingTextBox()) {
-      // Apply alignment to text box
-      editor.setTextBoxAlignment(alignment);
-    } else {
-      // Apply alignment to main text
-      editor.setAlignmentForSelection(alignment);
-    }
+    // Use unified alignment API - works for body, textbox, and table cells
+    editor.setUnifiedAlignment(alignment);
     updateAlignmentButtons(alignment);
     updateStatus(`Alignment: ${alignment}`);
   } catch (error) {
@@ -1363,6 +1455,128 @@ function applyTextBoxChanges(): void {
   // Re-render
   editor.render();
   updateStatus('Text box updated');
+}
+
+// ============================================
+// Table Tools Functions
+// ============================================
+
+/**
+ * Update the table tools visibility based on selected/focused table.
+ */
+function updateTableTools(table: TableObject | null): void {
+  const tableTools = document.getElementById('table-tools');
+  if (!tableTools) return;
+
+  currentSelectedTable = table;
+
+  if (table) {
+    tableTools.style.display = '';
+  } else {
+    tableTools.style.display = 'none';
+  }
+}
+
+/**
+ * Add a row to the current table.
+ */
+function tableAddRow(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  const insertIndex = focusedCell ? focusedCell.row + 1 : currentSelectedTable.rowCount;
+
+  currentSelectedTable.insertRow(insertIndex);
+  editor.render();
+  updateStatus(`Added row at index ${insertIndex}`);
+}
+
+/**
+ * Add a column to the current table.
+ */
+function tableAddColumn(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  const insertIndex = focusedCell ? focusedCell.col + 1 : currentSelectedTable.columnCount;
+
+  currentSelectedTable.insertColumn(insertIndex);
+  editor.render();
+  updateStatus(`Added column at index ${insertIndex}`);
+}
+
+/**
+ * Merge selected cells in the current table.
+ */
+function tableMergeCells(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  // If no range selected, try to create one from focused cell
+  const focusedCell = currentSelectedTable.focusedCell;
+  if (!currentSelectedTable.selectedRange && focusedCell) {
+    // For now, just show instructions - need cell range selection UI
+    updateStatus('Select a range of cells first (click and drag)');
+    return;
+  }
+
+  const result = currentSelectedTable.mergeCells();
+  if (result.success) {
+    editor.render();
+    updateStatus('Cells merged');
+  } else {
+    updateStatus(`Merge failed: ${result.error}`, 'error');
+  }
+}
+
+/**
+ * Split the currently focused merged cell.
+ */
+function tableSplitCell(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  if (!focusedCell) {
+    updateStatus('Select a merged cell to split');
+    return;
+  }
+
+  const result = currentSelectedTable.splitCell(focusedCell.row, focusedCell.col);
+  if (result.success) {
+    editor.render();
+    updateStatus('Cell split');
+  } else {
+    updateStatus(`Split failed: ${result.error}`, 'error');
+  }
+}
+
+/**
+ * Toggle header status on the current row.
+ */
+function tableToggleHeader(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  if (!focusedCell) {
+    updateStatus('Select a row to toggle header');
+    return;
+  }
+
+  const row = currentSelectedTable.rows[focusedCell.row];
+  if (row) {
+    row.isHeader = !row.isHeader;
+
+    // Update visual styling for header rows
+    for (const cell of row.cells) {
+      if (row.isHeader) {
+        cell.backgroundColor = '#f0f0f0';
+      } else {
+        cell.backgroundColor = '#ffffff';
+      }
+    }
+
+    editor.render();
+    updateStatus(row.isHeader ? 'Row marked as header' : 'Row unmarked as header');
+  }
 }
 
 // Initialize when DOM is ready

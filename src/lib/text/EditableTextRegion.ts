@@ -5,7 +5,7 @@ import { FlowingTextContent } from './FlowingTextContent';
 /**
  * Types of editable text regions in the document.
  */
-export type RegionType = 'body' | 'header' | 'footer' | 'textbox';
+export type RegionType = 'body' | 'header' | 'footer' | 'textbox' | 'tablecell';
 
 /**
  * Interface for editable text regions.

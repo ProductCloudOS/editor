@@ -16,7 +16,7 @@ import { CanvasManager } from '../rendering/CanvasManager';
 import { DataBinder } from '../data/DataBinder';
 import { PDFGenerator } from '../rendering/PDFGenerator';
 import { LayoutEngine } from '../layout/LayoutEngine';
-import { BaseEmbeddedObject, ObjectPosition, TextBoxObject } from '../objects';
+import { BaseEmbeddedObject, ObjectPosition, TextBoxObject, TableObject } from '../objects';
 import { SubstitutionFieldConfig, TextFormattingStyle, SubstitutionField, RepeatingSection, FlowingTextContent, TextAlignment, Focusable } from '../text';
 
 export class PCEditor extends EventEmitter {
@@ -31,6 +31,8 @@ export class PCEditor extends EventEmitter {
   private keyboardListenerActive: boolean = false;
   private currentSelection: EditorSelection = { type: 'none' };
   private _activeEditingSection: EditingSection = 'body';
+  private _wasTextEditing: boolean = false;
+  private _textEditingSource: 'body' | 'textbox' | 'tablecell' | null = null;
 
   constructor(container: HTMLElement, options?: EditorOptions) {
     super();
@@ -173,13 +175,26 @@ export class PCEditor extends EventEmitter {
     
     this.canvasManager.on('cursor-changed', (data: any) => {
       // Cursor position changed (no selection, just cursor)
+      // Only update to cursor mode if there's no active text selection
+      // (text-selection-changed will handle selection state updates)
       if (data.textIndex !== undefined) {
-        this.currentSelection = {
-          type: 'cursor',
-          position: data.textIndex,
-          section: this._activeEditingSection
-        };
-        this.emitSelectionChange();
+        // Check if there's an active text selection - if so, don't overwrite it
+        const flowingContent = this.canvasManager.getFlowingContentForActiveSection();
+        const hasSelection = flowingContent?.hasSelection() ?? false;
+
+        if (!hasSelection) {
+          // Update active editing section if provided in the event
+          const section = data.section || this._activeEditingSection;
+          if (section !== this._activeEditingSection) {
+            this._activeEditingSection = section;
+          }
+          this.currentSelection = {
+            type: 'cursor',
+            position: data.textIndex,
+            section
+          };
+          this.emitSelectionChange();
+        }
       }
       this.emit('cursor-changed', data);
     });
@@ -187,15 +202,25 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.on('text-selection-changed', (data: any) => {
       // Text selection changed
       if (data.selection && data.selection.start !== data.selection.end) {
+        // Update active editing section if provided in the event
+        const section = data.section || this._activeEditingSection;
+        if (section !== this._activeEditingSection) {
+          this._activeEditingSection = section;
+        }
         this.currentSelection = {
           type: 'text',
           start: data.selection.start,
           end: data.selection.end,
-          section: this._activeEditingSection
+          section
         };
         this.emitSelectionChange();
       }
       // Note: cursor-changed handles the case when selection is cleared
+    });
+
+    // Forward table cell cursor changes from CanvasManager (click events)
+    this.canvasManager.on('tablecell-cursor-changed', (data: any) => {
+      this.emit('tablecell-cursor-changed', data);
     });
 
     this.canvasManager.on('repeating-section-clicked', (data: any) => {
@@ -216,6 +241,24 @@ export class PCEditor extends EventEmitter {
         this._activeEditingSection = data.section;
         this.emit('section-focus-changed', data);
       }
+    });
+
+    // Listen for focus changes to enable keyboard input for tables and other focusable controls
+    this.canvasManager.on('focus-changed', (data: { control: Focusable | null }) => {
+      if (data.control) {
+        // Enable keyboard input when any control is focused
+        this.enableTextInput();
+      }
+      // Check and emit unified text editing events
+      this.checkAndEmitTextEditingEvents();
+    });
+
+    // Also check text editing state when textbox editing starts/ends
+    this.canvasManager.on('textbox-editing-started', () => {
+      this.checkAndEmitTextEditingEvents();
+    });
+    this.canvasManager.on('textbox-editing-ended', () => {
+      this.checkAndEmitTextEditingEvents();
     });
   }
 
@@ -272,6 +315,69 @@ export class PCEditor extends EventEmitter {
     this.emit('selection-change', {
       selection: this.currentSelection
     });
+  }
+
+  /**
+   * Emit a cursor changed event for the focused table cell.
+   */
+  private emitTableCellCursorChanged(table: TableObject): void {
+    if (!table.focusedCell) return;
+    const cell = table.getCell(table.focusedCell.row, table.focusedCell.col);
+    if (cell) {
+      this.emit('tablecell-cursor-changed', {
+        table,
+        cell,
+        cursorPosition: cell.flowingContent.getCursorPosition(),
+        selection: cell.flowingContent.getSelection()
+      });
+    }
+  }
+
+  /**
+   * Get the current text editing source type.
+   * Returns null if no text is being edited.
+   */
+  private getTextEditingSource(): 'body' | 'textbox' | 'tablecell' | null {
+    const focusedControl = this.canvasManager.getFocusedControl();
+
+    // Check body/header/footer text has focus
+    if (focusedControl instanceof FlowingTextContent) return 'body';
+
+    // Check text box editing
+    if (this.canvasManager.isEditingTextBox()) return 'textbox';
+
+    // Check table cell editing
+    if (focusedControl instanceof TableObject && focusedControl.focusedCell) return 'tablecell';
+
+    return null;
+  }
+
+  /**
+   * Check if text editing state changed and emit appropriate events.
+   */
+  private checkAndEmitTextEditingEvents(): void {
+    const currentSource = this.getTextEditingSource();
+    const isNowEditing = currentSource !== null;
+
+    // Check for state changes
+    if (isNowEditing && !this._wasTextEditing) {
+      // Started editing
+      this._wasTextEditing = true;
+      this._textEditingSource = currentSource;
+      this.emit('text-editing-started', { source: currentSource });
+    } else if (!isNowEditing && this._wasTextEditing) {
+      // Stopped editing
+      const previousSource = this._textEditingSource;
+      this._wasTextEditing = false;
+      this._textEditingSource = null;
+      this.emit('text-editing-ended', { source: previousSource });
+    } else if (isNowEditing && this._wasTextEditing && currentSource !== this._textEditingSource) {
+      // Changed from one text editing context to another
+      const previousSource = this._textEditingSource;
+      this._textEditingSource = currentSource;
+      this.emit('text-editing-ended', { source: previousSource });
+      this.emit('text-editing-started', { source: currentSource });
+    }
   }
 
   loadDocument(documentData: DocumentData): void {
@@ -537,11 +643,17 @@ export class PCEditor extends EventEmitter {
     this.container.addEventListener('blur', () => {
       this.disableTextInput();
     });
+
+    this.container.addEventListener('focus', () => {
+      // Re-enable keyboard input when the container regains focus
+      this.enableTextInput();
+    });
   }
   
   private handleKeyDown(e: KeyboardEvent): void {
     // Use the unified focus system to get the currently focused control
     const focusedControl = this.canvasManager.getFocusedControl();
+    console.log('[PCEditor.handleKeyDown] Key:', e.key, 'focusedControl:', focusedControl?.constructor?.name);
     if (!focusedControl) return;
 
     // Vertical navigation needs layout context - handle specially
@@ -551,8 +663,25 @@ export class PCEditor extends EventEmitter {
       return;
     }
 
+    // Capture embedded object info before handling Escape, so we can return focus to parent
+    let embeddedObjectTextIndex: number | null = null;
+    let embeddedObjectId: string | null = null;
+    const editingTextBoxBefore = this.canvasManager.getEditingTextBox();
+
+    if (e.key === 'Escape') {
+      if (editingTextBoxBefore && editingTextBoxBefore.editing) {
+        embeddedObjectTextIndex = editingTextBoxBefore.textIndex;
+        embeddedObjectId = editingTextBoxBefore.id;
+      } else if (focusedControl instanceof TableObject && focusedControl.editing) {
+        embeddedObjectTextIndex = focusedControl.textIndex;
+        embeddedObjectId = focusedControl.id;
+      }
+    }
+
     // Delegate to the focused control's handleKeyDown
+    console.log('[PCEditor.handleKeyDown] Calling focusedControl.handleKeyDown');
     const handled = focusedControl.handleKeyDown(e);
+    console.log('[PCEditor.handleKeyDown] handled:', handled);
 
     if (handled) {
       this.canvasManager.render();
@@ -572,6 +701,141 @@ export class PCEditor extends EventEmitter {
           });
         }
       }
+
+      // Handle table cell-specific post-processing
+      if (focusedControl instanceof TableObject && focusedControl.focusedCell) {
+        const cell = focusedControl.getCell(focusedControl.focusedCell.row, focusedControl.focusedCell.col);
+        if (cell) {
+          // Emit cursor changed event for table cell so UI can update
+          this.emit('tablecell-cursor-changed', {
+            table: focusedControl,
+            cell: cell,
+            cursorPosition: cell.flowingContent.getCursorPosition(),
+            selection: cell.flowingContent.getSelection()
+          });
+        }
+      }
+
+      // Return focus to parent flowing content after Escape exits an embedded object
+      if (e.key === 'Escape' && embeddedObjectId !== null && embeddedObjectTextIndex !== null) {
+        this.returnFocusToParentFlowingContent(embeddedObjectId, embeddedObjectTextIndex);
+      }
+    } else if (e.key === 'Escape') {
+      // If focused control didn't handle Escape, check if we have selected elements to clear
+      this.handleEscapeForSelectedElements();
+    }
+  }
+
+  /**
+   * Handle Escape key when there are selected elements (not in editing mode).
+   * Clears selection and returns cursor focus to the flowing text.
+   */
+  private handleEscapeForSelectedElements(): void {
+    // Check if there are any selected embedded objects
+    const selectedElements = this.canvasManager.getSelectedElements();
+    if (selectedElements.length === 0) return;
+
+    // Find the first selected embedded object and get its info
+    for (const elementId of selectedElements) {
+      const objectInfo = this.findEmbeddedObjectInfo(elementId);
+      if (objectInfo) {
+        // Clear selection first
+        this.canvasManager.clearSelection();
+
+        // Return focus to the parent flowing content at the object's position
+        objectInfo.content.setCursorPosition(objectInfo.textIndex);
+        this.canvasManager.setFocus(objectInfo.content);
+
+        // Update active section if needed
+        if (objectInfo.section !== this.canvasManager.getActiveSection()) {
+          this.canvasManager.setActiveSection(objectInfo.section);
+        }
+
+        this.canvasManager.render();
+        return;
+      }
+    }
+
+    // If no embedded objects found, just clear selection
+    this.canvasManager.clearSelection();
+    this.canvasManager.render();
+  }
+
+  /**
+   * Find embedded object info by ID across all flowing content sources.
+   */
+  private findEmbeddedObjectInfo(objectId: string): { content: FlowingTextContent; section: 'header' | 'body' | 'footer'; textIndex: number } | null {
+    const flowingContents: Array<{ content: FlowingTextContent; section: 'header' | 'body' | 'footer' }> = [];
+
+    if (this.document.headerFlowingContent) {
+      flowingContents.push({ content: this.document.headerFlowingContent, section: 'header' });
+    }
+
+    for (const page of this.document.pages) {
+      if (page.flowingContent) {
+        flowingContents.push({ content: page.flowingContent, section: 'body' });
+        break;
+      }
+    }
+
+    if (this.document.footerFlowingContent) {
+      flowingContents.push({ content: this.document.footerFlowingContent, section: 'footer' });
+    }
+
+    for (const { content, section } of flowingContents) {
+      const embeddedObjectManager = content.getEmbeddedObjectManager();
+      const entry = embeddedObjectManager.findById(objectId);
+      if (entry) {
+        return { content, section, textIndex: entry.object.textIndex };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Find the parent FlowingTextContent for an embedded object and return focus to it.
+   */
+  private returnFocusToParentFlowingContent(objectId: string, textIndex: number): void {
+    // Search all flowing content sources for the embedded object
+    const flowingContents: Array<{ content: FlowingTextContent; section: 'header' | 'body' | 'footer' }> = [];
+
+    // Add header flowing content
+    if (this.document.headerFlowingContent) {
+      flowingContents.push({ content: this.document.headerFlowingContent, section: 'header' });
+    }
+
+    // Add body flowing content from each page
+    for (const page of this.document.pages) {
+      if (page.flowingContent) {
+        flowingContents.push({ content: page.flowingContent, section: 'body' });
+        break; // Body content is shared, only need to check once
+      }
+    }
+
+    // Add footer flowing content
+    if (this.document.footerFlowingContent) {
+      flowingContents.push({ content: this.document.footerFlowingContent, section: 'footer' });
+    }
+
+    // Find which flowing content contains this embedded object
+    for (const { content, section } of flowingContents) {
+      const embeddedObjectManager = content.getEmbeddedObjectManager();
+      const entry = embeddedObjectManager.findById(objectId);
+
+      if (entry) {
+        // Found the parent - set cursor position and focus
+        content.setCursorPosition(textIndex);
+        this.canvasManager.setFocus(content);
+
+        // Update active section if needed
+        if (section !== this.canvasManager.getActiveSection()) {
+          this.canvasManager.setActiveSection(section);
+        }
+
+        this.canvasManager.render();
+        return;
+      }
     }
   }
 
@@ -579,9 +843,96 @@ export class PCEditor extends EventEmitter {
    * Handle vertical navigation for the focused control.
    * This needs special handling because it requires layout context.
    */
-  private handleVerticalNavigation(e: KeyboardEvent, _focusedControl: Focusable): void {
+  private handleVerticalNavigation(e: KeyboardEvent, focusedControl: Focusable): void {
     const direction = e.key === 'ArrowUp' ? -1 : 1;
     const editingTextBox = this.canvasManager.getEditingTextBox();
+
+    // Check if we're editing a table - handle vertical navigation within/between cells
+    if (focusedControl instanceof TableObject) {
+      const table = focusedControl;
+      if (table.focusedCell) {
+        const cell = table.getCell(table.focusedCell.row, table.focusedCell.col);
+        if (cell) {
+          const flowingContent = cell.flowingContent;
+          const flowedLines = cell.getFlowedLines(0);
+          const cursorPos = flowingContent.getCursorPosition();
+
+          // Handle shift+arrow for selection
+          if (e.shiftKey) {
+            if (!flowingContent.hasSelectionAnchor()) {
+              flowingContent.setSelectionAnchor();
+            }
+          } else {
+            flowingContent.clearSelection();
+          }
+
+          // Find which line the cursor is on
+          let currentLineIndex = 0;
+          for (let i = 0; i < flowedLines.length; i++) {
+            if (cursorPos <= flowedLines[i].endIndex) {
+              currentLineIndex = i;
+              break;
+            }
+            if (i === flowedLines.length - 1) {
+              currentLineIndex = i;
+            }
+          }
+
+          const isOnFirstLine = currentLineIndex === 0;
+          const isOnLastLine = currentLineIndex === flowedLines.length - 1 || flowedLines.length === 0;
+
+          // If moving up and on first line, go to cell above
+          if (direction === -1 && isOnFirstLine) {
+            const newRow = table.focusedCell.row - 1;
+            if (newRow >= 0) {
+              table.focusCell(newRow, table.focusedCell.col);
+              // Position cursor at end of new cell
+              const newCell = table.getCell(newRow, table.focusedCell.col);
+              if (newCell) {
+                const text = newCell.flowingContent.getText();
+                newCell.flowingContent.setCursorPosition(text.length);
+              }
+            }
+            this.canvasManager.render();
+            this.emitTableCellCursorChanged(table);
+            return;
+          }
+
+          // If moving down and on last line, go to cell below
+          if (direction === 1 && isOnLastLine) {
+            const newRow = table.focusedCell.row + 1;
+            if (newRow < table.rowCount) {
+              table.focusCell(newRow, table.focusedCell.col);
+              // Position cursor at start of new cell
+              const newCell = table.getCell(newRow, table.focusedCell.col);
+              if (newCell) {
+                newCell.flowingContent.setCursorPosition(0);
+              }
+            }
+            this.canvasManager.render();
+            this.emitTableCellCursorChanged(table);
+            return;
+          }
+
+          // Move within the cell - find position on adjacent line
+          const targetLineIndex = currentLineIndex + direction;
+          if (targetLineIndex >= 0 && targetLineIndex < flowedLines.length) {
+            const targetLine = flowedLines[targetLineIndex];
+            // Try to maintain horizontal position
+            const currentLine = flowedLines[currentLineIndex];
+            const offsetInLine = cursorPos - currentLine.startIndex;
+            const lineLength = targetLine.endIndex - targetLine.startIndex;
+            const newOffset = Math.min(offsetInLine, lineLength);
+            flowingContent.setCursorPosition(targetLine.startIndex + newOffset);
+            flowingContent.resetCursorBlink();
+          }
+
+          this.canvasManager.render();
+          this.emitTableCellCursorChanged(table);
+        }
+      }
+      return;
+    }
 
     // Get the FlowingTextContent for selection handling
     const flowingContent = editingTextBox
@@ -627,11 +978,22 @@ export class PCEditor extends EventEmitter {
 
   enableTextInput(): void {
     this.keyboardListenerActive = true;
-    // Only show the main cursor if NOT editing a text box
-    // When editing a text box, the text box manages its own cursor
+    // Only show the main cursor if NOT editing a text box or focused control
+    // When editing a text box or table, those controls manage their own cursor
     if (this.canvasManager.isEditingTextBox()) {
       // When editing a text box, we only need keyboard input active
       // Don't show main cursor or refocus (we're already focused)
+      this.emit('text-input-enabled');
+      return;
+    }
+    // Check if there's already a focused control (e.g., a table in edit mode)
+    // Don't override its focus with the main FlowingTextContent
+    if (this.canvasManager.getFocusedControl()) {
+      // Resume cursor if it was suspended (e.g., editor regaining browser focus)
+      if (this.canvasManager.isCursorSuspended()) {
+        this.canvasManager.resumeCursor();
+      }
+      this.container.focus();
       this.emit('text-input-enabled');
       return;
     }
@@ -639,7 +1001,7 @@ export class PCEditor extends EventEmitter {
     this.container.focus();
     this.emit('text-input-enabled');
   }
-  
+
   disableTextInput(): void {
     this.keyboardListenerActive = false;
     this.canvasManager.hideTextCursor();
@@ -651,6 +1013,163 @@ export class PCEditor extends EventEmitter {
    */
   isEditingTextBox(): boolean {
     return this.canvasManager.isEditingTextBox();
+  }
+
+  /**
+   * Check if any text content is being edited (body, header, footer, text box, or table cell).
+   * This is a unified check for determining if the formatting pane should be shown.
+   */
+  isTextEditing(): boolean {
+    const focusedControl = this.canvasManager.getFocusedControl();
+
+    // Check body/header/footer text has focus
+    if (focusedControl instanceof FlowingTextContent) return true;
+
+    // Check text box editing
+    if (this.canvasManager.isEditingTextBox()) return true;
+
+    // Check table cell editing
+    if (focusedControl instanceof TableObject && focusedControl.focusedCell) return true;
+
+    return false;
+  }
+
+  // Saved editing context for when UI controls steal focus
+  private _savedEditingContext: {
+    flowingContent: FlowingTextContent;
+    selection: { start: number; end: number } | null;
+  } | null = null;
+
+  /**
+   * Get the FlowingTextContent currently being edited, regardless of context.
+   * Works for body text, text boxes, and table cells.
+   * Returns null if no text is being edited.
+   */
+  getEditingFlowingContent(): FlowingTextContent | null {
+    const focusedControl = this.canvasManager.getFocusedControl();
+
+    // Body/header/footer text
+    if (focusedControl instanceof FlowingTextContent) return focusedControl;
+
+    // Text box
+    const textBox = this.canvasManager.getEditingTextBox();
+    if (textBox) return textBox.flowingContent;
+
+    // Table cell
+    if (focusedControl instanceof TableObject && focusedControl.focusedCell) {
+      const cell = focusedControl.getCell(focusedControl.focusedCell.row, focusedControl.focusedCell.col);
+      if (cell) return cell.flowingContent;
+    }
+
+    return null;
+  }
+
+  /**
+   * Save the current editing context (FlowingTextContent and selection).
+   * Call this before UI elements steal focus (e.g., dropdown opens).
+   */
+  saveEditingContext(): void {
+    const flowingContent = this.getEditingFlowingContent();
+    if (flowingContent) {
+      const selection = flowingContent.getSelection();
+      this._savedEditingContext = {
+        flowingContent,
+        selection: selection && selection.start !== selection.end
+          ? { start: selection.start, end: selection.end }
+          : null
+      };
+    }
+  }
+
+  /**
+   * Get the saved editing context selection, or the current selection if available.
+   */
+  getSavedOrCurrentSelection(): { start: number; end: number } | null {
+    // First try to get current selection
+    const currentSelection = this.getUnifiedSelection();
+    if (currentSelection) return currentSelection;
+
+    // Fall back to saved context
+    if (this._savedEditingContext?.selection) {
+      return this._savedEditingContext.selection;
+    }
+
+    return null;
+  }
+
+  /**
+   * Apply formatting using the saved context if current context is not available.
+   * This is useful when UI controls have stolen focus.
+   */
+  applyFormattingWithFallback(start: number, end: number, formatting: Partial<TextFormattingStyle>): void {
+    // Try current context first
+    let flowingContent = this.getEditingFlowingContent();
+
+    // Fall back to saved context
+    if (!flowingContent && this._savedEditingContext) {
+      flowingContent = this._savedEditingContext.flowingContent;
+    }
+
+    if (!flowingContent) {
+      throw new Error('No text is being edited');
+    }
+
+    flowingContent.applyFormatting(start, end, formatting);
+    this.canvasManager.render();
+  }
+
+  /**
+   * Set pending formatting to apply to the next inserted character.
+   * Used when formatting is applied with just a cursor (no selection).
+   */
+  setPendingFormatting(formatting: Partial<TextFormattingStyle>): void {
+    let flowingContent = this.getEditingFlowingContent();
+
+    // Fall back to saved context
+    if (!flowingContent && this._savedEditingContext) {
+      flowingContent = this._savedEditingContext.flowingContent;
+    }
+
+    if (!flowingContent) {
+      throw new Error('No text is being edited');
+    }
+
+    flowingContent.setPendingFormatting(formatting);
+  }
+
+  /**
+   * Get the current pending formatting, if any.
+   */
+  getPendingFormatting(): Partial<TextFormattingStyle> | null {
+    const flowingContent = this.getEditingFlowingContent();
+    if (!flowingContent) return null;
+    return flowingContent.getPendingFormatting();
+  }
+
+  /**
+   * Check if there is pending formatting.
+   */
+  hasPendingFormatting(): boolean {
+    const flowingContent = this.getEditingFlowingContent();
+    if (!flowingContent) return false;
+    return flowingContent.hasPendingFormatting();
+  }
+
+  /**
+   * Clear pending formatting.
+   */
+  clearPendingFormatting(): void {
+    const flowingContent = this.getEditingFlowingContent();
+    if (flowingContent) {
+      flowingContent.clearPendingFormatting();
+    }
+  }
+
+  /**
+   * Clear the saved editing context.
+   */
+  clearSavedEditingContext(): void {
+    this._savedEditingContext = null;
   }
 
   /**
@@ -738,6 +1257,92 @@ export class PCEditor extends EventEmitter {
     return textBox.flowingContent.getAlignmentAt(cursorPos);
   }
 
+  // ============================================
+  // Unified Text Editing API
+  // These methods work for body, text boxes, AND table cells
+  // ============================================
+
+  /**
+   * Get the formatting at the cursor position in whatever text is being edited.
+   * Works for body text, text boxes, and table cells.
+   * Considers pending formatting if present.
+   */
+  getUnifiedFormattingAtCursor(): TextFormattingStyle | null {
+    const flowingContent = this.getEditingFlowingContent();
+    if (!flowingContent) return null;
+
+    // If there's a selection, get formatting at selection start
+    const selection = flowingContent.getSelection();
+    if (selection && selection.start !== selection.end) {
+      return flowingContent.getFormattingAt(selection.start);
+    }
+
+    // Use effective formatting which includes pending formatting
+    return flowingContent.getEffectiveFormattingAtCursor();
+  }
+
+  /**
+   * Apply formatting to the current selection in whatever text is being edited.
+   * Works for body text, text boxes, and table cells.
+   */
+  applyUnifiedFormatting(start: number, end: number, formatting: Partial<TextFormattingStyle>): void {
+    const flowingContent = this.getEditingFlowingContent();
+    if (!flowingContent) {
+      throw new Error('No text is being edited');
+    }
+
+    flowingContent.applyFormatting(start, end, formatting);
+    this.canvasManager.render();
+  }
+
+  /**
+   * Get the selection from whatever text is being edited.
+   * Works for body text, text boxes, and table cells.
+   */
+  getUnifiedSelection(): { start: number; end: number } | null {
+    const flowingContent = this.getEditingFlowingContent();
+    if (!flowingContent) return null;
+
+    const selection = flowingContent.getSelection();
+    if (selection && selection.start !== selection.end) {
+      return { start: selection.start, end: selection.end };
+    }
+    return null;
+  }
+
+  /**
+   * Get the alignment at the cursor position in whatever text is being edited.
+   * Works for body text, text boxes, and table cells.
+   */
+  getUnifiedAlignmentAtCursor(): TextAlignment {
+    const flowingContent = this.getEditingFlowingContent();
+    if (!flowingContent) return 'left';
+
+    const cursorPos = flowingContent.getCursorPosition();
+    return flowingContent.getAlignmentAt(cursorPos);
+  }
+
+  /**
+   * Set the alignment for the current paragraph or selection in whatever text is being edited.
+   * Works for body text, text boxes, and table cells.
+   */
+  setUnifiedAlignment(alignment: TextAlignment): void {
+    const flowingContent = this.getEditingFlowingContent();
+    if (!flowingContent) {
+      throw new Error('No text is being edited');
+    }
+
+    const selection = flowingContent.getSelection();
+    if (selection && selection.start !== selection.end) {
+      // Apply to all paragraphs in the selection range
+      flowingContent.setAlignmentForRange(selection.start, selection.end, alignment);
+    } else {
+      // Apply to paragraph at cursor
+      flowingContent.setAlignment(alignment);
+    }
+    this.canvasManager.render();
+  }
+
   insertText(text: string): void {
     if (!this._isReady) {
       throw new Error('Editor is not ready');
@@ -770,14 +1375,25 @@ export class PCEditor extends EventEmitter {
   }
 
   /**
-   * Insert an embedded object at the current cursor position in the active section.
+   * Insert an embedded object at the current cursor position.
+   * Works for body, header, footer, text boxes, and table cells.
    */
   insertEmbeddedObject(object: BaseEmbeddedObject, position: ObjectPosition = 'inline'): void {
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
 
-    const flowingContent = this.getActiveFlowingContent();
+    // Clear any existing selection before inserting
+    this.canvasManager.clearSelection();
+
+    // First try to get the currently editing content (handles table cells, text boxes)
+    let flowingContent = this.getEditingFlowingContent();
+
+    // Fall back to active section if nothing is being edited
+    if (!flowingContent) {
+      flowingContent = this.getActiveFlowingContent();
+    }
+
     if (!flowingContent) {
       throw new Error('No active section available');
     }
@@ -790,14 +1406,25 @@ export class PCEditor extends EventEmitter {
   }
 
   /**
-   * Insert a substitution field at the current cursor position in the active section.
+   * Insert a substitution field at the current cursor position.
+   * Works for body, header, footer, text boxes, and table cells.
    */
   insertSubstitutionField(fieldName: string, config?: SubstitutionFieldConfig): void {
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
 
-    const flowingContent = this.getActiveFlowingContent();
+    // Clear any existing selection before inserting
+    this.canvasManager.clearSelection();
+
+    // First try to get the currently editing content (handles table cells, text boxes)
+    let flowingContent = this.getEditingFlowingContent();
+
+    // Fall back to active section if nothing is being edited
+    if (!flowingContent) {
+      flowingContent = this.getActiveFlowingContent();
+    }
+
     if (!flowingContent) {
       throw new Error('No active section available');
     }
@@ -824,7 +1451,9 @@ export class PCEditor extends EventEmitter {
     }
 
     const fieldManager = flowingContent.getSubstitutionFieldManager();
-    return fieldManager.getFieldAt(position) || null;
+    // Check at position first, then check position - 1
+    // (cursor is positioned AFTER the field when clicking on it)
+    return fieldManager.getFieldAt(position) || fieldManager.getFieldAt(position - 1) || null;
   }
 
   /**
@@ -866,6 +1495,43 @@ export class PCEditor extends EventEmitter {
       }
     }
 
+    return null;
+  }
+
+  /**
+   * Get the currently selected table if one is selected.
+   * @returns The selected TableObject or null if no table is selected
+   */
+  getSelectedTable(): TableObject | null {
+    const selection = this.currentSelection;
+
+    if (selection.type === 'elements' && selection.elementIds.length > 0) {
+      // Check if any selected element is a table
+      const flowingContent = this.getActiveFlowingContent();
+      if (flowingContent) {
+        const embeddedObjects = flowingContent.getEmbeddedObjects();
+        for (const elementId of selection.elementIds) {
+          for (const [, obj] of embeddedObjects.entries()) {
+            if (obj.id === elementId && obj instanceof TableObject) {
+              return obj;
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Get the currently focused table (table being edited).
+   * @returns The focused TableObject or null
+   */
+  getFocusedTable(): TableObject | null {
+    const focusedControl = this.canvasManager?.getFocusedControl();
+    if (focusedControl && focusedControl instanceof TableObject) {
+      return focusedControl;
+    }
     return null;
   }
 
@@ -930,11 +1596,20 @@ export class PCEditor extends EventEmitter {
     // Step 2: Substitute all fields in body
     totalFieldCount += this.substituteFieldsInContent(bodyContent, data);
 
-    // Step 3: Substitute all fields in header
+    // Step 3: Substitute all fields in embedded objects in body
+    totalFieldCount += this.substituteFieldsInEmbeddedObjects(bodyContent, data);
+
+    // Step 4: Substitute all fields in header
     totalFieldCount += this.substituteFieldsInContent(this.document.headerFlowingContent, data);
 
-    // Step 4: Substitute all fields in footer
+    // Step 5: Substitute all fields in embedded objects in header
+    totalFieldCount += this.substituteFieldsInEmbeddedObjects(this.document.headerFlowingContent, data);
+
+    // Step 6: Substitute all fields in footer
     totalFieldCount += this.substituteFieldsInContent(this.document.footerFlowingContent, data);
+
+    // Step 7: Substitute all fields in embedded objects in footer
+    totalFieldCount += this.substituteFieldsInEmbeddedObjects(this.document.footerFlowingContent, data);
 
     this.canvasManager.render();
     this.emit('merge-data-applied', { data, fieldCount: totalFieldCount });
@@ -974,6 +1649,32 @@ export class PCEditor extends EventEmitter {
     }
 
     return fields.length;
+  }
+
+  /**
+   * Substitute all fields in embedded objects (text boxes and tables) within a FlowingTextContent.
+   * @returns The number of fields substituted
+   */
+  private substituteFieldsInEmbeddedObjects(flowingContent: FlowingTextContent, data: Record<string, unknown>): number {
+    let totalFieldCount = 0;
+
+    const embeddedObjects = flowingContent.getEmbeddedObjects();
+    for (const [, obj] of embeddedObjects.entries()) {
+      // Handle TextBoxObject
+      if (obj instanceof TextBoxObject) {
+        totalFieldCount += this.substituteFieldsInContent(obj.flowingContent, data);
+      }
+      // Handle TableObject
+      else if (obj instanceof TableObject) {
+        for (const row of obj.rows) {
+          for (const cell of row.cells) {
+            totalFieldCount += this.substituteFieldsInContent(cell.flowingContent, data);
+          }
+        }
+      }
+    }
+
+    return totalFieldCount;
   }
 
   /**
@@ -1612,6 +2313,9 @@ export class PCEditor extends EventEmitter {
       throw new Error('Editor is not ready');
     }
 
+    // Clear any existing selection before inserting
+    this.canvasManager.clearSelection();
+
     const field = this.document.headerFlowingContent.insertSubstitutionField(fieldName, config);
     this.canvasManager.render();
     this.emit('substitution-field-added', { field, section: 'header' });
@@ -1626,6 +2330,9 @@ export class PCEditor extends EventEmitter {
       throw new Error('Editor is not ready');
     }
 
+    // Clear any existing selection before inserting
+    this.canvasManager.clearSelection();
+
     const field = this.document.footerFlowingContent.insertSubstitutionField(fieldName, config);
     this.canvasManager.render();
     this.emit('substitution-field-added', { field, section: 'footer' });
@@ -1639,6 +2346,9 @@ export class PCEditor extends EventEmitter {
       throw new Error('Editor is not ready');
     }
 
+    // Clear any existing selection before inserting
+    this.canvasManager.clearSelection();
+
     this.document.headerFlowingContent.insertEmbeddedObject(object, position);
     this.canvasManager.render();
     this.emit('embedded-object-added', { object, position, section: 'header' });
@@ -1651,6 +2361,9 @@ export class PCEditor extends EventEmitter {
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
+
+    // Clear any existing selection before inserting
+    this.canvasManager.clearSelection();
 
     this.document.footerFlowingContent.insertEmbeddedObject(object, position);
     this.canvasManager.render();

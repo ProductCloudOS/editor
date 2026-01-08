@@ -7,13 +7,14 @@ import {
   RepeatingSection,
   DEFAULT_FORMATTING,
   TextPositionCalculator,
-  EditableTextRegion
+  EditableTextRegion,
+  FlowingTextContent
 } from '../text';
 import { Document } from '../core/Document';
 import { Page } from '../core/Page';
 import { Point, Rect, EditingSection } from '../types';
 import { EventEmitter } from '../events/EventEmitter';
-import { BaseEmbeddedObject, TextBoxObject } from '../objects';
+import { BaseEmbeddedObject, TextBoxObject, TableObject } from '../objects';
 
 // Control character symbols
 const CONTROL_CHAR_COLOR = '#87CEEB'; // Light blue
@@ -27,6 +28,13 @@ const LOOP_LABEL_PADDING = 4;
 const LOOP_LABEL_RADIUS = 4;
 const LOOP_LINE_DASH = [4, 4];
 
+// Table continuation tracking for multi-page tables
+interface TableContinuation {
+  table: TableObject;
+  sliceIndex: number;
+  pageLayout: import('../objects/table/types').TablePageLayout;
+}
+
 export class FlowingTextRenderer extends EventEmitter {
   private document: Document;
   private flowedPages: Map<string, FlowedPage[]> = new Map();
@@ -35,6 +43,8 @@ export class FlowingTextRenderer extends EventEmitter {
   private _focusedRegion: EditableTextRegion | null = null;
   private selectedText: { start: number; end: number } | null = null;
   private showControlCharacters: boolean = false;
+  // Track tables that continue onto subsequent pages
+  private tableContinuations: Map<string, TableContinuation> = new Map();
 
   constructor(document: Document) {
     super();
@@ -219,8 +229,8 @@ export class FlowingTextRenderer extends EventEmitter {
   getActiveSection(): EditingSection {
     if (this._focusedRegion) {
       const type = this._focusedRegion.type;
-      if (type === 'textbox') {
-        // Text boxes are treated as part of the body section for legacy compatibility
+      if (type === 'textbox' || type === 'tablecell') {
+        // Text boxes and table cells are treated as part of the body section for legacy compatibility
         return 'body';
       }
       return type;
@@ -307,8 +317,11 @@ export class FlowingTextRenderer extends EventEmitter {
   ): void {
     // Only flow text from the first page
     const pageIndex = this.document.pages.findIndex(p => p.id === page.id);
-    
+
     if (pageIndex === 0) {
+      // Clear table continuations when starting a new render cycle
+      this.clearTableContinuations();
+
       // This is the first page, flow all text
       const flowedPages = this.flowTextForPage(page, ctx, contentBounds);
       this.flowedPages.set(page.id, flowedPages);
@@ -324,13 +337,13 @@ export class FlowingTextRenderer extends EventEmitter {
       
       // Render the first flowed page
       if (flowedPages.length > 0) {
-        this.renderFlowedPage(flowedPages[0], ctx, contentBounds, 0);
+        this.renderFlowedPage(flowedPages[0], ctx, contentBounds, 0, page.flowingContent);
       }
     } else {
       // For subsequent pages, get the flowed content from the first page
       const firstPageFlowed = this.flowedPages.get(this.document.pages[0].id);
       if (firstPageFlowed && firstPageFlowed.length > pageIndex) {
-        this.renderFlowedPage(firstPageFlowed[pageIndex], ctx, contentBounds, pageIndex);
+        this.renderFlowedPage(firstPageFlowed[pageIndex], ctx, contentBounds, pageIndex, this.document.pages[0].flowingContent);
       }
     }
 
@@ -362,7 +375,8 @@ export class FlowingTextRenderer extends EventEmitter {
   renderHeaderText(
     page: Page,
     ctx: CanvasRenderingContext2D,
-    isActive: boolean
+    isActive: boolean,
+    region?: EditableTextRegion
   ): void {
     const headerBounds = page.getHeaderBounds();
     const bounds: Rect = {
@@ -378,16 +392,26 @@ export class FlowingTextRenderer extends EventEmitter {
 
     if (flowedPages.length > 0) {
       this.headerFlowedPage = flowedPages[0];
-      this.renderFlowedPage(flowedPages[0], ctx, bounds, 0);
 
-      // Render cursor if header is active (position calculated on-demand)
-      if (isActive && this.document.headerFlowingContent.isCursorVisible()) {
-        this.renderCursor(ctx, 0);
-      }
+      // Use unified renderRegion if region is provided
+      if (region) {
+        this.renderRegion(region, ctx, 0, {
+          renderCursor: isActive,
+          renderSelection: isActive
+        });
+      } else {
+        // Fallback to old rendering path
+        this.renderFlowedPage(flowedPages[0], ctx, bounds, 0, this.document.headerFlowingContent);
 
-      // Render selection if any and header is active
-      if (isActive && this.selectedText) {
-        this.renderTextSelection(flowedPages[0], ctx, bounds);
+        // Render cursor if header is active (position calculated on-demand)
+        if (isActive && this.document.headerFlowingContent.isCursorVisible()) {
+          this.renderCursor(ctx, 0);
+        }
+
+        // Render selection if any and header is active
+        if (isActive && this.selectedText) {
+          this.renderTextSelection(flowedPages[0], ctx, bounds);
+        }
       }
     } else {
       this.headerFlowedPage = null;
@@ -399,11 +423,13 @@ export class FlowingTextRenderer extends EventEmitter {
    * @param page The page to get footer bounds from
    * @param ctx Canvas rendering context
    * @param isActive Whether footer is the active editing section
+   * @param region Optional region for unified rendering
    */
   renderFooterText(
     page: Page,
     ctx: CanvasRenderingContext2D,
-    isActive: boolean
+    isActive: boolean,
+    region?: EditableTextRegion
   ): void {
     const footerBounds = page.getFooterBounds();
     const bounds: Rect = {
@@ -419,16 +445,26 @@ export class FlowingTextRenderer extends EventEmitter {
 
     if (flowedPages.length > 0) {
       this.footerFlowedPage = flowedPages[0];
-      this.renderFlowedPage(flowedPages[0], ctx, bounds, 0);
 
-      // Render cursor if footer is active (position calculated on-demand)
-      if (isActive && this.document.footerFlowingContent.isCursorVisible()) {
-        this.renderCursor(ctx, 0);
-      }
+      // Use unified renderRegion if region is provided
+      if (region) {
+        this.renderRegion(region, ctx, 0, {
+          renderCursor: isActive,
+          renderSelection: isActive
+        });
+      } else {
+        // Fallback to old rendering path
+        this.renderFlowedPage(flowedPages[0], ctx, bounds, 0, this.document.footerFlowingContent);
 
-      // Render selection if any and footer is active
-      if (isActive && this.selectedText) {
-        this.renderTextSelection(flowedPages[0], ctx, bounds);
+        // Render cursor if footer is active (position calculated on-demand)
+        if (isActive && this.document.footerFlowingContent.isCursorVisible()) {
+          this.renderCursor(ctx, 0);
+        }
+
+        // Render selection if any and footer is active
+        if (isActive && this.selectedText) {
+          this.renderTextSelection(flowedPages[0], ctx, bounds);
+        }
       }
     } else {
       this.footerFlowedPage = null;
@@ -467,6 +503,7 @@ export class FlowingTextRenderer extends EventEmitter {
       region.flowingContent.resetCursorBlink();
 
       this.emit('text-clicked', { textIndex: 0, line: 0, section: region.type });
+      this.emit('cursor-changed', { textIndex: 0, section: region.type });
       return { textIndex: 0, lineIndex: 0 };
     }
 
@@ -489,6 +526,14 @@ export class FlowingTextRenderer extends EventEmitter {
           this.emit('inline-element-clicked', { element: inlineElement, point, section: region.type });
           return null; // Let inline element handler manage this
         }
+
+        // Check for substitution field click
+        const field = this.getSubstitutionFieldAtPoint(line, point, lineY, lineStartX);
+        if (field) {
+          this.emit('substitution-field-clicked', { field, point, section: region.type });
+          // Set cursor at the field position but don't return null - still process as text click
+          // This allows the field to be selected while still setting cursor position
+        }
       }
 
       // Find text index at X position
@@ -500,6 +545,7 @@ export class FlowingTextRenderer extends EventEmitter {
       region.flowingContent.resetCursorBlink();
 
       this.emit('text-clicked', { textIndex, line: lineIndex, section: region.type });
+      this.emit('cursor-changed', { textIndex, section: region.type });
       return { textIndex, lineIndex };
     }
 
@@ -512,6 +558,7 @@ export class FlowingTextRenderer extends EventEmitter {
     region.flowingContent.resetCursorBlink();
 
     this.emit('text-clicked', { textIndex, line: lastLineIndex, section: region.type });
+    this.emit('cursor-changed', { textIndex, section: region.type });
     return { textIndex, lineIndex: lastLineIndex };
   }
 
@@ -541,6 +588,9 @@ export class FlowingTextRenderer extends EventEmitter {
       }
       case 'textbox':
         // Text boxes maintain their own flowed lines
+        return region.getFlowedLines(pageIndex);
+      case 'tablecell':
+        // Table cells maintain their own flowed lines
         return region.getFlowedLines(pageIndex);
       default:
         return [];
@@ -746,16 +796,17 @@ export class FlowingTextRenderer extends EventEmitter {
     flowedPage: FlowedPage,
     ctx: CanvasRenderingContext2D,
     bounds: Rect,
-    pageIndex: number
+    pageIndex: number,
+    flowingContent?: FlowingTextContent
   ): void {
     let y = bounds.y;
 
+    // Get cursor position from the specified FlowingTextContent, or fall back to body
+    const contentForCursor = flowingContent || this.document.pages[0]?.flowingContent;
+    const cursorTextIndex = contentForCursor ? contentForCursor.getCursorPosition() : 0;
+
     for (let lineIndex = 0; lineIndex < flowedPage.lines.length; lineIndex++) {
       const line = flowedPage.lines[lineIndex];
-
-      // Get the current cursor text position from the document for field selection
-      const currentPage = this.document.pages[0];
-      const cursorTextIndex = currentPage ? currentPage.flowingContent.getCursorPosition() : 0;
 
       this.renderFlowedLine(line, ctx, { x: bounds.x, y }, bounds.width, pageIndex, cursorTextIndex);
 
@@ -1022,6 +1073,128 @@ export class FlowingTextRenderer extends EventEmitter {
         renderSelection: true,
         clipToBounds: true
       });
+    } else if (object instanceof TableObject) {
+      const table = object as TableObject;
+
+      // Calculate table layout (computes cell bounds and row heights)
+      table.calculateLayout(ctx);
+
+      // Reflow text in each cell
+      for (const row of table.rows) {
+        for (const cell of row.cells) {
+          cell.reflow(ctx);
+        }
+      }
+
+      // Get content bounds to calculate available height
+      const page = this.document.pages[pageIndex];
+      const contentBounds = page?.getContentBounds();
+      const continuationKey = table.id;
+
+      // Check if this is a continuation from a previous page
+      const continuation = this.tableContinuations.get(continuationKey);
+
+      if (continuation && continuation.sliceIndex < continuation.pageLayout.slices.length) {
+        // This is a continuation - render the appropriate slice
+        const slice = continuation.pageLayout.slices[continuation.sliceIndex];
+
+        // Update table rendered position for this slice
+        table.renderedPosition = { x: elementX, y: elementY };
+
+        ctx.save();
+        ctx.translate(elementX, elementY);
+        table.renderSlice(ctx, slice, continuation.pageLayout);
+        ctx.restore();
+
+        // Render cell text for rows in this slice
+        const rowsToRender = table.getRowsForSlice(slice, continuation.pageLayout);
+        this.renderTableCellText(table, rowsToRender, ctx, pageIndex, elementX, elementY, slice, continuation.pageLayout);
+
+        // Update continuation for next page if there are more slices
+        if (continuation.sliceIndex + 1 < continuation.pageLayout.slices.length) {
+          this.tableContinuations.set(continuationKey, {
+            ...continuation,
+            sliceIndex: continuation.sliceIndex + 1
+          });
+        } else {
+          this.tableContinuations.delete(continuationKey);
+        }
+      } else if (contentBounds) {
+        const availableHeight = contentBounds.position.y + contentBounds.size.height - elementY;
+
+        if (table.needsPageSplit(availableHeight)) {
+          // Table needs to be split - calculate page layout
+          const availableHeightOtherPages = contentBounds.size.height;
+          const pageLayout = table.calculatePageLayout(availableHeight, availableHeightOtherPages);
+
+          // Update table rendered position
+          table.renderedPosition = { x: elementX, y: elementY };
+
+          // Render first slice
+          const firstSlice = pageLayout.slices[0];
+
+          ctx.save();
+          ctx.translate(elementX, elementY);
+          table.renderSlice(ctx, firstSlice, pageLayout);
+          ctx.restore();
+
+          // Render cell text for rows in this slice
+          const rowsToRender = table.getRowsForSlice(firstSlice, pageLayout);
+          this.renderTableCellText(table, rowsToRender, ctx, pageIndex, elementX, elementY, firstSlice, pageLayout);
+
+          // Store continuation info for subsequent pages
+          if (pageLayout.slices.length > 1) {
+            this.tableContinuations.set(continuationKey, {
+              table,
+              sliceIndex: 1,
+              pageLayout
+            });
+          }
+        } else {
+          // Table fits on current page - render normally
+          table.renderedPosition = { x: elementX, y: elementY };
+          table.updateCellRenderedPositions();
+
+          ctx.save();
+          ctx.translate(elementX, elementY);
+          table.render(ctx);
+          ctx.restore();
+
+          // Render text content for all cells
+          for (const row of table.rows) {
+            for (const cell of row.cells) {
+              this.renderRegion(cell, ctx, pageIndex, {
+                renderCursor: cell.editing,
+                renderSelection: cell.editing,
+                clipToBounds: true
+              });
+            }
+          }
+
+          // Clear any stale continuation
+          this.tableContinuations.delete(continuationKey);
+        }
+      } else {
+        // No content bounds available - render normally (fallback)
+        table.renderedPosition = { x: elementX, y: elementY };
+        table.updateCellRenderedPositions();
+
+        ctx.save();
+        ctx.translate(elementX, elementY);
+        table.render(ctx);
+        ctx.restore();
+
+        // Render text content for all cells
+        for (const row of table.rows) {
+          for (const cell of row.cells) {
+            this.renderRegion(cell, ctx, pageIndex, {
+              renderCursor: cell.editing,
+              renderSelection: cell.editing,
+              clipToBounds: true
+            });
+          }
+        }
+      }
     } else {
       // For other embedded objects, render normally
       ctx.save();
@@ -1042,6 +1215,126 @@ export class FlowingTextRenderer extends EventEmitter {
       return position.x + object.width + 2; // Add spacing
     }
     return position.x;
+  }
+
+  /**
+   * Render text content for table cells in a specific page slice.
+   * This handles proper positioning for cells within the slice, including
+   * header row repetition on continuation pages.
+   */
+  private renderTableCellText(
+    table: TableObject,
+    rows: import('../objects/table/TableRow').TableRow[],
+    ctx: CanvasRenderingContext2D,
+    pageIndex: number,
+    tableX: number,
+    tableY: number,
+    slice: import('../objects/table/types').TablePageSlice,
+    pageLayout: import('../objects/table/types').TablePageLayout
+  ): void {
+    const columnPositions = table.getColumnPositions();
+    const columnWidths = table.getColumnWidths();
+    let y = 0;
+
+    // Track which rows we've rendered (to handle header rows correctly)
+    const renderedRowIds = new Set<string>();
+
+    // On continuation pages, first render header row text
+    if (slice.isContinuation && pageLayout.headerRowIndices.length > 0) {
+      for (const headerRowIdx of pageLayout.headerRowIndices) {
+        const row = table.rows[headerRowIdx];
+        if (!row) continue;
+
+        renderedRowIds.add(row.id);
+
+        for (let colIdx = 0; colIdx < row.cellCount; colIdx++) {
+          const cell = row.getCell(colIdx);
+          if (!cell) continue;
+
+          // Calculate cell width including colSpan
+          let cellWidth = 0;
+          for (let c = colIdx; c < colIdx + cell.colSpan && c < table.columnCount; c++) {
+            cellWidth += columnWidths[c];
+          }
+
+          // Set cell's rendered position for text rendering
+          cell.setRenderedPosition({
+            x: tableX + columnPositions[colIdx],
+            y: tableY + y
+          });
+
+          // Update cell bounds for this slice
+          cell.setBounds({
+            x: columnPositions[colIdx],
+            y: y,
+            width: cellWidth,
+            height: row.calculatedHeight
+          });
+
+          // Render cell text
+          this.renderRegion(cell, ctx, pageIndex, {
+            renderCursor: cell.editing,
+            renderSelection: cell.editing,
+            clipToBounds: true
+          });
+        }
+        y += row.calculatedHeight;
+      }
+    }
+
+    // Render text for data rows in this slice
+    for (const row of rows) {
+      // Skip header rows if already rendered
+      if (renderedRowIds.has(row.id)) continue;
+
+      for (let colIdx = 0; colIdx < row.cellCount; colIdx++) {
+        const cell = row.getCell(colIdx);
+        if (!cell) continue;
+
+        // Calculate cell width including colSpan
+        let cellWidth = 0;
+        for (let c = colIdx; c < colIdx + cell.colSpan && c < table.columnCount; c++) {
+          cellWidth += columnWidths[c];
+        }
+
+        // Set cell's rendered position for text rendering
+        cell.setRenderedPosition({
+          x: tableX + columnPositions[colIdx],
+          y: tableY + y
+        });
+
+        // Update cell bounds for this slice
+        cell.setBounds({
+          x: columnPositions[colIdx],
+          y: y,
+          width: cellWidth,
+          height: row.calculatedHeight
+        });
+
+        // Render cell text
+        this.renderRegion(cell, ctx, pageIndex, {
+          renderCursor: cell.editing,
+          renderSelection: cell.editing,
+          clipToBounds: true
+        });
+      }
+      y += row.calculatedHeight;
+    }
+  }
+
+  /**
+   * Clear table continuation tracking.
+   * Call this when reflowing text to reset multi-page table state.
+   */
+  clearTableContinuations(): void {
+    this.tableContinuations.clear();
+  }
+
+  /**
+   * Check if there are pending table continuations for the next page.
+   */
+  hasTableContinuations(): boolean {
+    return this.tableContinuations.size > 0;
   }
 
   /**
@@ -1812,14 +2105,20 @@ export class FlowingTextRenderer extends EventEmitter {
     const startInfo = this.findLineYForTextIndex(flowedPage, section.startIndex, contentBounds);
     const endInfo = this.findLineYForTextIndex(flowedPage, section.endIndex, contentBounds);
 
-    const hasStart = startInfo !== null;
-    const hasEnd = endInfo !== null;
-    const sectionSpansThisPage = this.sectionSpansPage(section, flowedPage);
+    // Simple overlap check: section overlaps page if ranges intersect
+    const sectionOverlapsPage = section.startIndex < flowedPage.endIndex &&
+                                 section.endIndex > flowedPage.startIndex;
 
-    // If section doesn't appear on this page at all, skip
-    if (!hasStart && !hasEnd && !sectionSpansThisPage) {
+    // If section doesn't overlap this page at all, skip
+    if (!sectionOverlapsPage) {
       return;
     }
+
+    // Determine what parts of the section are on this page
+    const hasStart = startInfo !== null;  // Section starts on this page
+    const hasEnd = endInfo !== null;      // Section ends on this page
+    const startsBeforePage = section.startIndex < flowedPage.startIndex;
+    const endsAfterPage = section.endIndex > flowedPage.endIndex;
 
     ctx.save();
     ctx.strokeStyle = LOOP_INDICATOR_COLOR;
@@ -1850,6 +2149,23 @@ export class FlowingTextRenderer extends EventEmitter {
       ctx.moveTo(labelX + labelWidth, startY);
       ctx.lineTo(contentBounds.x, startY);
       ctx.stroke();
+    } else if (startsBeforePage) {
+      // Section continues from previous page - draw continuation indicator at top
+      const topY = contentBounds.y;
+
+      // Draw dotted horizontal line across content area at top
+      ctx.setLineDash(LOOP_LINE_DASH);
+      ctx.beginPath();
+      ctx.moveTo(contentBounds.x, topY);
+      ctx.lineTo(contentBounds.x + contentBounds.width, topY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw horizontal connector from vertical line to content
+      ctx.beginPath();
+      ctx.moveTo(connectorX, topY);
+      ctx.lineTo(contentBounds.x, topY);
+      ctx.stroke();
     }
 
     // Draw end indicator (dotted line) if end is on this page
@@ -1869,6 +2185,23 @@ export class FlowingTextRenderer extends EventEmitter {
       ctx.moveTo(connectorX, endY);
       ctx.lineTo(contentBounds.x, endY);
       ctx.stroke();
+    } else if (endsAfterPage) {
+      // Section continues to next page - draw continuation indicator at bottom
+      const bottomY = contentBounds.y + contentBounds.height;
+
+      // Draw dotted horizontal line across content area at bottom
+      ctx.setLineDash(LOOP_LINE_DASH);
+      ctx.beginPath();
+      ctx.moveTo(contentBounds.x, bottomY);
+      ctx.lineTo(contentBounds.x + contentBounds.width, bottomY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw horizontal connector from vertical line to content
+      ctx.beginPath();
+      ctx.moveTo(connectorX, bottomY);
+      ctx.lineTo(contentBounds.x, bottomY);
+      ctx.stroke();
     }
 
     // Draw vertical connector line
@@ -1877,16 +2210,18 @@ export class FlowingTextRenderer extends EventEmitter {
 
     if (hasStart) {
       verticalStartY = startInfo.y;
-    } else {
+    } else if (startsBeforePage) {
       // Section started on a previous page, start from top of content
+      verticalStartY = contentBounds.y;
+    } else {
       verticalStartY = contentBounds.y;
     }
 
     if (hasEnd) {
       verticalEndY = endInfo.y;
-    } else if (sectionSpansThisPage) {
-      // Section continues to next page, end at bottom of content
-      verticalEndY = contentBounds.y + flowedPage.height;
+    } else if (endsAfterPage) {
+      // Section continues to next page, end at bottom of content area
+      verticalEndY = contentBounds.y + contentBounds.height;
     } else {
       verticalEndY = verticalStartY; // No vertical line if neither start nor end
     }

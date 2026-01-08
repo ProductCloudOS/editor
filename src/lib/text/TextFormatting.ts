@@ -8,6 +8,7 @@ import { TextFormattingStyle, DEFAULT_FORMATTING } from './types';
 export class TextFormattingManager extends EventEmitter {
   private formatting: Map<number, TextFormattingStyle> = new Map();
   private _defaultFormatting: TextFormattingStyle;
+  private _pendingFormatting: Partial<TextFormattingStyle> | null = null;
 
   constructor(defaultFormatting?: Partial<TextFormattingStyle>) {
     super();
@@ -125,6 +126,61 @@ export class TextFormattingManager extends EventEmitter {
    */
   clear(): void {
     this.formatting.clear();
+    this._pendingFormatting = null;
     this.emit('formatting-cleared', { start: 0, end: Infinity });
+  }
+
+  // ============================================
+  // Pending Formatting (for cursor-only state)
+  // ============================================
+
+  /**
+   * Set pending formatting to apply to the next inserted character.
+   * Used when formatting is applied with just a cursor (no selection).
+   */
+  setPendingFormatting(formatting: Partial<TextFormattingStyle>): void {
+    // Merge with existing pending formatting
+    this._pendingFormatting = {
+      ...this._pendingFormatting,
+      ...formatting
+    };
+    this.emit('pending-formatting-changed', { formatting: this._pendingFormatting });
+  }
+
+  /**
+   * Get the current pending formatting, if any.
+   */
+  getPendingFormatting(): Partial<TextFormattingStyle> | null {
+    return this._pendingFormatting ? { ...this._pendingFormatting } : null;
+  }
+
+  /**
+   * Check if there is pending formatting.
+   */
+  hasPendingFormatting(): boolean {
+    return this._pendingFormatting !== null;
+  }
+
+  /**
+   * Clear pending formatting.
+   */
+  clearPendingFormatting(): void {
+    if (this._pendingFormatting !== null) {
+      this._pendingFormatting = null;
+      this.emit('pending-formatting-cleared');
+    }
+  }
+
+  /**
+   * Apply pending formatting to a range.
+   * Called when text is inserted. Does NOT clear pending formatting
+   * so it can be applied to subsequent typed characters.
+   */
+  applyPendingFormatting(start: number, length: number): void {
+    if (this._pendingFormatting && length > 0) {
+      this.applyFormatting(start, start + length, this._pendingFormatting);
+      // Note: We don't clear pending formatting here so it applies to
+      // subsequent characters. It's cleared on explicit cursor navigation.
+    }
   }
 }

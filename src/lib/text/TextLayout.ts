@@ -10,7 +10,8 @@ import {
   FlowedPage,
   FlowedSubstitutionField,
   FlowedEmbeddedObject,
-  TextAlignment
+  TextAlignment,
+  OBJECT_REPLACEMENT_CHAR
 } from './types';
 
 /**
@@ -208,13 +209,28 @@ export class TextLayout {
     while (i < lineText.length) {
       const char = lineText[i];
       const isWhitespace = /\s/.test(char);
+      const isObjectChar = char === OBJECT_REPLACEMENT_CHAR;
+
+      // Each embedded object is its own segment (treated as a word for wrapping)
+      if (isObjectChar) {
+        const segment = this.measureSegment(
+          char,
+          startIndex + i,
+          context
+        );
+        segments.push(segment);
+        i++;
+        continue;
+      }
 
       // Find the end of this segment (word or whitespace run)
       let segmentEnd = i + 1;
       while (segmentEnd < lineText.length) {
         const nextChar = lineText[segmentEnd];
         const nextIsWhitespace = /\s/.test(nextChar);
-        if (nextIsWhitespace !== isWhitespace) {
+        const nextIsObjectChar = nextChar === OBJECT_REPLACEMENT_CHAR;
+        // Break on whitespace transitions or when hitting an embedded object
+        if (nextIsWhitespace !== isWhitespace || nextIsObjectChar) {
           break;
         }
         segmentEnd++;
