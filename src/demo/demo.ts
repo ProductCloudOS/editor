@@ -1,11 +1,11 @@
 import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, SubstitutionField, RepeatingSection, EditingSection, TextAlignment } from '../lib';
-import { sampleDocument } from './sample-data';
 
 let editor: PCEditor;
 let currentSelectedField: SubstitutionField | null = null;
 let currentSelectedSection: RepeatingSection | null = null;
 let currentSelectedTextBox: TextBoxObject | null = null;
 let currentSelectedTable: TableObject | null = null;
+let currentSelectedRowLoop: { table: TableObject; loopId: string } | null = null;
 
 function initializeEditor(): void {
   const container = document.getElementById('editor');
@@ -91,25 +91,6 @@ function setupEditorEventLogging(): void {
       // Show and update formatting pane for text selection
       showFormattingPane();
       updateFormattingPane();
-    } else if (selection.type === 'elements') {
-      console.log(`[Editor Event] selection-change: elements selected: ${selection.elementIds.join(', ')}`);
-      // Check if one of the selected elements is a text box
-      const embeddedTextBox = getSelectedEmbeddedTextBox(selection.elementIds);
-      if (embeddedTextBox && embeddedTextBox.editing) {
-        // Text box is being edited - keep formatting pane visible and update it
-        showFormattingPane();
-        updateFormattingPane();
-        updateStatus('Editing text box');
-      } else {
-        // Not editing a text box - hide formatting pane
-        hideFormattingPane();
-        if (embeddedTextBox) {
-          updateTextBoxPane(embeddedTextBox);
-          updateStatus(`Text box selected: ${embeddedTextBox.id}`);
-        } else {
-          updateStatus(`Elements selected: ${selection.elementIds.length}`);
-        }
-      }
     } else {
       console.log('[Editor Event] selection-change: no selection');
       // Hide formatting pane when nothing is selected
@@ -273,10 +254,6 @@ function setupEventHandlers(): void {
   document.getElementById('toggle-margin-lines-btn')?.addEventListener('click', toggleMarginLines);
   document.getElementById('toggle-grid-btn')?.addEventListener('click', toggleGrid);
 
-  // Flowing text controls
-  document.getElementById('clear-text')?.addEventListener('click', clearFlowingText);
-  document.getElementById('add-sample-text')?.addEventListener('click', addSampleFlowingText);
-
   // Prevent buttons from stealing focus - define early so it's available for all sections
   const preventFocusSteal = (e: MouseEvent) => e.preventDefault();
 
@@ -287,17 +264,15 @@ function setupEventHandlers(): void {
 
   // Embedded content controls
   document.getElementById('insert-inline-image')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('insert-inline-image')?.addEventListener('click', () => insertEmbeddedImage('inline'));
+  document.getElementById('insert-inline-image')?.addEventListener('click', insertEmbeddedImage);
   document.getElementById('insert-inline-text')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('insert-inline-text')?.addEventListener('click', () => insertEmbeddedTextBox('inline'));
+  document.getElementById('insert-inline-text')?.addEventListener('click', insertEmbeddedTextBox);
   document.getElementById('insert-inline-table')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('insert-inline-table')?.addEventListener('click', () => insertEmbeddedTable('inline'));
+  document.getElementById('insert-inline-table')?.addEventListener('click', insertEmbeddedTable);
   document.getElementById('insert-substitution-field')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-substitution-field')?.addEventListener('click', toggleFieldPicker);
-  document.getElementById('insert-float-left')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('insert-float-left')?.addEventListener('click', () => insertEmbeddedImage('float-left'));
-  document.getElementById('insert-float-right')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('insert-float-right')?.addEventListener('click', () => insertEmbeddedImage('float-right'));
+  document.getElementById('insert-page-number')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('insert-page-number')?.addEventListener('click', insertPageNumber);
 
   // Table tools
   document.getElementById('table-add-row')?.addEventListener('mousedown', preventFocusSteal);
@@ -310,6 +285,14 @@ function setupEventHandlers(): void {
   document.getElementById('table-split')?.addEventListener('click', tableSplitCell);
   document.getElementById('table-header')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('table-header')?.addEventListener('click', tableToggleHeader);
+  document.getElementById('table-row-loop')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-row-loop')?.addEventListener('click', tableCreateRowLoop);
+
+  // Table row loop section controls
+  document.getElementById('apply-table-row-loop')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('apply-table-row-loop')?.addEventListener('click', applyTableRowLoop);
+  document.getElementById('delete-table-row-loop')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('delete-table-row-loop')?.addEventListener('click', deleteTableRowLoop);
 
   // Document settings controls
   document.getElementById('apply-margins')?.addEventListener('click', applyMargins);
@@ -369,8 +352,221 @@ function setupEventHandlers(): void {
 function loadSampleDocument(): void {
   if (!editor) return;
 
-  editor.loadDocument(sampleDocument);
-  updateStatus('Sample document loaded');
+  // Start with a clean document
+  const emptyDoc: DocumentData = {
+    version: '1.0.0',
+    settings: {
+      pageSize: 'A4',
+      pageOrientation: 'portrait',
+      margins: { top: 25, right: 20, bottom: 25, left: 20 },
+      units: 'mm'
+    },
+    pages: [{ id: 'page_1' }]
+  };
+
+  editor.loadDocument(emptyDoc);
+
+  // Set header and footer
+  editor.setHeaderText('Sample Document - PC Editor Demo');
+  editor.setFooterText('Page 1 | Generated with PC Editor');
+
+  // Helper to get current text length
+  const getTextLength = () => editor.getFlowingText().length;
+
+  // Build body content piece by piece with real substitution fields
+  // Start with the invoice header
+  editor.setFlowingText('Invoice #INV-2024-001\n\nCustomer: ');
+  editor.setCursorPosition(getTextLength());
+  editor.insertSubstitutionField('customerName');
+
+  // Add date line
+  editor.setCursorPosition(getTextLength());
+  editor.setFlowingText(editor.getFlowingText() + '\nDate: ');
+  editor.setCursorPosition(getTextLength());
+  editor.insertSubstitutionField('date');
+
+  // Add intro text
+  editor.setCursorPosition(getTextLength());
+  editor.setFlowingText(editor.getFlowingText() + '\n\nThank you for your order. Please find the details below.\n\n');
+
+  // Insert an embedded image
+  editor.setCursorPosition(getTextLength());
+  const imageObject = new ImageObject({
+    id: `sample_image_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 100, height: 75 },
+    src: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9Ijc1IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDxyZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iNzUiIGZpbGw9IiNlOGY0ZjgiIHN0cm9rZT0iIzMzOTlmZiIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPGNpcmNsZSBjeD0iMzAiIGN5PSIyNSIgcj0iMTIiIGZpbGw9IiNmZmQ3MDAiLz4KICA8cG9seWdvbiBwb2ludHM9IjIwLDY1IDQwLDM1IDYwLDUwIDgwLDMwIDkwLDY1IiBmaWxsPSIjNGNhZjUwIi8+CiAgPHRleHQgeD0iNTAiIHk9IjcwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iOCIgZmlsbD0iIzY2NiI+U2FtcGxlIEltYWdlPC90ZXh0Pgo8L3N2Zz4=',
+    alt: 'Sample Image',
+    fit: 'contain'
+  });
+  editor.insertEmbeddedObject(imageObject, 'inline');
+
+  // Add Order Summary section
+  editor.setFlowingText(editor.getFlowingText() + '\n\nOrder Summary\nThe following items were included in your order:\n\n');
+
+  // Mark start of repeating section, add template content with fields
+  const loopStartIndex = getTextLength();
+  editor.setFlowingText(editor.getFlowingText() + 'Item: ');
+  editor.setCursorPosition(getTextLength());
+  editor.insertSubstitutionField('items.item');
+  editor.setFlowingText(editor.getFlowingText() + '\nAmount: $');
+  editor.setCursorPosition(getTextLength());
+  editor.insertSubstitutionField('items.amount');
+  editor.setFlowingText(editor.getFlowingText() + '\n');
+  const loopEndIndex = getTextLength();
+
+  // Create the repeating section
+  editor.createRepeatingSection(loopStartIndex, loopEndIndex, 'items');
+
+  // Add summary table
+  editor.setFlowingText(editor.getFlowingText() + '\n');
+  editor.setCursorPosition(getTextLength());
+  const tableObject = new TableObject({
+    id: `sample_table_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 250, height: 80 },
+    rows: 2,
+    columns: 2,
+    columnWidths: [125, 125],
+    defaultFontFamily: 'Arial',
+    defaultFontSize: 10,
+    defaultColor: '#000000',
+    defaultCellPadding: 4,
+    defaultBorderWidth: 1,
+    defaultBorderColor: '#cccccc'
+  });
+
+  // Add content to table cells
+  const cell00 = tableObject.getCell(0, 0);
+  const cell01 = tableObject.getCell(0, 1);
+  const cell10 = tableObject.getCell(1, 0);
+  const cell11 = tableObject.getCell(1, 1);
+  if (cell00) { cell00.content = 'Subtotal'; cell00.backgroundColor = '#f5f5f5'; }
+  if (cell01) { cell01.content = '$135.00'; }
+  if (cell10) { cell10.content = 'Tax (10%)'; cell10.backgroundColor = '#f5f5f5'; }
+  if (cell11) { cell11.content = '$15.00'; }
+  editor.insertEmbeddedObject(tableObject, 'inline');
+
+  // Add shipping address section with nested fields
+  editor.setFlowingText(editor.getFlowingText() + '\n\nShipping Address\n');
+  editor.setCursorPosition(getTextLength());
+  editor.insertSubstitutionField('contact.address.street');
+  editor.setFlowingText(editor.getFlowingText() + '\n');
+  editor.setCursorPosition(getTextLength());
+  editor.insertSubstitutionField('contact.address.city');
+  editor.setFlowingText(editor.getFlowingText() + ', ');
+  editor.setCursorPosition(getTextLength());
+  editor.insertSubstitutionField('contact.address.postcode');
+
+  // Add contact field
+  editor.setFlowingText(editor.getFlowingText() + '\n\nContact: ');
+  editor.setCursorPosition(getTextLength());
+  editor.insertSubstitutionField('contact.mobile');
+
+  // Add terms and conditions section
+  editor.setFlowingText(editor.getFlowingText() + '\n\nTerms and Conditions\n\n' +
+    'Payment is due within 30 days of invoice date. Late payments may incur additional charges.\n\n' +
+    'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n\n' +
+    'Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.\n\n' +
+    'Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit.\n\n' +
+    'Additional Notes\n\n' +
+    'This section contains additional information about your order. Please review carefully and contact us if you have any questions.\n\n' +
+    'Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit, sed quia non numquam eius modi tempora incidunt ut labore et dolore magnam aliquam quaerat voluptatem.\n\n' +
+    'At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident.\n\n' +
+    'Thank you for your business!');
+
+  // Add a table with row loop at the end
+  editor.setFlowingText(editor.getFlowingText() + '\n\nItems Table (Row Loop)\n');
+  editor.setCursorPosition(getTextLength());
+
+  // First insert a simple table to verify insertion works
+  const itemsTable = new TableObject({
+    id: `items_table_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 300, height: 80 },
+    rows: 2,
+    columns: 2,
+    columnWidths: [200, 100],
+    defaultFontFamily: 'Arial',
+    defaultFontSize: 10,
+    defaultColor: '#000000',
+    defaultCellPadding: 6,
+    defaultBorderWidth: 1,
+    defaultBorderColor: '#999999'
+  });
+
+  // Set up header row (simple content first)
+  const itemsHeaderCell0 = itemsTable.getCell(0, 0);
+  const itemsHeaderCell1 = itemsTable.getCell(0, 1);
+  if (itemsHeaderCell0) {
+    itemsHeaderCell0.content = 'Item';
+    itemsHeaderCell0.backgroundColor = '#e0e0e0';
+  }
+  if (itemsHeaderCell1) {
+    itemsHeaderCell1.content = 'Amount';
+    itemsHeaderCell1.backgroundColor = '#e0e0e0';
+  }
+  itemsTable.setHeaderRow(0, true);
+
+  // Set up data row with substitution fields
+  const itemsDataCell0 = itemsTable.getCell(1, 0);
+  const itemsDataCell1 = itemsTable.getCell(1, 1);
+  if (itemsDataCell0) {
+    itemsDataCell0.flowingContent.insertSubstitutionField('items.item');
+  }
+  if (itemsDataCell1) {
+    itemsDataCell1.flowingContent.insertText('$');
+    itemsDataCell1.flowingContent.setCursorPosition(1);
+    itemsDataCell1.flowingContent.insertSubstitutionField('items.amount');
+  }
+
+  // Insert the table first, then add the row loop
+  editor.insertEmbeddedObject(itemsTable, 'inline');
+
+  // Create a row loop on row 1 (the data row) after insertion
+  itemsTable.createRowLoop(1, 1, 'items');
+
+  // Apply formatting to headings
+  const text = editor.getFlowingText();
+
+  // Make "Invoice #INV-2024-001" bold and larger (first 21 chars)
+  editor.applyFormattingWithFallback(0, 21, { fontWeight: 'bold', fontSize: 18 });
+
+  // Find and format section headings
+  const orderSummaryPos = text.indexOf('Order Summary');
+  if (orderSummaryPos >= 0) {
+    editor.applyFormattingWithFallback(orderSummaryPos, orderSummaryPos + 13, { fontWeight: 'bold', fontSize: 14 });
+  }
+
+  const shippingPos = text.indexOf('Shipping Address');
+  if (shippingPos >= 0) {
+    editor.applyFormattingWithFallback(shippingPos, shippingPos + 16, { fontWeight: 'bold', fontSize: 14 });
+  }
+
+  const termsPos = text.indexOf('Terms and Conditions');
+  if (termsPos >= 0) {
+    editor.applyFormattingWithFallback(termsPos, termsPos + 20, { fontWeight: 'bold', fontSize: 14 });
+  }
+
+  const notesPos = text.indexOf('Additional Notes');
+  if (notesPos >= 0) {
+    editor.applyFormattingWithFallback(notesPos, notesPos + 16, { fontWeight: 'bold', fontSize: 14 });
+  }
+
+  const itemsTablePos = text.indexOf('Items Table (Row Loop)');
+  if (itemsTablePos >= 0) {
+    editor.applyFormattingWithFallback(itemsTablePos, itemsTablePos + 22, { fontWeight: 'bold', fontSize: 14 });
+  }
+
+  // Make "Thank you for your business!" italic
+  const thankYouPos = text.indexOf('Thank you for your business!');
+  if (thankYouPos >= 0) {
+    editor.applyFormattingWithFallback(thankYouPos, thankYouPos + 28, { fontStyle: 'italic' });
+  }
+
+  editor.render();
+  loadDocumentSettings();
+  updateStatus('Sample document loaded with real substitution fields and repeating section');
 }
 
 function clearDocument(): void {
@@ -385,10 +581,7 @@ function clearDocument(): void {
       units: 'mm'
     },
     pages: [{
-      id: 'page_1',
-      header: { height: 0, elements: [] },
-      content: { elements: [] },
-      footer: { height: 0, elements: [] }
+      id: 'page_1'
     }]
   };
 
@@ -492,30 +685,6 @@ function updateStatus(message: string, type: 'info' | 'error' = 'info'): void {
   }
 }
 
-function clearFlowingText(): void {
-  if (!editor) return;
-
-  editor.setFlowingText('');
-  updateStatus('Flowing text cleared');
-}
-
-function addSampleFlowingText(): void {
-  if (!editor) return;
-
-  const sampleText = `Sample Document
-
-This is a sample document with flowing text. The text will automatically wrap and flow to new pages as needed.
-
-Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-
-Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
-
-Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.`;
-
-  editor.setFlowingText(sampleText);
-  updateStatus('Sample flowing text added');
-}
-
 function applyMargins(): void {
   if (!editor) return;
 
@@ -591,7 +760,7 @@ function loadDocumentSettings(): void {
   }
 }
 
-function insertEmbeddedImage(position: 'inline' | 'float-left' | 'float-right'): void {
+function insertEmbeddedImage(): void {
   if (!editor) return;
 
   try {
@@ -604,8 +773,8 @@ function insertEmbeddedImage(position: 'inline' | 'float-left' | 'float-right'):
       fit: 'contain'
     });
 
-    editor.insertEmbeddedObject(imageObject, position);
-    updateStatus(`Inserted ${position} image`);
+    editor.insertEmbeddedObject(imageObject, 'inline');
+    updateStatus('Inserted image');
     editor.enableTextInput();
   } catch (error) {
     updateStatus('Failed to insert image', 'error');
@@ -613,7 +782,7 @@ function insertEmbeddedImage(position: 'inline' | 'float-left' | 'float-right'):
   }
 }
 
-function insertEmbeddedTextBox(position: 'inline' | 'float-left' | 'float-right'): void {
+function insertEmbeddedTextBox(): void {
   if (!editor) return;
 
   try {
@@ -627,8 +796,8 @@ function insertEmbeddedTextBox(position: 'inline' | 'float-left' | 'float-right'
       color: '#000000'
     });
 
-    editor.insertEmbeddedObject(textBoxObject, position);
-    updateStatus(`Inserted ${position} text box`);
+    editor.insertEmbeddedObject(textBoxObject, 'inline');
+    updateStatus('Inserted text box');
     editor.enableTextInput();
   } catch (error) {
     updateStatus('Failed to insert text box', 'error');
@@ -636,7 +805,20 @@ function insertEmbeddedTextBox(position: 'inline' | 'float-left' | 'float-right'
   }
 }
 
-function insertEmbeddedTable(position: 'inline' | 'float-left' | 'float-right'): void {
+function insertPageNumber(): void {
+  if (!editor) return;
+
+  try {
+    editor.insertPageNumberField();
+    updateStatus('Inserted page number field');
+    editor.enableTextInput();
+  } catch (error) {
+    updateStatus('Failed to insert page number field', 'error');
+    console.error('Page number insertion error:', error);
+  }
+}
+
+function insertEmbeddedTable(): void {
   if (!editor) return;
 
   try {
@@ -674,8 +856,8 @@ function insertEmbeddedTable(position: 'inline' | 'float-left' | 'float-right'):
     // Set the first row as a header row (will repeat on page breaks)
     tableObject.setHeaderRow(0, true);
 
-    editor.insertEmbeddedObject(tableObject, position);
-    updateStatus(`Inserted ${position} table`);
+    editor.insertEmbeddedObject(tableObject, 'inline');
+    updateStatus('Inserted table');
     editor.enableTextInput();
   } catch (error) {
     updateStatus('Failed to insert table', 'error');
@@ -1336,20 +1518,6 @@ function deleteLoop(): void {
 }
 
 /**
- * Get a selected text box from the element IDs if one is selected.
- */
-function getSelectedEmbeddedTextBox(elementIds: string[]): TextBoxObject | null {
-  if (!editor) return null;
-
-  // Use the editor's getSelectedTextBox method
-  const selectedTextBox = editor.getSelectedTextBox();
-  if (selectedTextBox && elementIds.includes(selectedTextBox.id)) {
-    return selectedTextBox;
-  }
-  return null;
-}
-
-/**
  * Update the text box pane when a text box is selected.
  */
 function updateTextBoxPane(textBox: TextBoxObject | null): void {
@@ -1576,6 +1744,125 @@ function tableToggleHeader(): void {
 
     editor.render();
     updateStatus(row.isHeader ? 'Row marked as header' : 'Row unmarked as header');
+  }
+}
+
+/**
+ * Create a row loop from the selected cell range.
+ */
+function tableCreateRowLoop(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  // Get the selected range or focused cell
+  const range = currentSelectedTable.selectedRange;
+  const focusedCell = currentSelectedTable.focusedCell;
+
+  if (!range && !focusedCell) {
+    updateStatus('Select rows in the table first');
+    return;
+  }
+
+  // Determine the row range
+  let startRow: number;
+  let endRow: number;
+
+  if (range) {
+    startRow = range.start.row;
+    endRow = range.end.row;
+  } else if (focusedCell) {
+    // Use just the focused row
+    startRow = focusedCell.row;
+    endRow = focusedCell.row;
+  } else {
+    return;
+  }
+
+  // Prompt for field path
+  const fieldPath = prompt('Enter the array field path (e.g., "items"):', 'items');
+  if (!fieldPath) {
+    updateStatus('Row loop creation cancelled');
+    return;
+  }
+
+  // Create the row loop
+  const loop = currentSelectedTable.createRowLoop(startRow, endRow, fieldPath);
+  if (loop) {
+    currentSelectedRowLoop = { table: currentSelectedTable, loopId: loop.id };
+    showTableRowLoopSection(loop);
+    editor.render();
+    updateStatus(`Row loop created for rows ${startRow}-${endRow} with field path "${fieldPath}"`);
+  } else {
+    updateStatus('Failed to create row loop (check for overlaps or header rows)', 'error');
+  }
+}
+
+/**
+ * Apply changes to the current row loop's field path.
+ */
+function applyTableRowLoop(): void {
+  if (!currentSelectedRowLoop || !editor) return;
+
+  const fieldPathInput = document.getElementById('table-row-loop-field-path') as HTMLInputElement;
+  const newFieldPath = fieldPathInput?.value?.trim();
+
+  if (!newFieldPath) {
+    updateStatus('Field path cannot be empty', 'error');
+    return;
+  }
+
+  const success = currentSelectedRowLoop.table.updateRowLoopFieldPath(currentSelectedRowLoop.loopId, newFieldPath);
+  if (success) {
+    editor.render();
+    updateStatus(`Row loop field path updated to "${newFieldPath}"`);
+  } else {
+    updateStatus('Failed to update row loop', 'error');
+  }
+}
+
+/**
+ * Delete the current row loop.
+ */
+function deleteTableRowLoop(): void {
+  if (!currentSelectedRowLoop || !editor) return;
+
+  const success = currentSelectedRowLoop.table.removeRowLoop(currentSelectedRowLoop.loopId);
+  if (success) {
+    hideTableRowLoopSection();
+    currentSelectedRowLoop = null;
+    editor.render();
+    updateStatus('Row loop deleted');
+  } else {
+    updateStatus('Failed to delete row loop', 'error');
+  }
+}
+
+/**
+ * Show the table row loop section in the sidebar.
+ */
+function showTableRowLoopSection(loop: { id: string; fieldPath: string; startRowIndex: number; endRowIndex: number }): void {
+  const section = document.getElementById('table-row-loop-section');
+  if (section) {
+    section.style.display = 'block';
+  }
+
+  const fieldPathInput = document.getElementById('table-row-loop-field-path') as HTMLInputElement;
+  if (fieldPathInput) {
+    fieldPathInput.value = loop.fieldPath;
+  }
+
+  const rangeHint = document.getElementById('table-row-loop-range-hint');
+  if (rangeHint) {
+    rangeHint.textContent = `Rows ${loop.startRowIndex} - ${loop.endRowIndex}`;
+  }
+}
+
+/**
+ * Hide the table row loop section in the sidebar.
+ */
+function hideTableRowLoopSection(): void {
+  const section = document.getElementById('table-row-loop-section');
+  if (section) {
+    section.style.display = 'none';
   }
 }
 

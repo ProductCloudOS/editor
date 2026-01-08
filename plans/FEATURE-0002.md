@@ -1,5 +1,7 @@
 # FEATURE-0002: Table Row Loops - Implementation Plan
 
+**Status: COMPLETE**
+
 ## Overview
 
 Add support for marking rows in a table as a "loop" that will be replicated during data merge. When merge is applied:

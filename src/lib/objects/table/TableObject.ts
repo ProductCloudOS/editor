@@ -22,7 +22,9 @@ import {
   ResolvedCell,
   DEFAULT_TABLE_STYLE,
   TablePageLayout,
-  TablePageSlice
+  TablePageSlice,
+  TableRowLoop,
+  TableRowLoopData
 } from './types';
 import { TableCellMerger } from './TableCellMerger';
 
@@ -58,6 +60,9 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
   // Covered cells map for merged cells: "row,col" -> origin CellAddress
   private _coveredCells: Map<string, CellAddress> = new Map();
+
+  // Row loops for merge expansion
+  private _rowLoops: Map<string, TableRowLoop> = new Map();
 
   // Layout caching for performance
   private _layoutDirty: boolean = true;
@@ -545,6 +550,10 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     if (rowIndex > this._rows.length) rowIndex = this._rows.length;
 
     this._rows.splice(rowIndex, 0, row);
+
+    // Adjust row loop indices
+    this.shiftRowLoopIndices(rowIndex, 1);
+
     this._layoutDirty = true;
     this.updateCoveredCells();
     this.updateSizeFromLayout();
@@ -560,11 +569,217 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     if (this._rows.length <= 1) return null; // Keep at least one row
 
     const [removed] = this._rows.splice(rowIndex, 1);
+
+    // Adjust row loop indices
+    this.shiftRowLoopIndices(rowIndex, -1);
+
     this._layoutDirty = true;
     this.updateCoveredCells();
     this.updateSizeFromLayout();
     this.emit('row-removed', { rowIndex, rowId: removed.id });
     return removed;
+  }
+
+  // ============================================
+  // Row Loop Management
+  // ============================================
+
+  /**
+   * Generate a unique row loop ID.
+   */
+  private generateRowLoopId(): string {
+    return `rowloop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * Create a row loop for the specified row range.
+   * @param startRowIndex First row of the loop template (inclusive)
+   * @param endRowIndex Last row of the loop template (inclusive)
+   * @param fieldPath The array field path to iterate over (e.g., "items")
+   * @returns The created loop, or null if validation fails
+   */
+  createRowLoop(startRowIndex: number, endRowIndex: number, fieldPath: string): TableRowLoop | null {
+    // Validate range
+    if (startRowIndex < 0 || endRowIndex >= this._rows.length) {
+      console.warn('[TableObject.createRowLoop] Invalid row range');
+      return null;
+    }
+    if (startRowIndex > endRowIndex) {
+      console.warn('[TableObject.createRowLoop] Start index must be <= end index');
+      return null;
+    }
+
+    // Check for overlap with existing loops
+    for (const existingLoop of this._rowLoops.values()) {
+      if (this.loopRangesOverlap(startRowIndex, endRowIndex, existingLoop.startRowIndex, existingLoop.endRowIndex)) {
+        console.warn('[TableObject.createRowLoop] Loop range overlaps with existing loop');
+        return null;
+      }
+    }
+
+    // Check that loop rows are not header rows
+    for (let i = startRowIndex; i <= endRowIndex; i++) {
+      if (this._rows[i]?.isHeader) {
+        console.warn('[TableObject.createRowLoop] Loop rows cannot be header rows');
+        return null;
+      }
+    }
+
+    const loop: TableRowLoop = {
+      id: this.generateRowLoopId(),
+      fieldPath,
+      startRowIndex,
+      endRowIndex
+    };
+
+    this._rowLoops.set(loop.id, loop);
+    this.emit('row-loop-created', { loop });
+    this.emit('content-changed', {});
+    return loop;
+  }
+
+  /**
+   * Remove a row loop by ID.
+   */
+  removeRowLoop(id: string): boolean {
+    const loop = this._rowLoops.get(id);
+    if (!loop) return false;
+
+    this._rowLoops.delete(id);
+    this.emit('row-loop-removed', { loopId: id });
+    this.emit('content-changed', {});
+    return true;
+  }
+
+  /**
+   * Get a row loop by ID.
+   */
+  getRowLoop(id: string): TableRowLoop | undefined {
+    return this._rowLoops.get(id);
+  }
+
+  /**
+   * Get all row loops.
+   */
+  getAllRowLoops(): TableRowLoop[] {
+    return Array.from(this._rowLoops.values());
+  }
+
+  /**
+   * Get the row loop that contains the specified row index, if any.
+   */
+  getRowLoopAtRow(rowIndex: number): TableRowLoop | undefined {
+    for (const loop of this._rowLoops.values()) {
+      if (rowIndex >= loop.startRowIndex && rowIndex <= loop.endRowIndex) {
+        return loop;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Update a row loop's field path.
+   */
+  updateRowLoopFieldPath(id: string, fieldPath: string): boolean {
+    const loop = this._rowLoops.get(id);
+    if (!loop) return false;
+
+    loop.fieldPath = fieldPath;
+    this.emit('row-loop-updated', { loop });
+    this.emit('content-changed', {});
+    return true;
+  }
+
+  /**
+   * Check if two loop ranges overlap.
+   */
+  private loopRangesOverlap(start1: number, end1: number, start2: number, end2: number): boolean {
+    return start1 <= end2 && start2 <= end1;
+  }
+
+  /**
+   * Shift row loop indices when rows are inserted or removed.
+   * @param fromIndex The row index where insertion/removal occurred
+   * @param delta Positive for insertion, negative for removal
+   */
+  private shiftRowLoopIndices(fromIndex: number, delta: number): void {
+    const loopsToRemove: string[] = [];
+
+    for (const loop of this._rowLoops.values()) {
+      if (delta < 0) {
+        // Removal: check if loop is affected
+        const removeCount = Math.abs(delta);
+        const removeEnd = fromIndex + removeCount - 1;
+
+        // If removal overlaps with loop, invalidate it
+        if (fromIndex <= loop.endRowIndex && removeEnd >= loop.startRowIndex) {
+          loopsToRemove.push(loop.id);
+          continue;
+        }
+
+        // If removal is before loop, shift indices
+        if (fromIndex < loop.startRowIndex) {
+          loop.startRowIndex += delta;
+          loop.endRowIndex += delta;
+        }
+      } else {
+        // Insertion: shift loops that start at or after the insertion point
+        if (fromIndex <= loop.startRowIndex) {
+          loop.startRowIndex += delta;
+          loop.endRowIndex += delta;
+        } else if (fromIndex <= loop.endRowIndex) {
+          // Insertion within loop expands the loop
+          loop.endRowIndex += delta;
+        }
+      }
+    }
+
+    // Remove invalidated loops
+    for (const id of loopsToRemove) {
+      this._rowLoops.delete(id);
+      this.emit('row-loop-removed', { loopId: id, reason: 'row-deleted' });
+    }
+  }
+
+  /**
+   * Get rows in a range (for loop expansion).
+   * @param startIndex Start row index (inclusive)
+   * @param endIndex End row index (inclusive)
+   */
+  getRowsInRange(startIndex: number, endIndex: number): TableRow[] {
+    const rows: TableRow[] = [];
+    for (let i = startIndex; i <= endIndex && i < this._rows.length; i++) {
+      rows.push(this._rows[i]);
+    }
+    return rows;
+  }
+
+  /**
+   * Remove rows in a range (for loop expansion).
+   * @param startIndex Start row index (inclusive)
+   * @param endIndex End row index (inclusive)
+   */
+  removeRowsInRange(startIndex: number, endIndex: number): TableRow[] {
+    const count = endIndex - startIndex + 1;
+    const removed = this._rows.splice(startIndex, count);
+    this._layoutDirty = true;
+    this.updateCoveredCells();
+    return removed;
+  }
+
+  /**
+   * Insert multiple rows at a specific index (for loop expansion).
+   * @param index The index to insert at
+   * @param rows The rows to insert
+   */
+  insertRowsAt(index: number, rows: TableRow[]): void {
+    for (const row of rows) {
+      this.setupRowListeners(row);
+    }
+    this._rows.splice(index, 0, ...rows);
+    this._layoutDirty = true;
+    this.updateCoveredCells();
+    this.updateSizeFromLayout();
   }
 
   // ============================================
@@ -1341,6 +1556,11 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       }
     }
 
+    // Render row loop indicators
+    if (this._rowLoops.size > 0) {
+      this.renderRowLoopIndicators(ctx);
+    }
+
     // Render cell range selection highlight
     if (this._selectedRange) {
       this.renderRangeSelection(ctx);
@@ -1354,6 +1574,75 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     // Draw editing indicator
     if (this._editing) {
       this.renderEditingIndicator(ctx);
+    }
+  }
+
+  /**
+   * Render row loop indicators (colored stripe on left side of loop rows).
+   */
+  private renderRowLoopIndicators(ctx: CanvasRenderingContext2D): void {
+    const indicatorWidth = 4;
+    const labelPadding = 4;
+
+    // Calculate row Y positions if not cached
+    let rowPositions = this._cachedRowPositions;
+    if (rowPositions.length === 0) {
+      rowPositions = [];
+      let y = 0;
+      for (const row of this._rows) {
+        rowPositions.push(y);
+        y += row.calculatedHeight;
+      }
+    }
+
+    // Colors for different loops (cycle through these)
+    const loopColors = ['#9b59b6', '#3498db', '#e67e22', '#1abc9c', '#e74c3c'];
+    let colorIndex = 0;
+
+    for (const loop of this._rowLoops.values()) {
+      const color = loopColors[colorIndex % loopColors.length];
+      colorIndex++;
+
+      // Calculate the Y range for this loop
+      const startY = rowPositions[loop.startRowIndex] || 0;
+      let endY = startY;
+      for (let i = loop.startRowIndex; i <= loop.endRowIndex && i < this._rows.length; i++) {
+        endY += this._rows[i].calculatedHeight;
+      }
+      const loopHeight = endY - startY;
+
+      // Draw colored stripe on left side
+      ctx.fillStyle = color;
+      ctx.fillRect(-indicatorWidth - 2, startY, indicatorWidth, loopHeight);
+
+      // Draw loop label on the first row
+      ctx.save();
+      ctx.font = '10px Arial';
+      ctx.fillStyle = color;
+
+      // Rotate text to be vertical along the stripe
+      const labelText = `⟳ ${loop.fieldPath}`;
+      const textMetrics = ctx.measureText(labelText);
+
+      // Position label to the left of the stripe
+      ctx.translate(-indicatorWidth - labelPadding - textMetrics.width - 4, startY + loopHeight / 2);
+
+      ctx.fillText(labelText, 0, 4);
+      ctx.restore();
+
+      // Draw top and bottom brackets
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      // Top bracket
+      ctx.moveTo(-indicatorWidth - 2, startY);
+      ctx.lineTo(-indicatorWidth - 6, startY);
+      ctx.lineTo(-indicatorWidth - 6, startY + 6);
+      // Bottom bracket
+      ctx.moveTo(-indicatorWidth - 2, endY);
+      ctx.lineTo(-indicatorWidth - 6, endY);
+      ctx.lineTo(-indicatorWidth - 6, endY - 6);
+      ctx.stroke();
     }
   }
 
@@ -1470,6 +1759,16 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
   // ============================================
 
   toData(): EmbeddedObjectData {
+    // Serialize row loops if any exist
+    const rowLoops: TableRowLoopData[] | undefined = this._rowLoops.size > 0
+      ? Array.from(this._rowLoops.values()).map(loop => ({
+          id: loop.id,
+          fieldPath: loop.fieldPath,
+          startRowIndex: loop.startRowIndex,
+          endRowIndex: loop.endRowIndex
+        }))
+      : undefined;
+
     const tableData: TableObjectData = {
       id: this._id,
       objectType: 'table',
@@ -1479,6 +1778,7 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       data: {
         columns: this._columns.map(col => ({ ...col })),
         rows: this._rows.map(row => row.toData()),
+        rowLoops,
         defaultCellPadding: this._defaultCellPadding,
         defaultBorderColor: this._defaultBorderColor,
         defaultBorderWidth: this._defaultBorderWidth,
@@ -1514,6 +1814,18 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       const row = TableRow.fromData(rowData);
       table.setupRowListeners(row);
       table._rows.push(row);
+    }
+
+    // Load row loops if present
+    if (data.data.rowLoops) {
+      for (const loopData of data.data.rowLoops) {
+        table._rowLoops.set(loopData.id, {
+          id: loopData.id,
+          fieldPath: loopData.fieldPath,
+          startRowIndex: loopData.startRowIndex,
+          endRowIndex: loopData.endRowIndex
+        });
+      }
     }
 
     table.updateCoveredCells();

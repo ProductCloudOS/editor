@@ -72,62 +72,6 @@ export interface DocumentSettings {
 
 export interface PageData {
   id: string;
-  header: SectionData;
-  content: SectionData;
-  footer: SectionData;
-}
-
-export interface SectionData {
-  height?: number;
-  elements: ElementData[];
-}
-
-export type ElementType = 'text' | 'image' | 'placeholder' | 'shape';
-
-export interface ElementData {
-  id: string;
-  type: ElementType;
-  position: Point;
-  size: Size;
-  rotation?: number;
-  opacity?: number;
-  zIndex?: number;
-  locked?: boolean;
-  data: TextElementData | ImageElementData | PlaceholderElementData | ShapeElementData;
-}
-
-export interface TextElementData {
-  content: string;
-  fontFamily: string;
-  fontSize: number;
-  fontWeight?: string;
-  fontStyle?: string;
-  textAlign?: 'left' | 'center' | 'right' | 'justify';
-  lineHeight?: number;
-  color?: string;
-  backgroundColor?: string;
-  padding?: Margin;
-}
-
-export interface ImageElementData {
-  src: string;
-  alt?: string;
-  fit?: 'contain' | 'cover' | 'fill' | 'none';
-}
-
-export interface PlaceholderElementData {
-  key: string;
-  displayText?: string;
-  format?: string;
-  defaultValue?: string | number;
-  repeatable?: boolean;
-}
-
-export interface ShapeElementData {
-  shapeType: 'rectangle' | 'circle' | 'line';
-  fill?: string;
-  stroke?: string;
-  strokeWidth?: number;
 }
 
 export interface EditorEvent {
@@ -136,13 +80,12 @@ export interface EditorEvent {
 }
 
 /**
- * Unified selection type representing cursor position, text selection, element selection, or no selection.
+ * Unified selection type representing cursor position, text selection, or no selection.
  * Text-based selections (cursor, text) include which section is being edited.
  */
 export type EditorSelection =
   | { type: 'cursor'; position: number; section: EditingSection }
   | { type: 'text'; start: number; end: number; section: EditingSection }
-  | { type: 'elements'; elementIds: string[] }
   | { type: 'repeating-section'; sectionId: string }
   | { type: 'none' };
 

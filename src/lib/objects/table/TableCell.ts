@@ -617,6 +617,9 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
       formattingRuns.push([index, { ...style }]);
     });
 
+    // Get substitution fields for serialization
+    const fields = this._flowingContent.getSubstitutionFieldManager().getFieldsArray();
+
     return {
       id: this._id,
       rowSpan: this._rowSpan,
@@ -629,7 +632,8 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
       fontFamily: this._fontFamily,
       fontSize: this._fontSize,
       color: this._color,
-      formattingRuns: formattingRuns.length > 0 ? formattingRuns : undefined
+      formattingRuns: formattingRuns.length > 0 ? formattingRuns : undefined,
+      substitutionFields: fields.length > 0 ? fields : undefined
     };
   }
 
@@ -656,6 +660,23 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
         formattingMap.set(index, style as TextFormattingStyle);
       }
       formattingManager.setAllFormatting(formattingMap);
+    }
+
+    // Restore substitution fields
+    if (data.substitutionFields && Array.isArray(data.substitutionFields)) {
+      const fieldManager = cell._flowingContent.getSubstitutionFieldManager();
+      for (const field of data.substitutionFields as any[]) {
+        if (field.textIndex !== undefined && field.fieldName) {
+          fieldManager.insert(field.fieldName, field.textIndex, {
+            defaultValue: field.defaultValue,
+            displayFormat: field.displayFormat
+          });
+          // Restore field formatting if present
+          if (field.formatting) {
+            fieldManager.setFieldFormatting(field.textIndex, field.formatting);
+          }
+        }
+      }
     }
 
     return cell;

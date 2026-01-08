@@ -1,13 +1,9 @@
-import { PageData, DocumentSettings, ElementData, Point, Size } from '../types';
+import { PageData, DocumentSettings, Point, Size } from '../types';
 import { EventEmitter } from '../events/EventEmitter';
-import { Section } from './Section';
 import { FlowingTextContent } from '../text';
 
 export class Page extends EventEmitter {
   private _id: string;
-  private _header: Section;
-  private _content: Section;
-  private _footer: Section;
   private _flowingContent: FlowingTextContent;
   private _settings: DocumentSettings;
 
@@ -15,20 +11,9 @@ export class Page extends EventEmitter {
     super();
     this._id = data.id;
     this._settings = settings;
-
-    this._header = new Section('header', data.header);
-    this._content = new Section('content', data.content);
-    this._footer = new Section('footer', data.footer);
     this._flowingContent = new FlowingTextContent();
 
-    this.setupSectionListeners();
     this.setupFlowingContentListeners();
-  }
-
-  private setupSectionListeners(): void {
-    [this._header, this._content, this._footer].forEach(section => {
-      section.on('change', () => this.handleSectionChange());
-    });
   }
 
   private setupFlowingContentListeners(): void {
@@ -54,18 +39,6 @@ export class Page extends EventEmitter {
 
   get id(): string {
     return this._id;
-  }
-
-  get header(): Section {
-    return this._header;
-  }
-
-  get content(): Section {
-    return this._content;
-  }
-
-  get footer(): Section {
-    return this._footer;
   }
 
   get flowingContent(): FlowingTextContent {
@@ -191,28 +164,9 @@ export class Page extends EventEmitter {
     this.emit('change');
   }
 
-  private handleSectionChange(): void {
-    this.emit('change');
-  }
-
-  getAllElements(): ElementData[] {
-    return [
-      ...this._header.getElements(),
-      ...this._content.getElements(),
-      ...this._footer.getElements()
-    ];
-  }
-
-  getElementById(elementId: string): ElementData | undefined {
-    return this.getAllElements().find(el => el.id === elementId);
-  }
-
   toData(): PageData {
     return {
-      id: this._id,
-      header: this._header.toData(),
-      content: this._content.toData(),
-      footer: this._footer.toData()
+      id: this._id
     };
   }
 }

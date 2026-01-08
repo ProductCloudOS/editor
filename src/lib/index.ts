@@ -2,11 +2,8 @@ export { PCEditor } from './core/PCEditor';
 
 export * from './types';
 
-export { BaseElement } from './elements/BaseElement';
-
 export { Document } from './core/Document';
 export { Page } from './core/Page';
-export { Section } from './core/Section';
 
 export { EventEmitter } from './events/EventEmitter';
 

@@ -141,19 +141,58 @@ export class TextMeasurer {
 
   /**
    * Get the display text for a substitution field.
+   * @param field The substitution field
+   * @param pageNumber Optional current page number (1-based) for page number fields
+   * @param pageCount Optional total page count for page count fields
    */
-  getFieldDisplayText(field: SubstitutionField): string {
-    return `{{field: ${field.fieldName}}}`;
+  getFieldDisplayText(field: SubstitutionField, pageNumber?: number, pageCount?: number): string {
+    if (field.fieldType === 'pageNumber') {
+      if (pageNumber !== undefined) {
+        if (field.displayFormat) {
+          return field.displayFormat.replace(/%d/g, String(pageNumber));
+        }
+        return String(pageNumber);
+      }
+      // During layout (when page number is unknown), use a reasonable width estimate
+      // Use "00" to get consistent width for single/double digit numbers
+      if (field.displayFormat) {
+        return field.displayFormat.replace(/%d/g, '00');
+      }
+      return '00';
+    }
+
+    if (field.fieldType === 'pageCount') {
+      if (pageCount !== undefined) {
+        if (field.displayFormat) {
+          return field.displayFormat.replace(/%d/g, String(pageCount));
+        }
+        return String(pageCount);
+      }
+      // During layout (when page count is unknown), use a reasonable width estimate
+      if (field.displayFormat) {
+        return field.displayFormat.replace(/%d/g, '00');
+      }
+      return '00';
+    }
+
+    // Regular data field
+    return `{{${field.fieldName}}}`;
   }
 
   /**
    * Measure a substitution field's display text.
+   * @param field The substitution field
+   * @param defaultFormatting Default formatting to use if field has none
+   * @param pageNumber Optional current page number (1-based) for page number fields
+   * @param pageCount Optional total page count for page count fields
    */
   measureSubstitutionField(
     field: SubstitutionField,
-    defaultFormatting?: TextFormattingStyle
+    defaultFormatting?: TextFormattingStyle,
+    pageNumber?: number,
+    pageCount?: number
   ): { width: number; height: number } {
-    const displayText = this.getFieldDisplayText(field);
+    const displayText = this.getFieldDisplayText(field, pageNumber, pageCount);
     const formatting = field.formatting || defaultFormatting || DEFAULT_FORMATTING;
 
     return {

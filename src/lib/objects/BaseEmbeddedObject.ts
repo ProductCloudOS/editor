@@ -21,6 +21,7 @@ export abstract class BaseEmbeddedObject extends EventEmitter {
   protected _selected: boolean = false;
   protected _locked: boolean = false;
   protected _renderedPosition: Point | null = null;
+  protected _renderedPageIndex: number = -1;
 
   constructor(config: EmbeddedObjectConfig) {
     super();
@@ -137,6 +138,21 @@ export abstract class BaseEmbeddedObject extends EventEmitter {
    */
   set renderedPosition(value: Point | null) {
     this._renderedPosition = value ? { ...value } : null;
+  }
+
+  /**
+   * Get the page index where this object was last rendered.
+   * Used for hit detection to ensure clicks only match objects on the same page.
+   */
+  get renderedPageIndex(): number {
+    return this._renderedPageIndex;
+  }
+
+  /**
+   * Set the rendered page index (called by renderer).
+   */
+  set renderedPageIndex(value: number) {
+    this._renderedPageIndex = value;
   }
 
   // ============ Common Methods ============

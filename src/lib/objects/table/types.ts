@@ -116,6 +116,27 @@ export interface TableObjectConfig extends EmbeddedObjectConfig {
 }
 
 /**
+ * Configuration for a table row loop.
+ * Defines which rows should be repeated for each item in an array during merge.
+ */
+export interface TableRowLoop {
+  id: string;
+  fieldPath: string;        // e.g., "items" - array to loop over
+  startRowIndex: number;    // First row of the template (inclusive)
+  endRowIndex: number;      // Last row of the template (inclusive)
+}
+
+/**
+ * Serialized loop data for persistence.
+ */
+export interface TableRowLoopData {
+  id: string;
+  fieldPath: string;
+  startRowIndex: number;
+  endRowIndex: number;
+}
+
+/**
  * Serialized table data for persistence.
  */
 export interface TableObjectData extends EmbeddedObjectData {
@@ -123,6 +144,7 @@ export interface TableObjectData extends EmbeddedObjectData {
   data: {
     columns: TableColumnConfig[];
     rows: TableRowData[];
+    rowLoops?: TableRowLoopData[];  // Optional array of row loops
     defaultCellPadding: number;
     defaultBorderColor: string;
     defaultBorderWidth: number;

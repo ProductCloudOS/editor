@@ -61,10 +61,7 @@ export class Document extends EventEmitter {
 
   private createEmptyPageData(): PageData {
     return {
-      id: this.generateId(),
-      header: { height: 50, elements: [] },
-      content: { elements: [] },
-      footer: { height: 30, elements: [] }
+      id: this.generateId()
     };
   }
 

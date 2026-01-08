@@ -1,11 +1,9 @@
 import { Document } from '../core/Document';
 import { Page } from '../core/Page';
-import { EditorOptions, ElementData, Point, PageDimensions, Size, Rect, EditingSection } from '../types';
+import { EditorOptions, Point, PageDimensions, Size, Rect, EditingSection } from '../types';
 import { EventEmitter } from '../events/EventEmitter';
-import { ElementFactory } from '../elements/ElementFactory';
-import { BaseElement } from '../elements/BaseElement';
 import { FlowingTextRenderer } from './FlowingTextRenderer';
-import { TextBoxObject } from '../objects/TextBoxObject';
+import { TextBoxObject, BaseEmbeddedObject } from '../objects';
 import { TableObject, TableResizeHandler } from '../objects/table';
 import { Focusable } from '../text/types';
 import {
@@ -139,8 +137,23 @@ export class CanvasManager extends EventEmitter {
     this.flowingTextRenderer.destroy();
     this.flowingTextRenderer = new FlowingTextRenderer(document);
     this.setupFlowingTextListeners();
+    this.initializeRegions();
     this.createCanvases();
     this.setupEventListeners();
+
+    // Reset editing state
+    this._activeSection = 'body';
+    this.selectedElements.clear();
+    this.editingTextBox = null;
+    this._editingTextBoxPageId = null;
+    this._focusedControl = null;
+
+    // Set focus on the body flowing content
+    const page = this.document.pages[0];
+    if (page?.flowingContent) {
+      this.setFocus(page.flowingContent);
+    }
+
     this.render();
   }
 
@@ -172,7 +185,7 @@ export class CanvasManager extends EventEmitter {
 
       // Render header content
       const headerRegion = this.regionManager.getHeaderRegion();
-      this.flowingTextRenderer.renderHeaderText(page, ctx, this._activeSection === 'header', headerRegion ?? undefined);
+      this.flowingTextRenderer.renderHeaderText(page, ctx, this._activeSection === 'header', headerRegion ?? undefined, pageIndex);
 
       // Render body (flowing text content)
       const contentBounds = page.getContentBounds();
@@ -186,7 +199,7 @@ export class CanvasManager extends EventEmitter {
 
       // Render footer content
       const footerRegion = this.regionManager.getFooterRegion();
-      this.flowingTextRenderer.renderFooterText(page, ctx, this._activeSection === 'footer', footerRegion ?? undefined);
+      this.flowingTextRenderer.renderFooterText(page, ctx, this._activeSection === 'footer', footerRegion ?? undefined, pageIndex);
 
       // Render repeating section indicators (only in body)
       // Always get sections from the first page's flowingContent since body text flows from page 0
@@ -283,71 +296,53 @@ export class CanvasManager extends EventEmitter {
     ctx.restore();
   }
 
-  private renderPageElements(page: any, ctx: CanvasRenderingContext2D): void {
-    // Collect all elements from all sections
-    const elements: BaseElement[] = [];
-
-    // Get elements from each section
-    if (page.header && typeof page.header.getAllElements === 'function') {
-      elements.push(...page.header.getAllElements());
-    }
-    if (page.content && typeof page.content.getAllElements === 'function') {
-      elements.push(...page.content.getAllElements());
-    }
-    if (page.footer && typeof page.footer.getAllElements === 'function') {
-      elements.push(...page.footer.getAllElements());
-    }
-
-    // Sort by z-index
-    elements.sort((a, b) => a.zIndex - b.zIndex);
-
-    // Render each element (without selection marks)
-    elements.forEach(element => {
-      element.render(ctx);
-    });
+  private renderPageElements(_page: any, _ctx: CanvasRenderingContext2D): void {
+    // Regular elements have been removed - embedded objects are rendered by FlowingTextRenderer
   }
 
   /**
-   * Render selection marks (resize handles) for selected elements.
+   * Render selection marks (resize handles) for selected embedded objects.
    * Called separately to ensure selection marks are drawn on top of all other content.
    */
-  private renderSelectionMarks(page: any, ctx: CanvasRenderingContext2D): void {
-    // Collect all elements from all sections
-    const elements: BaseElement[] = [];
+  private renderSelectionMarks(_page: any, ctx: CanvasRenderingContext2D): void {
+    // Draw resize handles for selected embedded objects
+    const flowingContents = [
+      this.document.pages[0]?.flowingContent,
+      this.document.headerFlowingContent,
+      this.document.footerFlowingContent
+    ].filter(Boolean);
 
-    if (page.header && typeof page.header.getAllElements === 'function') {
-      elements.push(...page.header.getAllElements());
-    }
-    if (page.content && typeof page.content.getAllElements === 'function') {
-      elements.push(...page.content.getAllElements());
-    }
-    if (page.footer && typeof page.footer.getAllElements === 'function') {
-      elements.push(...page.footer.getAllElements());
-    }
-
-    // Draw resize handles for selected elements
-    elements.forEach(element => {
-      if (element.selected && !element.locked) {
-        this.drawResizeHandles(ctx, element);
+    for (const flowingContent of flowingContents) {
+      const embeddedObjects = flowingContent.getEmbeddedObjects();
+      for (const [, obj] of embeddedObjects.entries()) {
+        if (obj.selected && !obj.locked && obj.renderedPosition) {
+          this.drawBaseEmbeddedObjectResizeHandles(ctx, obj);
+        }
       }
-    });
+    }
   }
   
-  private drawResizeHandles(ctx: CanvasRenderingContext2D, element: BaseElement): void {
-    const bounds = element.getBounds();
+  private drawBaseEmbeddedObjectResizeHandles(ctx: CanvasRenderingContext2D, obj: BaseEmbeddedObject): void {
+    if (!obj.renderedPosition) return;
+    const bounds: Rect = {
+      x: obj.renderedPosition.x,
+      y: obj.renderedPosition.y,
+      width: obj.width,
+      height: obj.height
+    };
     const handleSize = 8;
     const handles = this.getResizeHandles(bounds);
-    
+
     ctx.save();
     ctx.fillStyle = '#0066ff';
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1;
-    
+
     Object.entries(handles).forEach(([_, pos]) => {
       ctx.fillRect(pos.x - handleSize / 2, pos.y - handleSize / 2, handleSize, handleSize);
       ctx.strokeRect(pos.x - handleSize / 2, pos.y - handleSize / 2, handleSize, handleSize);
     });
-    
+
     ctx.restore();
   }
   
@@ -386,9 +381,9 @@ export class CanvasManager extends EventEmitter {
       this.dragStart = point;
 
       const element = this.getSelectedElementAt(pageId);
-      if (element) {
-        this.resizeStartSize = { ...element.size };
-        this.resizeStartPos = { ...element.position };
+      if (element && element.renderedPosition) {
+        this.resizeStartSize = { width: element.width, height: element.height };
+        this.resizeStartPos = { ...element.renderedPosition };
       }
 
       e.preventDefault();
@@ -516,13 +511,6 @@ export class CanvasManager extends EventEmitter {
       }
     }
 
-    // Check if clicking on a regular element
-    const element = this.getElementAtPoint(point, pageId);
-    if (element) {
-      this.isDragging = true;
-      this.dragStart = point;
-      return;
-    }
 
     // Check if clicking on an embedded object in the active section
     // Object selection is handled in handleClick
@@ -701,9 +689,8 @@ export class CanvasManager extends EventEmitter {
         );
 
         if (newSize.size.width > 20 && newSize.size.height > 20) {
-          // Check if this is an embedded object by looking in all flowing content sources
+          // Update the embedded object's size
           const page = this.document.getPage(pageId);
-          let isEmbeddedObject = false;
 
           const flowingContents = [
             page?.flowingContent,
@@ -717,18 +704,11 @@ export class CanvasManager extends EventEmitter {
               const entry = embeddedObjectManager.findById(element.id);
 
               if (entry) {
-                isEmbeddedObject = true;
                 // Update the embedded object's size directly on the manager's object
                 entry.object.size = { width: newSize.size.width, height: newSize.size.height };
                 break;
               }
             }
-          }
-
-          if (!isEmbeddedObject) {
-            // Regular element - update position and size
-            element.position = newSize.position;
-            element.size = newSize.size;
           }
         }
       }
@@ -737,41 +717,9 @@ export class CanvasManager extends EventEmitter {
       return;
     }
     
-    // Handle dragging
+    // Handle dragging - embedded objects can only be resized, not moved
+    // (their position is determined by text flow)
     if (this.isDragging && this.dragStart) {
-      const deltaX = point.x - this.dragStart.x;
-      const deltaY = point.y - this.dragStart.y;
-      
-      // Move selected elements (both regular and inline elements)
-      this.selectedElements.forEach(elementId => {
-        const page = this.document.getPage(pageId);
-        if (!page) return;
-        
-        // Check regular elements
-        const element = page.content.getElement(elementId) ||
-                       page.header.getElement(elementId) ||
-                       page.footer.getElement(elementId);
-        
-        if (element && !element.locked) {
-          element.move(deltaX, deltaY);
-          return;
-        }
-        
-        // Check embedded objects - for now, we'll only allow resizing, not moving
-        // since moving embedded objects would require changing their position in the text flow
-        const flowingContent = page.flowingContent;
-        if (flowingContent) {
-          const embeddedObjects = flowingContent.getEmbeddedObjects();
-          for (const [, embeddedObj] of embeddedObjects.entries()) {
-            if (embeddedObj.id === elementId && !embeddedObj.locked) {
-              // For embedded objects, we only allow resizing, not dragging position
-              // The position is determined by the text flow
-              break;
-            }
-          }
-        }
-      });
-      
       this.dragStart = point;
       this.render();
     }
@@ -948,30 +896,18 @@ export class CanvasManager extends EventEmitter {
     // Get the page for later use
     const page = this.document.getPage(pageId);
 
-    // Check if we clicked on a regular element FIRST (before checking text selection)
-    // This allows clicking on tables/text boxes even when text is selected
-    const element = this.getElementAtPoint(point, pageId);
-    if (element) {
-      // Clear any text selection in the active section
-      const flowingContent = this.getFlowingContentForActiveSection();
-      if (flowingContent) {
-        flowingContent.clearSelection();
-      }
-      if (!e.shiftKey) {
-        this.clearSelection();
-      }
-      this.selectElement(element.id);
-      return;
-    }
-
     // Check if we clicked on an embedded object (inline table/text box in text flow)
     // This must be checked BEFORE the text selection early return
     const activeFlowingContent = this.getFlowingContentForActiveSection();
 
+    // Get the page index for the clicked page
+    const clickedPageIndex = this.document.pages.findIndex(p => p.id === pageId);
+
     if (activeFlowingContent) {
       const embeddedObjects = activeFlowingContent.getEmbeddedObjects();
       for (const [, obj] of embeddedObjects.entries()) {
-        if (obj.renderedPosition) {
+        // Only check objects rendered on the same page as the click
+        if (obj.renderedPosition && obj.renderedPageIndex === clickedPageIndex) {
           const objBounds = {
             x: obj.renderedPosition.x,
             y: obj.renderedPosition.y,
@@ -1129,33 +1065,12 @@ export class CanvasManager extends EventEmitter {
     };
   }
 
-  private getResizeHandleAt(point: Point, pageId: string): { handle: string; element: BaseElement } | null {
+  private getResizeHandleAt(point: Point, pageId: string): { handle: string; element: BaseEmbeddedObject } | null {
     const page = this.document.getPage(pageId);
     if (!page) return null;
-    
-    // Check selected elements for resize handles
+
+    // Check selected embedded objects for resize handles
     for (const elementId of this.selectedElements) {
-      // Check regular elements
-      const element = page.header.getElement(elementId) ||
-                     page.content.getElement(elementId) ||
-                     page.footer.getElement(elementId);
-      
-      if (element && !element.locked) {
-        const bounds = element.getBounds();
-        const handles = this.getResizeHandles(bounds);
-        const handleSize = 8;
-        
-        for (const [handleKey, handlePos] of Object.entries(handles)) {
-          const distance = Math.sqrt(
-            Math.pow(point.x - handlePos.x, 2) + Math.pow(point.y - handlePos.y, 2)
-          );
-          
-          if (distance <= handleSize / 2) {
-            return { handle: handleKey, element };
-          }
-        }
-      }
-      
       // Check embedded objects in all flowing content sources
       const flowingContents = [
         page.flowingContent,
@@ -1187,7 +1102,7 @@ export class CanvasManager extends EventEmitter {
                 );
 
                 if (distance <= handleSize) {
-                  return { handle: handleKey, element: embeddedObj as any };
+                  return { handle: handleKey, element: embeddedObj };
                 }
               }
             }
@@ -1195,27 +1110,18 @@ export class CanvasManager extends EventEmitter {
         }
       }
     }
-    
+
     return null;
   }
 
-  private getSelectedElementAt(pageId: string): BaseElement | null {
+  private getSelectedElementAt(pageId: string): BaseEmbeddedObject | null {
     if (this.selectedElements.size === 0) return null;
-    
+
     const page = this.document.getPage(pageId);
     if (!page) return null;
-    
+
     const firstSelected = Array.from(this.selectedElements)[0];
-    
-    // Check regular elements first
-    const regularElement = page.header.getElement(firstSelected) ||
-                          page.content.getElement(firstSelected) ||
-                          page.footer.getElement(firstSelected);
-    
-    if (regularElement) {
-      return regularElement;
-    }
-    
+
     // Check embedded objects in all flowing content sources
     const flowingContents = [
       page.flowingContent,
@@ -1228,7 +1134,7 @@ export class CanvasManager extends EventEmitter {
         const embeddedObjects = flowingContent.getEmbeddedObjects();
         for (const [, embeddedObj] of embeddedObjects.entries()) {
           if (embeddedObj.id === firstSelected) {
-            return embeddedObj as any;
+            return embeddedObj;
           }
         }
       }
@@ -1351,52 +1257,51 @@ export class CanvasManager extends EventEmitter {
     return null;
   }
 
-  addElement(elementData: ElementData, pageId: string): void {
-    const page = this.document.getPage(pageId);
-    if (!page) return;
+  removeEmbeddedObject(objectId: string): void {
+    // Find and remove embedded object from any flowing content
+    const flowingContents = [
+      this.document.pages[0]?.flowingContent,
+      this.document.headerFlowingContent,
+      this.document.footerFlowingContent
+    ].filter(Boolean);
 
-    const element = ElementFactory.createElement(elementData);
-    page.content.addElement(element);
-    
-    
-    this.render();
-    this.emit('element-added', { element: elementData, pageId });
-  }
-
-  removeElement(elementId: string): void {
-    // Find and remove element from any section
-    this.document.pages.forEach(page => {
-      if (page.header.getElement(elementId)) {
-        page.header.removeElement(elementId);
-      } else if (page.content.getElement(elementId)) {
-        page.content.removeElement(elementId);
-      } else if (page.footer.getElement(elementId)) {
-        page.footer.removeElement(elementId);
+    for (const flowingContent of flowingContents) {
+      const manager = flowingContent.getEmbeddedObjectManager();
+      const entry = manager.findById(objectId);
+      if (entry) {
+        manager.remove(entry.textIndex);
+        break;
       }
-    });
-    
+    }
+
     // Remove from selection
-    this.selectedElements.delete(elementId);
-    
+    this.selectedElements.delete(objectId);
+
     this.render();
-    this.emit('element-removed', { elementId });
+    this.emit('element-removed', { elementId: objectId });
   }
 
   selectElement(elementId: string): void {
     console.log('Selecting element:', elementId);
     this.selectedElements.add(elementId);
-    
-    // Update element's selected state
-    this.document.pages.forEach(page => {
-      const element = page.header.getElement(elementId) ||
-                     page.content.getElement(elementId) ||
-                     page.footer.getElement(elementId);
-      if (element) {
-        console.log('Found element to select:', element.id);
-        element.selected = true;
+
+    // Update embedded object's selected state
+    const flowingContents = [
+      this.document.pages[0]?.flowingContent,
+      this.document.headerFlowingContent,
+      this.document.footerFlowingContent
+    ].filter(Boolean);
+
+    for (const flowingContent of flowingContents) {
+      const embeddedObjects = flowingContent.getEmbeddedObjects();
+      for (const [, obj] of embeddedObjects.entries()) {
+        if (obj.id === elementId) {
+          console.log('Found embedded object to select:', obj.id);
+          obj.selected = true;
+        }
       }
-    });
-    
+    }
+
     console.log('Selected elements after selection:', Array.from(this.selectedElements));
     this.render();
     this.emit('selection-change', { selectedElements: Array.from(this.selectedElements) });
@@ -1404,38 +1309,27 @@ export class CanvasManager extends EventEmitter {
 
   clearSelection(): void {
     console.log('clearSelection called, current selected elements:', Array.from(this.selectedElements));
-    // Clear selected state on all elements (including inline elements)
+    // Clear selected state on all embedded objects
     this.selectedElements.forEach(elementId => {
       console.log('Clearing selection for element:', elementId);
-      this.document.pages.forEach(page => {
-        // Check regular elements
-        const element = page.header.getElement(elementId) ||
-                       page.content.getElement(elementId) ||
-                       page.footer.getElement(elementId);
-        if (element) {
-          console.log('Clearing selection on regular element:', elementId);
-          element.selected = false;
-        }
+      // Check embedded objects in all flowing content sources (body, header, footer)
+      const flowingContents = [
+        this.document.pages[0]?.flowingContent,
+        this.document.headerFlowingContent,
+        this.document.footerFlowingContent
+      ].filter(Boolean);
 
-        // Check embedded objects in all flowing content sources (body, header, footer)
-        const flowingContents = [
-          page.flowingContent,
-          this.document.headerFlowingContent,
-          this.document.footerFlowingContent
-        ].filter(Boolean);
-
-        for (const flowingContent of flowingContents) {
-          const embeddedObjects = flowingContent.getEmbeddedObjects();
-          for (const [, embeddedObj] of embeddedObjects.entries()) {
-            if (embeddedObj.id === elementId) {
-              console.log('Clearing selection on embedded object:', elementId);
-              embeddedObj.selected = false;
-            }
+      for (const flowingContent of flowingContents) {
+        const embeddedObjects = flowingContent.getEmbeddedObjects();
+        for (const [, embeddedObj] of embeddedObjects.entries()) {
+          if (embeddedObj.id === elementId) {
+            console.log('Clearing selection on embedded object:', elementId);
+            embeddedObj.selected = false;
           }
         }
-      });
+      }
     });
-    
+
     this.selectedElements.clear();
     this.selectedSectionId = null;
     console.log('About to render after clearing selection...');
@@ -1450,7 +1344,7 @@ export class CanvasManager extends EventEmitter {
     return Array.from(this.selectedElements);
   }
 
-  selectEmbeddedObject(embeddedObject: any, isPartOfRangeSelection: boolean = false): void {
+  selectBaseEmbeddedObject(embeddedObject: any, isPartOfRangeSelection: boolean = false): void {
     // Mark the embedded object as selected
     const obj = embeddedObject.object || embeddedObject;
     obj.selected = true;
@@ -1496,39 +1390,38 @@ export class CanvasManager extends EventEmitter {
   }
 
   /**
-   * @deprecated Use selectEmbeddedObject instead
+   * @deprecated Use selectBaseEmbeddedObject instead
    */
   selectInlineElement(inlineElement: any): void {
-    this.selectEmbeddedObject(inlineElement);
+    this.selectBaseEmbeddedObject(inlineElement);
   }
 
-  getElementAtPoint(point: Point, pageId: string): ElementData | null {
-    const page = this.document.getPage(pageId);
-    if (!page) return null;
-    
-    // Check elements in reverse order (top to bottom)
-    const allElements: BaseElement[] = [];
-    
-    if (page.header && typeof page.header.getAllElements === 'function') {
-      allElements.push(...page.header.getAllElements());
-    }
-    if (page.content && typeof page.content.getAllElements === 'function') {
-      allElements.push(...page.content.getAllElements());
-    }
-    if (page.footer && typeof page.footer.getAllElements === 'function') {
-      allElements.push(...page.footer.getAllElements());
-    }
-    
-    // Sort by z-index descending
-    allElements.sort((a, b) => b.zIndex - a.zIndex);
-    
-    // Find first element that contains the point
-    for (const element of allElements) {
-      if (element.containsPoint(point)) {
-        return element.toData();
+  getBaseEmbeddedObjectAtPoint(point: Point, _pageId: string): BaseEmbeddedObject | null {
+    // Check embedded objects in all flowing content sources
+    const flowingContents = [
+      this.document.pages[0]?.flowingContent,
+      this.document.headerFlowingContent,
+      this.document.footerFlowingContent
+    ].filter(Boolean);
+
+    for (const flowingContent of flowingContents) {
+      const embeddedObjects = flowingContent.getEmbeddedObjects();
+      for (const [, obj] of embeddedObjects.entries()) {
+        if (obj.renderedPosition) {
+          const bounds = {
+            x: obj.renderedPosition.x,
+            y: obj.renderedPosition.y,
+            width: obj.width,
+            height: obj.height
+          };
+          if (point.x >= bounds.x && point.x <= bounds.x + bounds.width &&
+              point.y >= bounds.y && point.y <= bounds.y + bounds.height) {
+            return obj;
+          }
+        }
       }
     }
-    
+
     return null;
   }
 
@@ -1688,22 +1581,11 @@ export class CanvasManager extends EventEmitter {
   private createNewPage(): void {
     const existingPage = this.document.pages[0];
     if (!existingPage) return;
-    
+
     const newPageData = {
-      id: `page_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      header: {
-        height: 0,
-        elements: []
-      },
-      content: {
-        elements: []
-      },
-      footer: {
-        height: 0,
-        elements: []
-      }
+      id: `page_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     };
-    
+
     const newPage = new Page(newPageData, this.document.settings);
     this.document.addPage(newPage);
   }

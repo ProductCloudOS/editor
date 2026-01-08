@@ -24,11 +24,6 @@
                     <button id="toggle-control-chars">¶</button>
                 </div>
                 <div class="toolbar-group">
-                    <label>Flowing Text:</label>
-                    <button id="clear-text">Clear</button>
-                    <button id="add-sample-text">Add Sample</button>
-                </div>
-                <div class="toolbar-group">
                     <label>Embedded Content:</label>
                     <button id="insert-inline-image">Image</button>
                     <button id="insert-inline-text">Text Box</button>
@@ -39,11 +34,7 @@
                             <div class="field-picker-list" id="field-picker-list"></div>
                         </div>
                     </div>
-                </div>
-                <div class="toolbar-group">
-                    <label>Position:</label>
-                    <button id="insert-float-left">Float Left</button>
-                    <button id="insert-float-right">Float Right</button>
+                    <button id="insert-page-number">Page #</button>
                 </div>
                 <div class="toolbar-group">
                     <label>Structure:</label>
@@ -56,6 +47,7 @@
                     <button id="table-merge">Merge</button>
                     <button id="table-split">Split</button>
                     <button id="table-header">Header</button>
+                    <button id="table-row-loop">Row Loop</button>
                 </div>
             </div>
         </header>
@@ -266,6 +258,25 @@
                         <p class="field-hint" id="loop-position-hint"></p>
                         <button id="apply-loop-changes">Apply Changes</button>
                         <button id="delete-loop" class="danger-button" style="margin-top: 0.5rem;">Delete Loop</button>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="table-row-loop-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="table-row-loop-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Table Row Loop</span>
+                    </button>
+                    <div class="collapsible-content" id="table-row-loop-properties">
+                        <div class="setting-group">
+                            <label>Array Field Path:</label>
+                            <input type="text" id="table-row-loop-field-path" placeholder="e.g., items">
+                        </div>
+                        <div class="setting-group">
+                            <label>Row Range:</label>
+                            <p class="field-hint" id="table-row-loop-range-hint">Select rows in table first</p>
+                        </div>
+                        <button id="apply-table-row-loop">Apply Changes</button>
+                        <button id="delete-table-row-loop" class="danger-button" style="margin-top: 0.5rem;">Delete Row Loop</button>
                     </div>
                 </div>
 

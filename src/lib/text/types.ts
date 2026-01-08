@@ -75,21 +75,32 @@ export interface TextRun {
 }
 
 /**
+ * Type of substitution field.
+ * - 'data': Regular field replaced by merge data
+ * - 'pageNumber': Replaced by current page number during rendering
+ * - 'pageCount': Replaced by total page count during rendering
+ */
+export type SubstitutionFieldType = 'data' | 'pageNumber' | 'pageCount';
+
+/**
  * Configuration for a substitution field.
  */
 export interface SubstitutionFieldConfig {
   displayFormat?: string;
   defaultValue?: string;
+  fieldType?: SubstitutionFieldType;
 }
 
 /**
- * A substitution field - text placeholder for data merge.
- * Rendered as {{field: name}} and behaves atomically.
+ * A substitution field - text placeholder for data merge or page numbers.
+ * Regular fields rendered as {{fieldName}} and replaced during merge.
+ * Page number fields rendered as the current page number.
  */
 export interface SubstitutionField {
   id: string;
   textIndex: number;
   fieldName: string;
+  fieldType?: SubstitutionFieldType;  // undefined or 'data' = regular field
   displayFormat?: string;
   defaultValue?: string;
   formatting?: TextFormattingStyle;

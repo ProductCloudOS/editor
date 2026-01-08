@@ -2,20 +2,19 @@
 
 ## Defects
 
-(No open defects)
+(none)
 
 ## New Features
 
-- [ ] FEATURE-0001 Remove the 'regular' elements from the project entirely, including all support for them in the demo app
-- [ ] FEATURE-0002 Support the ability to add a loop to rows in a table.  Only rows and not columns needs to be supported.  A loop in a table should replicate the rows during a merge just like text is replicated normally
-- [ ] FEATURE-0003 Add a table pane on the right that appears when a table is selected that supports: column/row addition, column/row deletion, cell merging, cell background, borders, header row or column, how many header rows/columns different format for headers vs normal  
+- [ ] FEATURE-0003 Add a table pane on the right that appears when a table is selected that supports: column/row addition, column/row deletion, cell merging, cell background, borders, header row or column, how many header rows/columns different format for headers vs normal
 - [ ] FEATURE-0004 Tables need to span multiple pages and have the headers replicate at the top of each page that the table crosses over
-- [ ] FEATURE-0005 Add a 'page number' field.  This will act list a substitution field but, instead of being replaced by text when data is merged, it should be replaced by the page number when the document is rendered to PDF
 - [ ] FEATURE-0006 Implement the image object properly.  When an image is created it should have the image data passed in, in an appropriate format, when it is created.  The client (in our case the demo) is responsible for getting the data in the first place.  A formatting pane (like the text box pane) supporting how the image resizes (freely, locked aspect ration, tiled) and giving the option to change the image should also be created
 - [ ] FEATURE-0007 Different positioning of objects
 - [ ] FEATURE-0008 Implement the PDF Generation function such that it looks identical to the canvas but without control characters, selection marks, cursors, grids, loops or any other operational render.  Also, the demo app should automatically apply data merge prior to creating the PDF.  This should be in the control of the client application though and not the editor
 - [ ] FEATURE-0009 Undo/Redo functionality
 - [ ] FEATURE-0010 Serialisation/Deserialise of document contents
+- [ ] FEATURE-0011 Click/drag to select across pages
+- [ ] FEATURE-0012 Additional selection logic such as double-click to select a word, shift and mouse down, select all, etc
 
 ### Performance & Polish
 - [ ] **Optimize rendering performance**
@@ -57,6 +56,10 @@
 
 ## Completed Recently ✅
 
+- ✅ BUG-0015 Page 2 Cursor/Selection - Fixed cursor position calculation, text index lookup, cursor visibility check, flowed lines retrieval to all use correct page index; added renderedPageIndex to embedded objects for correct hit detection
+- ✅ FEATURE-0005 Page Number Field - Added page number and page count fields that display actual values in headers/footers across all pages
+- ✅ FEATURE-0002 Support the ability to add a loop to rows in a table. Table row loops are expanded during merge just like text repeating sections.
+- ✅ FEATURE-0001 Remove the 'regular' elements from the project entirely, including all support for them in the demo app
 - ✅ BUG-0019 Multi-Page Loop Indicators - Fixed vertical connector lines and horizontal continuation lines rendering across page boundaries. Simplified overlap detection and fixed sections retrieval to use first page's flowingContent for all pages.
 - ✅ BUG-0018 Pending Formatting - Implemented pending formatting for cursor-only state. Formatting applied with no selection now affects next typed characters. Inherits from surrounding text when no pending formatting exists.
 - ✅ BUG-0021 Header/Body Logic Unification - Unified header/footer rendering to use renderRegion, added section detection to handleClick, fixed cursor-changed event to update active section

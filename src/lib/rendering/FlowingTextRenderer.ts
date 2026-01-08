@@ -156,18 +156,11 @@ export class FlowingTextRenderer extends EventEmitter {
       const alignmentOffset = TextPositionCalculator.getAlignmentOffset(location.line, maxWidth);
       const xOffset = TextPositionCalculator.getXPositionForTextIndex(location.line, textIndex, ctx);
 
-      // Calculate Y position
+      // Calculate Y position relative to the current page's content bounds
+      // Each page has its own canvas, so Y is relative to that page only
       let y = contentBounds.position.y;
 
-      // Add heights of previous pages
-      const flowedPages = this.flowedPages.get(firstPage.id) || [];
-      for (let p = 0; p < location.pageIndex; p++) {
-        for (const line of flowedPages[p].lines) {
-          y += line.height;
-        }
-      }
-
-      // Add heights of lines before cursor line on current page
+      // Add heights of lines before cursor line on current page only
       for (let l = 0; l < location.lineIndex; l++) {
         y += location.flowedPage.lines[l].height;
       }
@@ -349,8 +342,9 @@ export class FlowingTextRenderer extends EventEmitter {
 
     // Render cursor if visible and on this page (only when body is active)
     // Use FlowingTextContent's isCursorVisible() for proper blink state
-    const bodyFlowingContent = page.flowingContent;
-    if (this.getActiveSection() === 'body' && bodyFlowingContent.isCursorVisible()) {
+    // Body text flows from the FIRST page's flowingContent, so use that for cursor state
+    const bodyFlowingContent = this.document.pages[0]?.flowingContent;
+    if (bodyFlowingContent && this.getActiveSection() === 'body' && bodyFlowingContent.isCursorVisible()) {
       this.renderCursor(ctx, pageIndex);
     }
 
@@ -371,12 +365,15 @@ export class FlowingTextRenderer extends EventEmitter {
    * @param page The page to get header bounds from
    * @param ctx Canvas rendering context
    * @param isActive Whether header is the active editing section
+   * @param region Optional region for unified rendering
+   * @param pageIndex The page index (for page number fields)
    */
   renderHeaderText(
     page: Page,
     ctx: CanvasRenderingContext2D,
     isActive: boolean,
-    region?: EditableTextRegion
+    region?: EditableTextRegion,
+    pageIndex: number = 0
   ): void {
     const headerBounds = page.getHeaderBounds();
     const bounds: Rect = {
@@ -395,13 +392,13 @@ export class FlowingTextRenderer extends EventEmitter {
 
       // Use unified renderRegion if region is provided
       if (region) {
-        this.renderRegion(region, ctx, 0, {
+        this.renderRegion(region, ctx, pageIndex, {
           renderCursor: isActive,
           renderSelection: isActive
         });
       } else {
         // Fallback to old rendering path
-        this.renderFlowedPage(flowedPages[0], ctx, bounds, 0, this.document.headerFlowingContent);
+        this.renderFlowedPage(flowedPages[0], ctx, bounds, pageIndex, this.document.headerFlowingContent);
 
         // Render cursor if header is active (position calculated on-demand)
         if (isActive && this.document.headerFlowingContent.isCursorVisible()) {
@@ -424,12 +421,14 @@ export class FlowingTextRenderer extends EventEmitter {
    * @param ctx Canvas rendering context
    * @param isActive Whether footer is the active editing section
    * @param region Optional region for unified rendering
+   * @param pageIndex The page index (for page number fields)
    */
   renderFooterText(
     page: Page,
     ctx: CanvasRenderingContext2D,
     isActive: boolean,
-    region?: EditableTextRegion
+    region?: EditableTextRegion,
+    pageIndex: number = 0
   ): void {
     const footerBounds = page.getFooterBounds();
     const bounds: Rect = {
@@ -448,13 +447,13 @@ export class FlowingTextRenderer extends EventEmitter {
 
       // Use unified renderRegion if region is provided
       if (region) {
-        this.renderRegion(region, ctx, 0, {
+        this.renderRegion(region, ctx, pageIndex, {
           renderCursor: isActive,
           renderSelection: isActive
         });
       } else {
         // Fallback to old rendering path
-        this.renderFlowedPage(flowedPages[0], ctx, bounds, 0, this.document.footerFlowingContent);
+        this.renderFlowedPage(flowedPages[0], ctx, bounds, pageIndex, this.document.footerFlowingContent);
 
         // Render cursor if footer is active (position calculated on-demand)
         if (isActive && this.document.footerFlowingContent.isCursorVisible()) {
@@ -573,16 +572,13 @@ export class FlowingTextRenderer extends EventEmitter {
       case 'footer':
         return this.footerFlowedPage?.lines || [];
       case 'body': {
-        // Get the page ID for this page index
-        const page = this.document.pages[pageIndex];
-        if (!page) return [];
-        const flowedPages = this.flowedPages.get(page.id);
-        // For body, we use the first flowed page (pageIndex within the flowedPages array)
-        // Since body content flows across pages, we need the lines for this specific page
-        if (flowedPages && flowedPages.length > 0) {
-          // The flowedPages array contains pages of content that flowed from the body
-          // For a single page document, pageIndex 0 maps to flowedPages[0]
-          return flowedPages[0]?.lines || [];
+        // Body content flows from the first page, so flowedPages are stored under first page's ID
+        const firstPage = this.document.pages[0];
+        if (!firstPage) return [];
+        const flowedPages = this.flowedPages.get(firstPage.id);
+        // Get the lines for this specific page index
+        if (flowedPages && flowedPages.length > pageIndex) {
+          return flowedPages[pageIndex]?.lines || [];
         }
         return [];
       }
@@ -657,6 +653,10 @@ export class FlowingTextRenderer extends EventEmitter {
       }
     }
 
+    // Get total page count for page count fields
+    const firstPage = this.document.pages[0];
+    const pageCount = firstPage ? (this.flowedPages.get(firstPage.id)?.length || 1) : 1;
+
     // Render each line
     let y = bounds.y;
     for (let lineIndex = 0; lineIndex < flowedLines.length; lineIndex++) {
@@ -671,7 +671,7 @@ export class FlowingTextRenderer extends EventEmitter {
         break;
       }
 
-      this.renderFlowedLine(line, ctx, { x: bounds.x, y }, maxWidth, pageIndex, cursorTextIndex);
+      this.renderFlowedLine(line, ctx, { x: bounds.x, y }, maxWidth, pageIndex, cursorTextIndex, pageCount);
       y += line.height;
     }
 
@@ -805,10 +805,14 @@ export class FlowingTextRenderer extends EventEmitter {
     const contentForCursor = flowingContent || this.document.pages[0]?.flowingContent;
     const cursorTextIndex = contentForCursor ? contentForCursor.getCursorPosition() : 0;
 
+    // Get total page count for page count fields
+    const firstPage = this.document.pages[0];
+    const pageCount = firstPage ? (this.flowedPages.get(firstPage.id)?.length || 1) : 1;
+
     for (let lineIndex = 0; lineIndex < flowedPage.lines.length; lineIndex++) {
       const line = flowedPage.lines[lineIndex];
 
-      this.renderFlowedLine(line, ctx, { x: bounds.x, y }, bounds.width, pageIndex, cursorTextIndex);
+      this.renderFlowedLine(line, ctx, { x: bounds.x, y }, bounds.width, pageIndex, cursorTextIndex, pageCount);
 
       y += line.height;
     }
@@ -820,7 +824,8 @@ export class FlowingTextRenderer extends EventEmitter {
     position: Point,
     maxWidth: number,
     pageIndex: number,
-    cursorTextIndex?: number
+    cursorTextIndex?: number,
+    pageCount?: number
   ): void {
     // Calculate alignment offset
     const alignmentOffset = this.getAlignmentOffset(line, maxWidth);
@@ -859,7 +864,9 @@ export class FlowingTextRenderer extends EventEmitter {
         if (field) {
           // Field is selected when cursor is right after it (since clicking positions cursor after field)
           const isFieldSelected = cursorTextIndex === charIndex + 1;
-          x = this.renderSubstitutionField(field, ctx, { x, y: position.y }, line, isFieldSelected);
+          // Pass 1-based page number for page number fields
+          const pageNumber = pageIndex + 1;
+          x = this.renderSubstitutionField(field, ctx, { x, y: position.y }, line, isFieldSelected, pageNumber, pageCount);
           continue;
         }
 
@@ -953,7 +960,10 @@ export class FlowingTextRenderer extends EventEmitter {
   }
 
   /**
-   * Render a substitution field as styled text {{field: name}}.
+   * Render a substitution field as styled text.
+   * Regular fields display as {{field: name}}.
+   * Page number fields display as the actual page number.
+   * Page count fields display as the total page count.
    * Returns the new x position after rendering.
    *
    * Note: position.y is the TOP of the line, and line.baseline is the
@@ -964,9 +974,39 @@ export class FlowingTextRenderer extends EventEmitter {
     ctx: CanvasRenderingContext2D,
     position: Point,
     line: FlowedLine,
-    isSelected: boolean = false
+    isSelected: boolean = false,
+    pageNumber?: number,
+    pageCount?: number
   ): number {
-    const displayText = `{{field: ${field.field.fieldName}}}`;
+    // Determine display text based on field type
+    let displayText: string;
+    const fieldType = field.field.fieldType;
+
+    if (fieldType === 'pageNumber') {
+      if (pageNumber !== undefined) {
+        if (field.field.displayFormat) {
+          displayText = field.field.displayFormat.replace(/%d/g, String(pageNumber));
+        } else {
+          displayText = String(pageNumber);
+        }
+      } else {
+        displayText = '{{page}}';
+      }
+    } else if (fieldType === 'pageCount') {
+      if (pageCount !== undefined) {
+        if (field.field.displayFormat) {
+          displayText = field.field.displayFormat.replace(/%d/g, String(pageCount));
+        } else {
+          displayText = String(pageCount);
+        }
+      } else {
+        displayText = '{{pages}}';
+      }
+    } else {
+      // Regular data field
+      displayText = `{{field: ${field.field.fieldName}}}`;
+    }
+
     const formatting = field.field.formatting || DEFAULT_FORMATTING;
 
     ctx.save();
@@ -984,13 +1024,17 @@ export class FlowingTextRenderer extends EventEmitter {
     // Background should start at the top of this field's text area
     const backgroundY = textY - fieldBaseline;
 
-    // Draw background for field (use field's backgroundColor or default light gray)
-    ctx.fillStyle = formatting.backgroundColor || '#e8e8e8';
+    // Draw background for field
+    // Page number/count fields use light blue, data fields use light gray
+    const isPageField = fieldType === 'pageNumber' || fieldType === 'pageCount';
+    const defaultBackground = isPageField ? '#d4ebff' : '#e8e8e8';  // Light blue for page fields
+    const defaultBorder = isPageField ? '#87CEEB' : '#cccccc';      // Darker blue border for page fields
+    ctx.fillStyle = formatting.backgroundColor || defaultBackground;
     ctx.fillRect(position.x, backgroundY, textWidth, fieldHeight);
 
     // Draw border around field (only if using default background)
     if (!formatting.backgroundColor) {
-      ctx.strokeStyle = '#cccccc';
+      ctx.strokeStyle = defaultBorder;
       ctx.lineWidth = 1;
       ctx.strokeRect(position.x, backgroundY, textWidth, fieldHeight);
     }
@@ -1047,8 +1091,9 @@ export class FlowingTextRenderer extends EventEmitter {
         break;
     }
 
-    // Store the rendered position for hit detection
+    // Store the rendered position and page index for hit detection
     object.renderedPosition = { x: elementX, y: elementY };
+    object.renderedPageIndex = pageIndex;
 
     // Check if this is a TextBoxObject - delegate text rendering to renderRegion
     if (object instanceof TextBoxObject) {
@@ -1100,6 +1145,7 @@ export class FlowingTextRenderer extends EventEmitter {
 
         // Update table rendered position for this slice
         table.renderedPosition = { x: elementX, y: elementY };
+        table.renderedPageIndex = pageIndex;
 
         ctx.save();
         ctx.translate(elementX, elementY);
@@ -1129,6 +1175,7 @@ export class FlowingTextRenderer extends EventEmitter {
 
           // Update table rendered position
           table.renderedPosition = { x: elementX, y: elementY };
+          table.renderedPageIndex = pageIndex;
 
           // Render first slice
           const firstSlice = pageLayout.slices[0];
@@ -1153,6 +1200,7 @@ export class FlowingTextRenderer extends EventEmitter {
         } else {
           // Table fits on current page - render normally
           table.renderedPosition = { x: elementX, y: elementY };
+          table.renderedPageIndex = pageIndex;
           table.updateCellRenderedPositions();
 
           ctx.save();
@@ -1177,6 +1225,7 @@ export class FlowingTextRenderer extends EventEmitter {
       } else {
         // No content bounds available - render normally (fallback)
         table.renderedPosition = { x: elementX, y: elementY };
+        table.renderedPageIndex = pageIndex;
         table.updateCellRenderedPositions();
 
         ctx.save();
@@ -1547,7 +1596,11 @@ export class FlowingTextRenderer extends EventEmitter {
    * Returns null if the point is not within text content.
    */
   getTextIndexAtPoint(point: Point, pageId: string): number | null {
-    const flowedPages = this.flowedPages.get(pageId);
+    // FlowedPages are stored under the first page's ID
+    const firstPage = this.document.pages[0];
+    if (!firstPage) return null;
+
+    const flowedPages = this.flowedPages.get(firstPage.id);
     if (!flowedPages || flowedPages.length === 0) {
       return null;
     }
@@ -1557,19 +1610,30 @@ export class FlowingTextRenderer extends EventEmitter {
       return null;
     }
 
+    // Find the page index for the clicked page
+    const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+    if (pageIndex < 0 || pageIndex >= flowedPages.length) {
+      return null;
+    }
+
+    const flowedPage = flowedPages[pageIndex];
+    if (!flowedPage || flowedPage.lines.length === 0) {
+      return null;
+    }
+
     const contentBounds = page.getContentBounds();
     const relativeY = point.y - contentBounds.position.y;
     const relativeX = point.x - contentBounds.position.x;
     const maxWidth = contentBounds.size.width;
 
-    // If clicked above all lines, return start of content
-    if (relativeY < 0 && flowedPages[0].lines.length > 0) {
-      return flowedPages[0].lines[0].startIndex;
+    // If clicked above all lines, return start of this page's content
+    if (relativeY < 0 && flowedPage.lines.length > 0) {
+      return flowedPage.lines[0].startIndex;
     }
 
     let currentY = 0;
-    for (let lineIndex = 0; lineIndex < flowedPages[0].lines.length; lineIndex++) {
-      const line = flowedPages[0].lines[lineIndex];
+    for (let lineIndex = 0; lineIndex < flowedPage.lines.length; lineIndex++) {
+      const line = flowedPage.lines[lineIndex];
 
       if (relativeY >= currentY && relativeY < currentY + line.height) {
         // Found the line, now find the character position
@@ -1581,9 +1645,9 @@ export class FlowingTextRenderer extends EventEmitter {
       currentY += line.height;
     }
 
-    // If clicked below all lines, return end of content
-    if (flowedPages[0].lines.length > 0) {
-      const lastLine = flowedPages[0].lines[flowedPages[0].lines.length - 1];
+    // If clicked below all lines, return end of this page's content
+    if (flowedPage.lines.length > 0) {
+      const lastLine = flowedPage.lines[flowedPage.lines.length - 1];
       return lastLine.endIndex;
     }
 

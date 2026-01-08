@@ -3,8 +3,6 @@ import {
   DocumentData,
   DataBindingContext,
   PDFExportOptions,
-  ElementData,
-  Point,
   PageDimensions,
   EditorSelection,
   EditingSection
@@ -117,15 +115,8 @@ export class PCEditor extends EventEmitter {
       }
     });
 
-    this.canvasManager.on('selection-change', (data: any) => {
-      // Element selection changed
-      const elementIds = data.selectedElements || [];
-      if (elementIds.length > 0) {
-        this.currentSelection = { type: 'elements', elementIds };
-      } else if (this.currentSelection.type === 'elements') {
-        // Only clear if we were in element selection mode
-        this.currentSelection = { type: 'none' };
-      }
+    this.canvasManager.on('selection-change', (_data: any) => {
+      // Embedded object selection changed - emit the change
       this.emitSelectionChange();
     });
 
@@ -388,7 +379,11 @@ export class PCEditor extends EventEmitter {
     this.document.clear();
     this.document = new Document(documentData);
     this.canvasManager.setDocument(this.document);
-    
+
+    // Reset editing state
+    this._activeEditingSection = 'body';
+    this.currentSelection = { type: 'none' };
+
     // Update layout engine with new document
     this.layoutEngine.destroy();
     this.layoutEngine = new LayoutEngine(this.document, {
@@ -396,7 +391,7 @@ export class PCEditor extends EventEmitter {
       snapToGrid: this.options.showGrid,
       gridSize: this.options.gridSize
     });
-    
+
     this.setupEventListeners();
     this.emit('document-loaded', { document: documentData });
   }
@@ -431,27 +426,6 @@ export class PCEditor extends EventEmitter {
     }
   }
 
-  addElement(elementData: ElementData, pageId?: string): void {
-    if (!this._isReady) {
-      throw new Error('Editor is not ready');
-    }
-
-    const targetPageId = pageId || this.document.pages[0]?.id;
-    if (!targetPageId) {
-      throw new Error('No page available');
-    }
-
-    this.canvasManager.addElement(elementData, targetPageId);
-  }
-
-  removeElement(elementId: string): void {
-    if (!this._isReady) {
-      throw new Error('Editor is not ready');
-    }
-
-    this.canvasManager.removeElement(elementId);
-  }
-
   selectElement(elementId: string): void {
     if (!this._isReady) {
       throw new Error('Editor is not ready');
@@ -468,59 +442,12 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.clearSelection();
   }
 
-  getElementAtPoint(point: Point, pageId: string): ElementData | null {
+  removeEmbeddedObject(objectId: string): void {
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
 
-    return this.canvasManager.getElementAtPoint(point, pageId);
-  }
-
-  updateElement(elementId: string, updates: Partial<ElementData>): void {
-    if (!this._isReady) {
-      throw new Error('Editor is not ready');
-    }
-
-    // Find the element in any page/section
-    for (const page of this.document.pages) {
-      for (const section of [page.header, page.content, page.footer]) {
-        const element = section.getElement(elementId);
-        if (element) {
-          // Update element properties
-          if (updates.position) {
-            element.position = updates.position;
-          }
-          if (updates.size) {
-            element.size = updates.size;
-          }
-          if (updates.rotation !== undefined) {
-            element.rotation = updates.rotation;
-          }
-          if (updates.opacity !== undefined) {
-            element.opacity = updates.opacity;
-          }
-          if (updates.locked !== undefined) {
-            element.locked = updates.locked;
-          }
-          
-          // Type-specific data updates
-          if (updates.data) {
-            const elementData = element.toData();
-            if (elementData.type === 'text' && 'updateTextData' in element) {
-              (element as any).updateTextData(updates.data);
-            } else if (elementData.type === 'image' && 'updateImageData' in element) {
-              (element as any).updateImageData(updates.data);
-            } else if (elementData.type === 'placeholder' && 'updatePlaceholderData' in element) {
-              (element as any).updatePlaceholderData(updates.data);
-            }
-          }
-          
-          this.canvasManager.render();
-          this.emit('element-updated', { elementId, updates });
-          return;
-        }
-      }
-    }
+    this.canvasManager.removeEmbeddedObject(objectId);
   }
 
   undo(): void {
@@ -604,14 +531,11 @@ export class PCEditor extends EventEmitter {
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
-    
+
     const newPageData = {
-      id: `page_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      header: { height: 0, elements: [] },
-      content: { elements: [] },
-      footer: { height: 0, elements: [] }
+      id: `page_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     };
-    
+
     const newPage = new Page(newPageData, this.document.settings);
     this.document.addPage(newPage);
     this.canvasManager.setDocument(this.document);
@@ -1375,6 +1299,28 @@ export class PCEditor extends EventEmitter {
   }
 
   /**
+   * Set the cursor position in the active flowing content.
+   * Works for body, header, footer, text boxes, and table cells.
+   */
+  setCursorPosition(position: number): void {
+    if (!this._isReady) {
+      throw new Error('Editor is not ready');
+    }
+
+    // First try editing content (table cells, text boxes)
+    let flowingContent = this.getEditingFlowingContent();
+
+    // Fall back to active section
+    if (!flowingContent) {
+      flowingContent = this.getActiveFlowingContent();
+    }
+
+    if (flowingContent) {
+      flowingContent.setCursorPosition(position);
+    }
+  }
+
+  /**
    * Insert an embedded object at the current cursor position.
    * Works for body, header, footer, text boxes, and table cells.
    */
@@ -1436,6 +1382,70 @@ export class PCEditor extends EventEmitter {
   }
 
   /**
+   * Insert a page number field at the current cursor position.
+   * The field displays the current page number during rendering.
+   * Works for body, header, footer, text boxes, and table cells.
+   * @param displayFormat Optional format string (e.g., "Page %d" where %d is replaced by page number)
+   */
+  insertPageNumberField(displayFormat?: string): void {
+    if (!this._isReady) {
+      throw new Error('Editor is not ready');
+    }
+
+    // Clear any existing selection before inserting
+    this.canvasManager.clearSelection();
+
+    // First try to get the currently editing content (handles table cells, text boxes)
+    let flowingContent = this.getEditingFlowingContent();
+
+    // Fall back to active section if nothing is being edited
+    if (!flowingContent) {
+      flowingContent = this.getActiveFlowingContent();
+    }
+
+    if (!flowingContent) {
+      throw new Error('No active section available');
+    }
+
+    const field = flowingContent.insertPageNumberField(displayFormat);
+
+    this.canvasManager.render();
+    this.emit('page-number-field-added', { field, section: this._activeEditingSection });
+  }
+
+  /**
+   * Insert a page count field at the current cursor position.
+   * The field displays the total page count during rendering.
+   * Works for body, header, footer, text boxes, and table cells.
+   * @param displayFormat Optional format string (e.g., "of %d" where %d is replaced by page count)
+   */
+  insertPageCountField(displayFormat?: string): void {
+    if (!this._isReady) {
+      throw new Error('Editor is not ready');
+    }
+
+    // Clear any existing selection before inserting
+    this.canvasManager.clearSelection();
+
+    // First try to get the currently editing content (handles table cells, text boxes)
+    let flowingContent = this.getEditingFlowingContent();
+
+    // Fall back to active section if nothing is being edited
+    if (!flowingContent) {
+      flowingContent = this.getActiveFlowingContent();
+    }
+
+    if (!flowingContent) {
+      throw new Error('No active section available');
+    }
+
+    const field = flowingContent.insertPageCountField(displayFormat);
+
+    this.canvasManager.render();
+    this.emit('page-count-field-added', { field, section: this._activeEditingSection });
+  }
+
+  /**
    * Get a substitution field at a specific text position in the active section.
    * @param position The text index to check
    * @returns The substitution field at that position, or null if none
@@ -1478,18 +1488,22 @@ export class PCEditor extends EventEmitter {
    * @returns The selected TextBoxObject or null if no text box is selected
    */
   getSelectedTextBox(): TextBoxObject | null {
-    const selection = this.currentSelection;
+    // Check all selected embedded objects
+    const selectedIds = this.canvasManager.getSelectedElements();
+    if (selectedIds.length === 0) return null;
 
-    if (selection.type === 'elements' && selection.elementIds.length > 0) {
-      // Check if any selected element is a text box
-      const flowingContent = this.getActiveFlowingContent();
-      if (flowingContent) {
-        const embeddedObjects = flowingContent.getEmbeddedObjects();
-        for (const elementId of selection.elementIds) {
-          for (const [, obj] of embeddedObjects.entries()) {
-            if (obj.id === elementId && obj instanceof TextBoxObject) {
-              return obj;
-            }
+    const flowingContents = [
+      this.document.pages[0]?.flowingContent,
+      this.document.headerFlowingContent,
+      this.document.footerFlowingContent
+    ].filter(Boolean);
+
+    for (const flowingContent of flowingContents) {
+      const embeddedObjects = flowingContent.getEmbeddedObjects();
+      for (const elementId of selectedIds) {
+        for (const [, obj] of embeddedObjects.entries()) {
+          if (obj.id === elementId && obj instanceof TextBoxObject) {
+            return obj;
           }
         }
       }
@@ -1503,18 +1517,22 @@ export class PCEditor extends EventEmitter {
    * @returns The selected TableObject or null if no table is selected
    */
   getSelectedTable(): TableObject | null {
-    const selection = this.currentSelection;
+    // Check all selected embedded objects
+    const selectedIds = this.canvasManager.getSelectedElements();
+    if (selectedIds.length === 0) return null;
 
-    if (selection.type === 'elements' && selection.elementIds.length > 0) {
-      // Check if any selected element is a table
-      const flowingContent = this.getActiveFlowingContent();
-      if (flowingContent) {
-        const embeddedObjects = flowingContent.getEmbeddedObjects();
-        for (const elementId of selection.elementIds) {
-          for (const [, obj] of embeddedObjects.entries()) {
-            if (obj.id === elementId && obj instanceof TableObject) {
-              return obj;
-            }
+    const flowingContents = [
+      this.document.pages[0]?.flowingContent,
+      this.document.headerFlowingContent,
+      this.document.footerFlowingContent
+    ].filter(Boolean);
+
+    for (const flowingContent of flowingContents) {
+      const embeddedObjects = flowingContent.getEmbeddedObjects();
+      for (const elementId of selectedIds) {
+        for (const [, obj] of embeddedObjects.entries()) {
+          if (obj.id === elementId && obj instanceof TableObject) {
+            return obj;
           }
         }
       }
@@ -1565,7 +1583,7 @@ export class PCEditor extends EventEmitter {
   /**
    * @deprecated Use insertEmbeddedObject instead
    */
-  insertInlineElement(_elementData: ElementData, _position: ObjectPosition = 'inline'): void {
+  insertInlineElement(_elementData: unknown, _position: ObjectPosition = 'inline'): void {
     console.warn('insertInlineElement is deprecated and no longer functional. Use insertEmbeddedObject instead.');
   }
 
@@ -1593,22 +1611,27 @@ export class PCEditor extends EventEmitter {
     // Step 1: Expand repeating sections in body (header/footer don't support them)
     this.expandRepeatingSections(bodyContent, data);
 
-    // Step 2: Substitute all fields in body
+    // Step 2: Expand table row loops in body, header, and footer
+    this.expandTableRowLoops(bodyContent, data);
+    this.expandTableRowLoops(this.document.headerFlowingContent, data);
+    this.expandTableRowLoops(this.document.footerFlowingContent, data);
+
+    // Step 3: Substitute all fields in body
     totalFieldCount += this.substituteFieldsInContent(bodyContent, data);
 
-    // Step 3: Substitute all fields in embedded objects in body
+    // Step 4: Substitute all fields in embedded objects in body
     totalFieldCount += this.substituteFieldsInEmbeddedObjects(bodyContent, data);
 
-    // Step 4: Substitute all fields in header
+    // Step 5: Substitute all fields in header
     totalFieldCount += this.substituteFieldsInContent(this.document.headerFlowingContent, data);
 
-    // Step 5: Substitute all fields in embedded objects in header
+    // Step 6: Substitute all fields in embedded objects in header
     totalFieldCount += this.substituteFieldsInEmbeddedObjects(this.document.headerFlowingContent, data);
 
-    // Step 6: Substitute all fields in footer
+    // Step 7: Substitute all fields in footer
     totalFieldCount += this.substituteFieldsInContent(this.document.footerFlowingContent, data);
 
-    // Step 7: Substitute all fields in embedded objects in footer
+    // Step 8: Substitute all fields in embedded objects in footer
     totalFieldCount += this.substituteFieldsInEmbeddedObjects(this.document.footerFlowingContent, data);
 
     this.canvasManager.render();
@@ -1622,8 +1645,11 @@ export class PCEditor extends EventEmitter {
   private substituteFieldsInContent(flowingContent: FlowingTextContent, data: Record<string, unknown>): number {
     const fieldManager = flowingContent.getSubstitutionFieldManager();
 
-    // Get all fields sorted by text index (descending so we process from end to start)
-    const fields = fieldManager.getFieldsArray().sort((a, b) => b.textIndex - a.textIndex);
+    // Get only data fields (skip page number and page count fields)
+    // Sort by text index descending so we process from end to start
+    const fields = fieldManager.getFieldsArray()
+      .filter(f => !f.fieldType || f.fieldType === 'data')
+      .sort((a, b) => b.textIndex - a.textIndex);
 
     // Replace each field with its value
     for (const field of fields) {
@@ -1675,6 +1701,97 @@ export class PCEditor extends EventEmitter {
     }
 
     return totalFieldCount;
+  }
+
+  /**
+   * Expand table row loops in embedded tables within a FlowingTextContent.
+   * For each table with row loops, duplicates template rows for each array element.
+   * Must be called before substituteFieldsInEmbeddedObjects().
+   */
+  private expandTableRowLoops(flowingContent: FlowingTextContent, data: Record<string, unknown>): void {
+    const embeddedObjects = flowingContent.getEmbeddedObjects();
+
+    for (const [, obj] of embeddedObjects.entries()) {
+      if (obj instanceof TableObject) {
+        this.expandTableRowLoopsInTable(obj, data);
+      }
+    }
+  }
+
+  /**
+   * Expand row loops in a single table.
+   * Processes loops from end to start to preserve row indices.
+   */
+  private expandTableRowLoopsInTable(table: TableObject, data: Record<string, unknown>): void {
+    const loops = table.getAllRowLoops();
+    if (loops.length === 0) return;
+
+    // Sort loops by startRowIndex descending (process end-to-start)
+    const sortedLoops = [...loops].sort((a, b) => b.startRowIndex - a.startRowIndex);
+
+    for (const loop of sortedLoops) {
+      // Resolve the array from fieldPath
+      const arrayValue = this.getValueAtPath(data, loop.fieldPath);
+
+      // If not an array or empty, just remove the loop (template rows stay once)
+      if (!Array.isArray(arrayValue) || arrayValue.length === 0) {
+        table.removeRowLoop(loop.id);
+        continue;
+      }
+
+      const arrayLength = arrayValue.length;
+
+      // Get the template rows
+      const templateRows = table.getRowsInRange(loop.startRowIndex, loop.endRowIndex);
+
+      // Remove the original template rows
+      table.removeRowsInRange(loop.startRowIndex, loop.endRowIndex);
+
+      // Insert duplicated rows for each array item
+      // Process in reverse order to maintain correct indices
+      for (let i = arrayLength - 1; i >= 0; i--) {
+        // Clone the template rows
+        const clonedRows = templateRows.map(row => row.clone());
+
+        // Rewrite field names in each cloned row's cells
+        for (const row of clonedRows) {
+          for (const cell of row.cells) {
+            this.rewriteFieldsInContent(cell.flowingContent, loop.fieldPath, i);
+          }
+        }
+
+        // Insert the cloned rows at the original start position
+        table.insertRowsAt(loop.startRowIndex, clonedRows);
+      }
+
+      // Remove the loop definition since it's now expanded
+      table.removeRowLoop(loop.id);
+    }
+
+    // Update table layout
+    table.markLayoutDirty();
+  }
+
+  /**
+   * Rewrite field names in a FlowingTextContent to include array index.
+   * Fields that start with fieldPath will have the index inserted.
+   * E.g., "items.name" with fieldPath "items" and index 1 -> "items[1].name"
+   */
+  private rewriteFieldsInContent(flowingContent: FlowingTextContent, fieldPath: string, index: number): void {
+    const fieldManager = flowingContent.getSubstitutionFieldManager();
+    const fields = fieldManager.getFieldsArray();
+
+    for (const field of fields) {
+      // Check if this field's name starts with the loop's fieldPath
+      if (field.fieldName.startsWith(fieldPath + '.') || field.fieldName === fieldPath) {
+        // Rewrite the field name to include the array index
+        const newFieldName = this.rewriteFieldNameWithIndex(field.fieldName, fieldPath, index);
+
+        // Update the field's name directly
+        // Since SubstitutionField objects are stored by reference, we can modify them
+        (field as { fieldName: string }).fieldName = newFieldName;
+      }
+    }
   }
 
   /**

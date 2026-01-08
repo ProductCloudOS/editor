@@ -36,6 +36,7 @@ export class SubstitutionFieldManager extends EventEmitter {
       id,
       textIndex,
       fieldName,
+      fieldType: config?.fieldType,
       displayFormat: config?.displayFormat,
       defaultValue: config?.defaultValue,
       formatting: undefined
@@ -119,6 +120,51 @@ export class SubstitutionFieldManager extends EventEmitter {
   findAllByFieldName(fieldName: string): SubstitutionField[] {
     return Array.from(this.fields.values())
       .filter(field => field.fieldName === fieldName);
+  }
+
+  /**
+   * Check if a field is a page number field.
+   */
+  isPageNumberField(field: SubstitutionField): boolean {
+    return field.fieldType === 'pageNumber';
+  }
+
+  /**
+   * Check if a field is a page count field.
+   */
+  isPageCountField(field: SubstitutionField): boolean {
+    return field.fieldType === 'pageCount';
+  }
+
+  /**
+   * Check if a field is a special field (page number or page count).
+   */
+  isSpecialField(field: SubstitutionField): boolean {
+    return field.fieldType === 'pageNumber' || field.fieldType === 'pageCount';
+  }
+
+  /**
+   * Get all page number fields.
+   */
+  getPageNumberFields(): SubstitutionField[] {
+    return Array.from(this.fields.values())
+      .filter(field => field.fieldType === 'pageNumber');
+  }
+
+  /**
+   * Get all page count fields.
+   */
+  getPageCountFields(): SubstitutionField[] {
+    return Array.from(this.fields.values())
+      .filter(field => field.fieldType === 'pageCount');
+  }
+
+  /**
+   * Get all data fields (regular substitution fields, not page number/count).
+   */
+  getDataFields(): SubstitutionField[] {
+    return Array.from(this.fields.values())
+      .filter(field => !field.fieldType || field.fieldType === 'data');
   }
 
   /**
@@ -239,10 +285,36 @@ export class SubstitutionFieldManager extends EventEmitter {
 
   /**
    * Get the display text for a substitution field.
-   * This is what gets rendered: {{field: name}}
+   * For data fields: {{fieldName}}
+   * For page number fields: shows page number or {{page}}
+   * For page count fields: shows page count or {{pages}}
+   * @param field The substitution field
+   * @param pageNumber Optional current page number (1-based) for page number fields
+   * @param pageCount Optional total page count for page count fields
    */
-  getDisplayText(field: SubstitutionField): string {
-    return `{{field: ${field.fieldName}}}`;
+  getDisplayText(field: SubstitutionField, pageNumber?: number, pageCount?: number): string {
+    if (field.fieldType === 'pageNumber') {
+      if (pageNumber !== undefined) {
+        if (field.displayFormat) {
+          return field.displayFormat.replace(/%d/g, String(pageNumber));
+        }
+        return String(pageNumber);
+      }
+      return '{{page}}';
+    }
+
+    if (field.fieldType === 'pageCount') {
+      if (pageCount !== undefined) {
+        if (field.displayFormat) {
+          return field.displayFormat.replace(/%d/g, String(pageCount));
+        }
+        return String(pageCount);
+      }
+      return '{{pages}}';
+    }
+
+    // Regular data field
+    return `{{${field.fieldName}}}`;
   }
 
   /**
@@ -299,6 +371,7 @@ export class SubstitutionFieldManager extends EventEmitter {
         id: fieldData.id,
         textIndex: fieldData.textIndex,
         fieldName: fieldData.fieldName,
+        fieldType: fieldData.fieldType,
         displayFormat: fieldData.displayFormat,
         defaultValue: fieldData.defaultValue,
         formatting: fieldData.formatting ? { ...fieldData.formatting } : undefined

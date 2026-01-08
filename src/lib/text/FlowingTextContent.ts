@@ -493,6 +493,28 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
   }
 
   /**
+   * Insert a page number field at the current cursor position.
+   * @param displayFormat Optional format string (e.g., "Page %d")
+   */
+  insertPageNumberField(displayFormat?: string): SubstitutionField {
+    return this.insertSubstitutionField('page', {
+      fieldType: 'pageNumber',
+      displayFormat
+    });
+  }
+
+  /**
+   * Insert a page count field at the current cursor position.
+   * @param displayFormat Optional format string (e.g., "of %d")
+   */
+  insertPageCountField(displayFormat?: string): SubstitutionField {
+    return this.insertSubstitutionField('pages', {
+      fieldType: 'pageCount',
+      displayFormat
+    });
+  }
+
+  /**
    * Remove a substitution field at a specific text index.
    */
   removeSubstitutionField(textIndex: number): boolean {
