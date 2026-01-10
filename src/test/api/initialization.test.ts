@@ -33,25 +33,17 @@ describe('PCEditor Initialization', () => {
     });
 
     it('should accept custom pageSize option', async () => {
-      // Note: EditorOptions pageSize is stored but Document has its own default settings
-      // Use updateDocumentSettings to change document page size
       const result = await createEditor({ pageSize: 'Letter' });
       container = result.container;
 
-      // Apply the option to document settings
-      result.editor.updateDocumentSettings({ pageSize: 'Letter' });
       const settings = result.editor.getDocumentSettings();
       expect(settings.pageSize).toBe('Letter');
     });
 
     it('should accept custom pageOrientation option', async () => {
-      // Note: EditorOptions pageOrientation is stored but Document has its own default settings
-      // Use updateDocumentSettings to change document orientation
       const result = await createEditor({ pageOrientation: 'landscape' });
       container = result.container;
 
-      // Apply the option to document settings
-      result.editor.updateDocumentSettings({ pageOrientation: 'landscape' });
       const settings = result.editor.getDocumentSettings();
       expect(settings.pageOrientation).toBe('landscape');
     });

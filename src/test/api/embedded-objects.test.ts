@@ -143,7 +143,7 @@ describe('PCEditor Embedded Objects', () => {
   });
 
   describe('removeEmbeddedObject', () => {
-    it('should remove text box by id', async () => {
+    it('should remove text box by id and its placeholder character', async () => {
       const textBox = new TextBoxObject({
         id: 'textbox-remove',
         size: { width: 100, height: 50 }
@@ -152,16 +152,15 @@ describe('PCEditor Embedded Objects', () => {
       editor.insertEmbeddedObject(textBox);
       await nextTick();
 
-      const text = editor.getFlowingText();
-      expect(text).toContain('\uFFFC');
+      const textBefore = editor.getFlowingText();
+      expect(textBefore).toContain('\uFFFC');
 
-      // Remove the object - this removes it from the embedded object manager
-      // Note: The placeholder character may remain depending on implementation
+      // Remove the object - this should also remove the placeholder character
       editor.removeEmbeddedObject('textbox-remove');
       await nextTick();
 
-      // Verify remove method doesn't throw
-      // Full removal including placeholder depends on implementation details
+      const textAfter = editor.getFlowingText();
+      expect(textAfter).not.toContain('\uFFFC');
     });
 
     it('should handle removing non-existent object', async () => {

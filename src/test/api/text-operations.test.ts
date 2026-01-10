@@ -144,20 +144,18 @@ describe('PCEditor Text Operations', () => {
   });
 
   describe('getSelection', () => {
-    it('should return none or cursor initially', () => {
-      // Initial state is 'none' - selection state is updated via canvas events
+    it('should return none initially', () => {
       const selection = editor.getSelection();
-      expect(['none', 'cursor']).toContain(selection.type);
+      expect(selection.type).toBe('none');
     });
 
-    it('should have initial selection type', () => {
+    it('should return cursor type after setCursorPosition', () => {
       editor.setFlowingText('Hello');
       editor.setCursorPosition(2);
 
-      // Note: getSelection() returns internal state which is updated via canvas events
-      // In unit tests without full canvas interaction, it may remain 'none'
       const selection = editor.getSelection();
-      expect(['none', 'cursor']).toContain(selection.type);
+      expect(selection.type).toBe('cursor');
+      expect((selection as any).position).toBe(2);
     });
   });
 
