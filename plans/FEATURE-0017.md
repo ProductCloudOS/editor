@@ -1,6 +1,6 @@
 # FEATURE-0017: Unit Tests at Editor API Level - Implementation Plan
 
-## Status: NOT STARTED
+## Status: IMPLEMENTED
 
 ## Overview
 

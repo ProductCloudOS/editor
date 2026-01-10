@@ -21,5 +21,18 @@ export default defineConfig({
     alias: {
       '@': resolve(__dirname, 'src/lib')
     }
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    root: resolve(__dirname),
+    setupFiles: ['./src/test/setup.ts'],
+    include: ['src/test/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html'],
+      include: ['src/lib/**/*.ts'],
+      exclude: ['src/lib/**/index.ts', 'src/lib/types/**']
+    }
   }
 });
