@@ -1,6 +1,7 @@
 import { EventEmitter } from '../events/EventEmitter';
 import {
   ObjectPosition,
+  RelativeOffset,
   Size,
   Point,
   Rect,
@@ -18,6 +19,7 @@ export abstract class BaseEmbeddedObject extends EventEmitter {
   protected _textIndex: number;
   protected _position: ObjectPosition;
   protected _size: Size;
+  protected _relativeOffset: RelativeOffset = { x: 0, y: 0 };
   protected _selected: boolean = false;
   protected _locked: boolean = false;
   protected _renderedPosition: Point | null = null;
@@ -29,6 +31,9 @@ export abstract class BaseEmbeddedObject extends EventEmitter {
     this._textIndex = config.textIndex;
     this._position = config.position || 'inline';
     this._size = { ...config.size };
+    if (config.relativeOffset) {
+      this._relativeOffset = { ...config.relativeOffset };
+    }
   }
 
   // ============ Abstract Methods (must be implemented by subclasses) ============
@@ -76,6 +81,21 @@ export abstract class BaseEmbeddedObject extends EventEmitter {
   set position(value: ObjectPosition) {
     this._position = value;
     this.emit('position-changed', { position: value });
+  }
+
+  /**
+   * Get the relative offset (for 'relative' position mode).
+   */
+  get relativeOffset(): RelativeOffset {
+    return { ...this._relativeOffset };
+  }
+
+  /**
+   * Set the relative offset (for 'relative' position mode).
+   */
+  set relativeOffset(value: RelativeOffset) {
+    this._relativeOffset = { ...value };
+    this.emit('offset-changed', { offset: { ...value } });
   }
 
   get size(): Size {

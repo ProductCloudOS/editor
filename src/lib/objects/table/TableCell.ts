@@ -62,6 +62,7 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
   // Layout state (set by parent table during layout calculation)
   private _bounds: Rect | null = null;           // Position within table (local)
   private _renderedPosition: Point | null = null; // Global position on canvas
+  private _renderedPageIndex: number = 0;        // Page index where cell was rendered
 
   // Editing state
   private _editing: boolean = false;
@@ -276,6 +277,20 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
    */
   getRenderedPosition(): Point | null {
     return this._renderedPosition;
+  }
+
+  /**
+   * Set the page index where this cell was rendered.
+   */
+  set renderedPageIndex(index: number) {
+    this._renderedPageIndex = index;
+  }
+
+  /**
+   * Get the page index where this cell was rendered.
+   */
+  get renderedPageIndex(): number {
+    return this._renderedPageIndex;
   }
 
   /**

@@ -14,7 +14,13 @@
                 <div class="toolbar-group">
                     <label>Document:</label>
                     <button id="load-sample">Load Sample</button>
+                    <button id="load-tmd-sample">Load TMD</button>
                     <button id="clear-doc">Clear</button>
+                </div>
+                <div class="toolbar-group">
+                    <label>Edit:</label>
+                    <button id="undo-btn" title="Ctrl+Z" disabled>Undo</button>
+                    <button id="redo-btn" title="Ctrl+Y" disabled>Redo</button>
                 </div>
                 <div class="toolbar-group">
                     <label>View:</label>
@@ -39,15 +45,17 @@
                 <div class="toolbar-group">
                     <label>Structure:</label>
                     <button id="create-loop">Create Loop</button>
+                    <button id="insert-page-break" title="Ctrl+Enter">Page Break</button>
                 </div>
-                <div class="toolbar-group" id="table-tools" style="display: none;">
-                    <label>Table:</label>
-                    <button id="table-add-row">+ Row</button>
-                    <button id="table-add-col">+ Col</button>
-                    <button id="table-merge">Merge</button>
-                    <button id="table-split">Split</button>
-                    <button id="table-header">Header</button>
-                    <button id="table-row-loop">Row Loop</button>
+                <div class="toolbar-group">
+                    <label>File:</label>
+                    <button id="save-document">Save</button>
+                    <button id="load-document">Load</button>
+                    <input type="file" id="file-input" accept=".json,.pceditor.json" style="display: none;">
+                </div>
+                <div class="toolbar-group">
+                    <label>Export:</label>
+                    <button id="export-pdf">Export PDF</button>
                 </div>
             </div>
         </header>
@@ -287,6 +295,27 @@
                     </button>
                     <div class="collapsible-content" id="textbox-properties">
                         <div class="setting-group">
+                            <label>Position:</label>
+                            <select id="textbox-position">
+                                <option value="inline">Inline</option>
+                                <option value="block">Block</option>
+                                <option value="relative">Relative</option>
+                            </select>
+                        </div>
+                        <div class="setting-group" id="textbox-offset-group" style="display: none;">
+                            <label>Offset (px):</label>
+                            <div class="offset-controls">
+                                <div class="offset-input">
+                                    <label>X:</label>
+                                    <input type="number" id="textbox-offset-x" value="0" style="width: 70px;">
+                                </div>
+                                <div class="offset-input">
+                                    <label>Y:</label>
+                                    <input type="number" id="textbox-offset-y" value="0" style="width: 70px;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="setting-group">
                             <label>Background:</label>
                             <input type="color" id="textbox-bg-color" value="#ffffff">
                         </div>
@@ -313,6 +342,187 @@
                         </div>
                         <button id="apply-textbox-changes">Apply Changes</button>
                         <p class="field-hint" style="margin-top: 0.5rem;">Double-click text box to edit text</p>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="image-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="image-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Image Settings</span>
+                    </button>
+                    <div class="collapsible-content" id="image-properties">
+                        <div class="setting-group">
+                            <label>Position:</label>
+                            <select id="image-position">
+                                <option value="inline">Inline</option>
+                                <option value="block">Block</option>
+                                <option value="relative">Relative</option>
+                            </select>
+                        </div>
+                        <div class="setting-group" id="image-offset-group" style="display: none;">
+                            <label>Offset (px):</label>
+                            <div class="offset-controls">
+                                <div class="offset-input">
+                                    <label>X:</label>
+                                    <input type="number" id="image-offset-x" value="0" style="width: 70px;">
+                                </div>
+                                <div class="offset-input">
+                                    <label>Y:</label>
+                                    <input type="number" id="image-offset-y" value="0" style="width: 70px;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="setting-group">
+                            <label>Fit Mode:</label>
+                            <select id="image-fit-mode">
+                                <option value="contain">Contain</option>
+                                <option value="cover">Cover</option>
+                                <option value="fill">Fill (stretch)</option>
+                                <option value="none">None (original size)</option>
+                                <option value="tile">Tile</option>
+                            </select>
+                        </div>
+                        <div class="setting-group">
+                            <label>Resize Mode:</label>
+                            <select id="image-resize-mode">
+                                <option value="locked-aspect-ratio">Lock Aspect Ratio</option>
+                                <option value="free">Free</option>
+                            </select>
+                        </div>
+                        <div class="setting-group">
+                            <label>Alt Text:</label>
+                            <input type="text" id="image-alt-text" placeholder="Image description">
+                        </div>
+                        <div class="setting-group">
+                            <label>Change Image:</label>
+                            <input type="file" id="image-file-picker" accept="image/*" style="display: none;">
+                            <button id="change-image-btn">Choose File...</button>
+                        </div>
+                        <button id="apply-image-changes">Apply Changes</button>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="table-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="table-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Table Settings</span>
+                    </button>
+                    <div class="collapsible-content" id="table-properties">
+                        <!-- Structure -->
+                        <div class="setting-group">
+                            <label>Structure:</label>
+                            <div class="table-structure-info">
+                                <span>Rows: <strong id="table-row-count">0</strong></span>
+                                <span>Columns: <strong id="table-col-count">0</strong></span>
+                            </div>
+                            <div class="table-structure-buttons">
+                                <button id="table-pane-add-row-before" class="small-action-btn" title="Add row before">+ Row Before</button>
+                                <button id="table-pane-add-row-after" class="small-action-btn" title="Add row after">+ Row After</button>
+                                <button id="table-pane-delete-row" class="small-action-btn danger" title="Delete row">- Row</button>
+                            </div>
+                            <div class="table-structure-buttons">
+                                <button id="table-pane-add-col-before" class="small-action-btn" title="Add column before">+ Col Before</button>
+                                <button id="table-pane-add-col-after" class="small-action-btn" title="Add column after">+ Col After</button>
+                                <button id="table-pane-delete-col" class="small-action-btn danger" title="Delete column">- Col</button>
+                            </div>
+                        </div>
+
+                        <!-- Cell Selection -->
+                        <div class="setting-group">
+                            <label>Cell Selection:</label>
+                            <p class="field-hint" id="table-cell-selection-info">No cell selected</p>
+                            <div class="table-cell-buttons">
+                                <button id="table-pane-merge" class="small-action-btn">Merge Cells</button>
+                                <button id="table-pane-split" class="small-action-btn">Split Cell</button>
+                            </div>
+                        </div>
+
+                        <!-- Cell Styling -->
+                        <div class="setting-group">
+                            <label>Cell Background:</label>
+                            <input type="color" id="table-cell-bg-color" value="#ffffff">
+                            <button id="table-apply-cell-bg" class="small-action-btn" style="margin-top: 0.25rem;">Apply to Selected</button>
+                        </div>
+
+                        <!-- Borders -->
+                        <div class="setting-group">
+                            <label>Borders:</label>
+                            <div class="border-controls">
+                                <div class="border-input-row">
+                                    <label>Width:</label>
+                                    <input type="number" id="table-border-width" min="0" max="5" value="1" style="width: 60px;">
+                                </div>
+                                <div class="border-input-row">
+                                    <label>Color:</label>
+                                    <input type="color" id="table-border-color" value="#000000">
+                                </div>
+                                <div class="border-input-row">
+                                    <label>Style:</label>
+                                    <select id="table-border-style" style="width: 100px;">
+                                        <option value="solid">Solid</option>
+                                        <option value="dashed">Dashed</option>
+                                        <option value="dotted">Dotted</option>
+                                        <option value="none">None</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="border-side-checkboxes">
+                                <label><input type="checkbox" id="table-border-top" checked> Top</label>
+                                <label><input type="checkbox" id="table-border-right" checked> Right</label>
+                                <label><input type="checkbox" id="table-border-bottom" checked> Bottom</label>
+                                <label><input type="checkbox" id="table-border-left" checked> Left</label>
+                            </div>
+                            <button id="table-apply-borders" class="small-action-btn" style="margin-top: 0.25rem;">Apply Borders</button>
+                        </div>
+
+                        <!-- Headers -->
+                        <div class="setting-group">
+                            <label>Headers:</label>
+                            <div class="header-controls">
+                                <div class="header-input-row">
+                                    <label>Header Rows:</label>
+                                    <input type="number" id="table-header-row-count" min="0" max="10" value="0" style="width: 60px;">
+                                </div>
+                                <div class="header-input-row">
+                                    <label>Header Columns:</label>
+                                    <input type="number" id="table-header-col-count" min="0" max="10" value="0" style="width: 60px;">
+                                </div>
+                            </div>
+                            <button id="table-apply-headers" class="small-action-btn" style="margin-top: 0.25rem;">Apply Header Count</button>
+                        </div>
+
+                        <!-- Header Styling -->
+                        <div class="setting-group">
+                            <label>Header Styling:</label>
+                            <div class="header-style-controls">
+                                <div class="header-input-row">
+                                    <label>Background:</label>
+                                    <input type="color" id="table-header-bg-color" value="#f0f0f0">
+                                </div>
+                                <div class="header-input-row">
+                                    <label><input type="checkbox" id="table-header-bold" checked> Bold text</label>
+                                </div>
+                            </div>
+                            <button id="table-apply-header-style" class="small-action-btn" style="margin-top: 0.25rem;">Apply to Headers</button>
+                        </div>
+
+                        <!-- Table Defaults -->
+                        <div class="setting-group">
+                            <label>Table Defaults:</label>
+                            <div class="table-defaults-controls">
+                                <div class="header-input-row">
+                                    <label>Cell Padding:</label>
+                                    <input type="number" id="table-default-padding" min="0" max="20" value="4" style="width: 60px;">
+                                </div>
+                                <div class="header-input-row">
+                                    <label>Border Color:</label>
+                                    <input type="color" id="table-default-border-color" value="#000000">
+                                </div>
+                            </div>
+                            <button id="table-apply-defaults" class="small-action-btn" style="margin-top: 0.25rem;">Apply Defaults</button>
+                        </div>
+
+                        <p class="field-hint" style="margin-top: 0.5rem;">Double-click table to edit cells</p>
                     </div>
                 </div>
 

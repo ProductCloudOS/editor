@@ -14,8 +14,18 @@ import { CanvasManager } from '../rendering/CanvasManager';
 import { DataBinder } from '../data/DataBinder';
 import { PDFGenerator } from '../rendering/PDFGenerator';
 import { LayoutEngine } from '../layout/LayoutEngine';
-import { BaseEmbeddedObject, ObjectPosition, TextBoxObject, TableObject } from '../objects';
+import { BaseEmbeddedObject, ObjectPosition, TextBoxObject, TableObject, ImageObject, TableRowConfig } from '../objects';
 import { SubstitutionFieldConfig, TextFormattingStyle, SubstitutionField, RepeatingSection, FlowingTextContent, TextAlignment, Focusable } from '../text';
+import {
+  TransactionManager,
+  TextMutationObserver,
+  ObjectMutationObserver,
+  ContentDiscovery,
+  FocusTracker,
+  MutationUndo,
+  ContentSourceId,
+  ObjectSourceId
+} from '../undo';
 
 export class PCEditor extends EventEmitter {
   private container: HTMLElement;
@@ -25,6 +35,12 @@ export class PCEditor extends EventEmitter {
   private dataBinder: DataBinder;
   private pdfGenerator: PDFGenerator;
   private layoutEngine!: LayoutEngine;
+  // Transaction-based undo system
+  private transactionManager!: TransactionManager;
+  private textMutationObserver!: TextMutationObserver;
+  private objectMutationObserver!: ObjectMutationObserver;
+  private _contentDiscovery!: ContentDiscovery; // Kept alive for event listeners
+  private mutationUndo!: MutationUndo;
   private _isReady: boolean = false;
   private keyboardListenerActive: boolean = false;
   private currentSelection: EditorSelection = { type: 'none' };
@@ -73,10 +89,11 @@ export class PCEditor extends EventEmitter {
         snapToGrid: this.options.showGrid,
         gridSize: this.options.gridSize
       });
-      
+
       await this.canvasManager.initialize();
       this.setupEventListeners();
       this.setupKeyboardListeners();
+      this.setupTransactionUndo();
       this._isReady = true;
       this.emit('ready');
     } catch (error) {
@@ -253,6 +270,225 @@ export class PCEditor extends EventEmitter {
     });
   }
 
+  /**
+   * Get the FlowingTextContent for a specific section.
+   */
+  private getFlowingContentForSection(section: EditingSection): FlowingTextContent {
+    switch (section) {
+      case 'header':
+        return this.document.headerFlowingContent;
+      case 'footer':
+        return this.document.footerFlowingContent;
+      case 'body':
+      default:
+        return this.document.bodyFlowingContent;
+    }
+  }
+
+  /**
+   * Set up the new transaction-based undo system.
+   */
+  private setupTransactionUndo(): void {
+    // Create FocusTracker with callbacks
+    const focusTracker = new FocusTracker(
+      // getActiveContent callback
+      () => {
+        const section = this._activeEditingSection;
+        const focusedControl = this.canvasManager?.getFocusedControl();
+
+        // Check if editing a table cell
+        if (focusedControl instanceof TableObject && focusedControl.focusedCell) {
+          const cell = focusedControl.getCell(
+            focusedControl.focusedCell.row,
+            focusedControl.focusedCell.col
+          );
+          if (cell && 'flowingContent' in cell) {
+            return {
+              content: (cell as any).flowingContent as FlowingTextContent,
+              section,
+              focusedObjectId: focusedControl.id,
+              tableCellAddress: focusedControl.focusedCell
+            };
+          }
+        }
+
+        // Check if editing a text box
+        if (this.canvasManager?.isEditingTextBox()) {
+          const textBox = this.canvasManager.getEditingTextBox();
+          if (textBox) {
+            return {
+              content: textBox.flowingContent,
+              section,
+              focusedObjectId: textBox.id,
+              tableCellAddress: null
+            };
+          }
+        }
+
+        // Default to section content
+        return {
+          content: this.getFlowingContentForSection(section),
+          section,
+          focusedObjectId: null,
+          tableCellAddress: null
+        };
+      },
+      // restoreFocus callback
+      (state) => {
+        // Restore the focus state after undo/redo
+        this._activeEditingSection = state.activeSection;
+
+        // If there was a focused object, try to focus it
+        if (state.focusedObjectId) {
+          // For now, we'll restore cursor position in the appropriate content
+          // Full object focus restoration would require more infrastructure
+        }
+
+        // Restore cursor position
+        const content = this.getFlowingContentForSection(state.activeSection);
+        if (content) {
+          content.setCursorPosition(state.cursorPosition);
+          if (state.selection) {
+            content.setSelection(state.selection.start, state.selection.end);
+          }
+        }
+
+        this.canvasManager?.render();
+      }
+    );
+
+    // Create TransactionManager
+    this.transactionManager = new TransactionManager(
+      focusTracker,
+      // getContent callback
+      (sourceId: ContentSourceId) => {
+        if (sourceId.type === 'body') return this.document.bodyFlowingContent;
+        if (sourceId.type === 'header') return this.document.headerFlowingContent;
+        if (sourceId.type === 'footer') return this.document.footerFlowingContent;
+
+        // For table cells and text boxes, search through embedded objects
+        if (sourceId.type === 'tablecell' && sourceId.objectId && sourceId.cellAddress) {
+          const table = this.findObjectById(sourceId.objectId) as TableObject | null;
+          if (table) {
+            const cell = table.getCell(sourceId.cellAddress.row, sourceId.cellAddress.col);
+            if (cell && 'flowingContent' in cell) {
+              return (cell as any).flowingContent as FlowingTextContent;
+            }
+          }
+        }
+
+        if (sourceId.type === 'textbox' && sourceId.objectId) {
+          const textBox = this.findObjectById(sourceId.objectId) as TextBoxObject | null;
+          if (textBox) {
+            return textBox.flowingContent;
+          }
+        }
+
+        return null;
+      },
+      // getObject callback
+      (sourceId: ObjectSourceId) => {
+        return this.findObjectById(sourceId.objectId);
+      }
+    );
+
+    // Create TextMutationObserver
+    this.textMutationObserver = new TextMutationObserver(this.transactionManager);
+
+    // Create ObjectMutationObserver
+    this.objectMutationObserver = new ObjectMutationObserver(this.transactionManager);
+
+    // Observe all existing embedded objects
+    this.observeAllEmbeddedObjects();
+
+    // Create MutationUndo
+    this.mutationUndo = new MutationUndo(
+      (sourceId) => this.transactionManager.getContent(sourceId),
+      (sourceId) => this.transactionManager.getObject(sourceId) as BaseEmbeddedObject | null
+    );
+
+    // Wire up mutation undo/redo events
+    this.transactionManager.on('undo-mutation', (data: { mutation: any }) => {
+      this.mutationUndo.undoMutation(data.mutation);
+    });
+
+    this.transactionManager.on('redo-mutation', (data: { mutation: any }) => {
+      this.mutationUndo.redoMutation(data.mutation);
+    });
+
+    // Forward state change events
+    this.transactionManager.on('state-changed', (data: { canUndo: boolean; canRedo: boolean }) => {
+      this.emit('undo-state-changed', data);
+    });
+
+    // Create ContentDiscovery to auto-register content sources
+    this._contentDiscovery = new ContentDiscovery(
+      this.textMutationObserver,
+      {
+        bodyFlowingContent: this.document.bodyFlowingContent,
+        headerFlowingContent: this.document.headerFlowingContent,
+        footerFlowingContent: this.document.footerFlowingContent
+      },
+      this.canvasManager as any // Cast to FocusEventSource
+    );
+
+    // Log initialization success (also ensures _contentDiscovery is "used")
+    if (this._contentDiscovery) {
+      // ContentDiscovery is active and listening for focus events
+    }
+  }
+
+  /**
+   * Find an embedded object by ID across all content sources.
+   */
+  private findObjectById(objectId: string): BaseEmbeddedObject | null {
+    // Search in body
+    for (const [, obj] of this.document.bodyFlowingContent.getEmbeddedObjects()) {
+      if (obj.id === objectId) return obj;
+    }
+
+    // Search in header
+    for (const [, obj] of this.document.headerFlowingContent.getEmbeddedObjects()) {
+      if (obj.id === objectId) return obj;
+    }
+
+    // Search in footer
+    for (const [, obj] of this.document.footerFlowingContent.getEmbeddedObjects()) {
+      if (obj.id === objectId) return obj;
+    }
+
+    return null;
+  }
+
+  /**
+   * Observe all embedded objects for undo/redo tracking.
+   */
+  private observeAllEmbeddedObjects(): void {
+    // Observe body objects
+    for (const [, obj] of this.document.bodyFlowingContent.getEmbeddedObjects()) {
+      this.objectMutationObserver.observe(obj);
+    }
+
+    // Observe header objects
+    for (const [, obj] of this.document.headerFlowingContent.getEmbeddedObjects()) {
+      this.objectMutationObserver.observe(obj);
+    }
+
+    // Observe footer objects
+    for (const [, obj] of this.document.footerFlowingContent.getEmbeddedObjects()) {
+      this.objectMutationObserver.observe(obj);
+    }
+  }
+
+  /**
+   * Observe a single embedded object for undo/redo tracking.
+   */
+  private observeEmbeddedObject(object: BaseEmbeddedObject): void {
+    if (this.objectMutationObserver) {
+      this.objectMutationObserver.observe(object);
+    }
+  }
+
   get isReady(): boolean {
     return this._isReady;
   }
@@ -295,7 +531,7 @@ export class PCEditor extends EventEmitter {
         return this.document.footerFlowingContent;
       case 'body':
       default:
-        return this.document.pages[0]?.flowingContent;
+        return this.document.bodyFlowingContent;
     }
   }
 
@@ -384,6 +620,9 @@ export class PCEditor extends EventEmitter {
     this._activeEditingSection = 'body';
     this.currentSelection = { type: 'none' };
 
+    // Clear undo history on document load
+    this.clearUndoHistory();
+
     // Update layout engine with new document
     this.layoutEngine.destroy();
     this.layoutEngine = new LayoutEngine(this.document, {
@@ -393,6 +632,7 @@ export class PCEditor extends EventEmitter {
     });
 
     this.setupEventListeners();
+    this.setupTransactionUndo();
     this.emit('document-loaded', { document: documentData });
   }
 
@@ -415,14 +655,159 @@ export class PCEditor extends EventEmitter {
       throw new Error('Editor is not ready');
     }
 
+    // Save original document state before applying merge data
+    // so we can restore it after PDF generation
+    let originalDocumentData: DocumentData | null = null;
+
     try {
-      const pdfBlob = await this.pdfGenerator.generate(this.document, options);
+      // Apply merge data if requested
+      if (options?.applyMergeData && options?.mergeData) {
+        // Save the original document state before merge
+        originalDocumentData = this.document.toData();
+
+        this.applyMergeData(options.mergeData);
+        // Re-render to update flowed content after merge
+        this.canvasManager.render();
+      }
+
+      // Get flowed content snapshot for PDF generation
+      const flowedContent = this.canvasManager.getFlowedPagesSnapshot();
+
+      const pdfBlob = await this.pdfGenerator.generate(this.document, flowedContent, options);
       this.emit('pdf-exported');
       return pdfBlob;
     } catch (error) {
       console.error('Failed to export PDF:', error);
       this.emit('error', { error, context: 'pdf-export' });
       throw error;
+    } finally {
+      // Restore original document state if we saved it
+      if (originalDocumentData) {
+        this.loadDocument(originalDocumentData);
+      }
+    }
+  }
+
+  // ============================================
+  // Document Save/Load
+  // ============================================
+
+  /**
+   * Save the current document state to a JSON string.
+   * @returns JSON string representation of the document
+   */
+  saveDocument(): string {
+    if (!this._isReady) {
+      throw new Error('Editor is not ready');
+    }
+
+    const documentData = this.document.toData();
+    return JSON.stringify(documentData, null, 2);
+  }
+
+  /**
+   * Save the current document state to a downloadable file.
+   * @param filename Optional filename (defaults to 'document.pceditor.json')
+   */
+  saveDocumentToFile(filename: string = 'document.pceditor.json'): void {
+    const jsonString = this.saveDocument();
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    this.emit('document-saved', { filename });
+  }
+
+  /**
+   * Load a document from a JSON string.
+   * @param jsonString JSON string representation of the document
+   */
+  loadDocumentFromJSON(jsonString: string): void {
+    if (!this._isReady) {
+      throw new Error('Editor is not ready');
+    }
+
+    try {
+      const documentData = JSON.parse(jsonString) as DocumentData;
+      this.validateDocumentData(documentData);
+      this.loadDocument(documentData);
+      this.emit('document-loaded-from-json', { version: documentData.version });
+    } catch (error) {
+      this.emit('error', { error, context: 'load-document' });
+      throw error;
+    }
+  }
+
+  /**
+   * Load a document from a File object.
+   * @param file File object to load
+   * @returns Promise that resolves when loading is complete
+   */
+  async loadDocumentFromFile(file: File): Promise<void> {
+    if (!this._isReady) {
+      throw new Error('Editor is not ready');
+    }
+
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = (event) => {
+        try {
+          const jsonString = event.target?.result as string;
+          this.loadDocumentFromJSON(jsonString);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      reader.onerror = () => {
+        const error = new Error('Failed to read file');
+        this.emit('error', { error, context: 'file-read' });
+        reject(error);
+      };
+
+      reader.readAsText(file);
+    });
+  }
+
+  /**
+   * Validate document data structure before loading.
+   * @throws Error if validation fails
+   */
+  private validateDocumentData(data: unknown): asserts data is DocumentData {
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid document data: expected object');
+    }
+
+    const doc = data as Record<string, unknown>;
+
+    if (typeof doc.version !== 'string') {
+      throw new Error('Invalid document data: missing or invalid version');
+    }
+
+    if (!Array.isArray(doc.pages)) {
+      throw new Error('Invalid document data: missing or invalid pages array');
+    }
+
+    // Validate each page has an ID
+    for (const page of doc.pages) {
+      if (!page || typeof page !== 'object' || typeof (page as Record<string, unknown>).id !== 'string') {
+        throw new Error('Invalid document data: page missing id');
+      }
+    }
+
+    // Version compatibility check
+    const [major] = doc.version.split('.').map(Number);
+    if (major > 1) {
+      console.warn(`Document version ${doc.version} may not be fully compatible with this editor`);
     }
   }
 
@@ -450,12 +835,58 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.removeEmbeddedObject(objectId);
   }
 
+  /**
+   * Undo the last operation.
+   */
   undo(): void {
+    if (!this._isReady) return;
+
+    const success = this.transactionManager.undo();
+    if (success) {
+      this.canvasManager.render();
+    }
     this.emit('undo');
   }
 
+  /**
+   * Redo the last undone operation.
+   */
   redo(): void {
+    if (!this._isReady) return;
+
+    const success = this.transactionManager.redo();
+    if (success) {
+      this.canvasManager.render();
+    }
     this.emit('redo');
+  }
+
+  /**
+   * Check if undo is available.
+   */
+  canUndo(): boolean {
+    return this.transactionManager.canUndo();
+  }
+
+  /**
+   * Check if redo is available.
+   */
+  canRedo(): boolean {
+    return this.transactionManager.canRedo();
+  }
+
+  /**
+   * Clear undo/redo history.
+   */
+  clearUndoHistory(): void {
+    this.transactionManager.clear();
+  }
+
+  /**
+   * Set the maximum number of undo entries.
+   */
+  setMaxUndoHistory(count: number): void {
+    this.transactionManager.setMaxHistory(count);
   }
 
   zoomIn(): void {
@@ -497,13 +928,6 @@ export class PCEditor extends EventEmitter {
       throw new Error('Editor is not ready');
     }
     this.layoutEngine.setAutoFlow(enabled);
-  }
-
-  insertPageBreak(elementId: string): void {
-    if (!this._isReady) {
-      throw new Error('Editor is not ready');
-    }
-    this.layoutEngine.insertPageBreak(elementId);
   }
 
   reflowDocument(): void {
@@ -575,6 +999,33 @@ export class PCEditor extends EventEmitter {
   }
   
   private handleKeyDown(e: KeyboardEvent): void {
+    // Handle undo/redo shortcuts first (works globally)
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+      e.preventDefault();
+      this.undo();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) {
+      e.preventDefault();
+      this.redo();
+      return;
+    }
+
+    // If an embedded object is selected (but not being edited), arrow keys should deselect it
+    // and move the cursor in the text flow
+    const isArrowKey = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key);
+    if (isArrowKey && this.canvasManager.hasSelectedElements()) {
+      // Check if we're not in editing mode
+      const editingTextBox = this.canvasManager.getEditingTextBox();
+      const focusedTable = this.canvasManager.getFocusedControl();
+      const isEditing = editingTextBox?.editing || (focusedTable instanceof TableObject && focusedTable.editing);
+
+      if (!isEditing) {
+        // Clear the selection and let the key be handled by the body content
+        this.canvasManager.clearSelection();
+      }
+    }
+
     // Use the unified focus system to get the currently focused control
     const focusedControl = this.canvasManager.getFocusedControl();
     console.log('[PCEditor.handleKeyDown] Key:', e.key, 'focusedControl:', focusedControl?.constructor?.name);
@@ -695,12 +1146,8 @@ export class PCEditor extends EventEmitter {
       flowingContents.push({ content: this.document.headerFlowingContent, section: 'header' });
     }
 
-    for (const page of this.document.pages) {
-      if (page.flowingContent) {
-        flowingContents.push({ content: page.flowingContent, section: 'body' });
-        break;
-      }
-    }
+    // Body content is document-level
+    flowingContents.push({ content: this.document.bodyFlowingContent, section: 'body' });
 
     if (this.document.footerFlowingContent) {
       flowingContents.push({ content: this.document.footerFlowingContent, section: 'footer' });
@@ -729,13 +1176,8 @@ export class PCEditor extends EventEmitter {
       flowingContents.push({ content: this.document.headerFlowingContent, section: 'header' });
     }
 
-    // Add body flowing content from each page
-    for (const page of this.document.pages) {
-      if (page.flowingContent) {
-        flowingContents.push({ content: page.flowingContent, section: 'body' });
-        break; // Body content is shared, only need to check once
-      }
-    }
+    // Body content is document-level
+    flowingContents.push({ content: this.document.bodyFlowingContent, section: 'body' });
 
     // Add footer flowing content
     if (this.document.footerFlowingContent) {
@@ -1347,6 +1789,9 @@ export class PCEditor extends EventEmitter {
     // Insert the embedded object at the current cursor position
     flowingContent.insertEmbeddedObject(object, position);
 
+    // Observe the new object for undo/redo tracking
+    this.observeEmbeddedObject(object);
+
     this.canvasManager.render();
     this.emit('embedded-object-added', { object, position, section: this._activeEditingSection });
   }
@@ -1446,6 +1891,29 @@ export class PCEditor extends EventEmitter {
   }
 
   /**
+   * Insert a page break at the current cursor position.
+   * Forces subsequent content to start on a new page.
+   * Works for body content. Note: Page breaks in headers, footers, text boxes,
+   * or table cells are not recommended as these don't span pages.
+   */
+  insertPageBreak(): void {
+    if (!this._isReady) {
+      throw new Error('Editor is not ready');
+    }
+
+    // Only allow page breaks in body content
+    const flowingContent = this.document.bodyFlowingContent;
+    if (!flowingContent.hasFocus()) {
+      throw new Error('Page breaks can only be inserted in body content');
+    }
+
+    flowingContent.insertPageBreak();
+
+    this.canvasManager.render();
+    this.emit('page-break-inserted', { position: flowingContent.getCursorPosition() });
+  }
+
+  /**
    * Get a substitution field at a specific text position in the active section.
    * @param position The text index to check
    * @returns The substitution field at that position, or null if none
@@ -1493,7 +1961,7 @@ export class PCEditor extends EventEmitter {
     if (selectedIds.length === 0) return null;
 
     const flowingContents = [
-      this.document.pages[0]?.flowingContent,
+      this.document.bodyFlowingContent,
       this.document.headerFlowingContent,
       this.document.footerFlowingContent
     ].filter(Boolean);
@@ -1522,7 +1990,7 @@ export class PCEditor extends EventEmitter {
     if (selectedIds.length === 0) return null;
 
     const flowingContents = [
-      this.document.pages[0]?.flowingContent,
+      this.document.bodyFlowingContent,
       this.document.headerFlowingContent,
       this.document.footerFlowingContent
     ].filter(Boolean);
@@ -1532,6 +2000,35 @@ export class PCEditor extends EventEmitter {
       for (const elementId of selectedIds) {
         for (const [, obj] of embeddedObjects.entries()) {
           if (obj.id === elementId && obj instanceof TableObject) {
+            return obj;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Get the currently selected image if one is selected.
+   * @returns The selected ImageObject or null if no image is selected
+   */
+  getSelectedImage(): ImageObject | null {
+    // Check all selected embedded objects
+    const selectedIds = this.canvasManager.getSelectedElements();
+    if (selectedIds.length === 0) return null;
+
+    const flowingContents = [
+      this.document.bodyFlowingContent,
+      this.document.headerFlowingContent,
+      this.document.footerFlowingContent
+    ].filter(Boolean);
+
+    for (const flowingContent of flowingContents) {
+      const embeddedObjects = flowingContent.getEmbeddedObjects();
+      for (const elementId of selectedIds) {
+        for (const [, obj] of embeddedObjects.entries()) {
+          if (obj.id === elementId && obj instanceof ImageObject) {
             return obj;
           }
         }
@@ -1553,13 +2050,85 @@ export class PCEditor extends EventEmitter {
     return null;
   }
 
+  // ============================================
+  // Table Structure Operations (with undo support)
+  // ============================================
+
+  /**
+   * Insert a row into a table.
+   * Undo is automatically tracked via ObjectMutationObserver.
+   * @param table The table to modify
+   * @param rowIndex The index at which to insert the row
+   * @param config Optional row configuration
+   */
+  tableInsertRow(table: TableObject, rowIndex: number, config?: TableRowConfig): void {
+    if (!this._isReady) return;
+    table.insertRow(rowIndex, config);
+    this.canvasManager.render();
+  }
+
+  /**
+   * Remove a row from a table.
+   * Undo is automatically tracked via ObjectMutationObserver.
+   * @param table The table to modify
+   * @param rowIndex The index of the row to remove
+   */
+  tableRemoveRow(table: TableObject, rowIndex: number): void {
+    if (!this._isReady) return;
+    table.removeRow(rowIndex);
+    this.canvasManager.render();
+  }
+
+  /**
+   * Insert a column into a table.
+   * Undo is automatically tracked via ObjectMutationObserver.
+   * @param table The table to modify
+   * @param colIndex The index at which to insert the column
+   * @param width Optional column width
+   */
+  tableInsertColumn(table: TableObject, colIndex: number, width?: number): void {
+    if (!this._isReady) return;
+    table.insertColumn(colIndex, width);
+    this.canvasManager.render();
+  }
+
+  /**
+   * Remove a column from a table.
+   * Undo is automatically tracked via ObjectMutationObserver.
+   * @param table The table to modify
+   * @param colIndex The index of the column to remove
+   */
+  tableRemoveColumn(table: TableObject, colIndex: number): void {
+    if (!this._isReady) return;
+    table.removeColumn(colIndex);
+    this.canvasManager.render();
+  }
+
+  /**
+   * Begin a compound operation. Groups multiple mutations into a single undo entry.
+   * Call endCompoundOperation after making changes.
+   * @param description Description of the change for undo/redo
+   */
+  beginCompoundOperation(description?: string): void {
+    this.transactionManager.beginCompoundOperation(description);
+  }
+
+  /**
+   * End a compound operation.
+   * @param description Description of the change for undo/redo (overrides begin description)
+   */
+  endCompoundOperation(description?: string): void {
+    this.transactionManager.endCompoundOperation(description);
+    this.canvasManager.render();
+  }
+
   /**
    * Update a substitution field's properties in the active section.
    * @param textIndex The text index of the field to update
    * @param updates The properties to update
    * @returns true if the field was updated, false if not found
    */
-  updateField(textIndex: number, updates: { fieldName?: string; defaultValue?: string }): boolean {
+  updateField(textIndex: number, updates: { fieldName?: string; defaultValue?: string; displayFormat?: string }): boolean {
     if (!this._isReady) {
       return false;
     }
@@ -1570,9 +2139,15 @@ export class PCEditor extends EventEmitter {
     }
 
     const fieldManager = flowingContent.getSubstitutionFieldManager();
+    const field = fieldManager.getFieldAt(textIndex);
+    if (!field) {
+      return false;
+    }
+
     const success = fieldManager.updateFieldConfig(textIndex, updates);
 
     if (success) {
+      // Field updates are captured by TextMutationObserver via 'substitution-field-updated' event
       this.canvasManager.render();
       this.emit('substitution-field-updated', { textIndex, updates, section: this._activeEditingSection });
     }
@@ -1600,12 +2175,8 @@ export class PCEditor extends EventEmitter {
       throw new Error('Editor is not ready');
     }
 
-    const currentPage = this.document.pages[0];
-    if (!currentPage) {
-      throw new Error('No page available');
-    }
-
-    const bodyContent = currentPage.flowingContent;
+    // Body content is document-level
+    const bodyContent = this.document.bodyFlowingContent;
     let totalFieldCount = 0;
 
     // Step 1: Expand repeating sections in body (header/footer don't support them)
@@ -1799,7 +2370,7 @@ export class PCEditor extends EventEmitter {
    * Processes sections from end to start to preserve text indices.
    */
   private expandRepeatingSections(
-    flowingContent: typeof this.document.pages[0]['flowingContent'],
+    flowingContent: FlowingTextContent,
     data: Record<string, unknown>
   ): void {
     const sectionManager = flowingContent.getRepeatingSectionManager();
@@ -1827,7 +2398,7 @@ export class PCEditor extends EventEmitter {
 
       // Get fields within this section
       const fieldsInSection = fieldManager.getFieldsArray().filter(
-        f => f.textIndex >= section.startIndex && f.textIndex < section.endIndex
+        (f: SubstitutionField) => f.textIndex >= section.startIndex && f.textIndex < section.endIndex
       );
 
       // For each additional iteration (beyond the first), duplicate the content
@@ -2241,13 +2812,8 @@ export class PCEditor extends EventEmitter {
       return [];
     }
 
-    // Repeating sections only work in body
-    const currentPage = this.document.pages[0];
-    if (!currentPage) {
-      return [];
-    }
-
-    return currentPage.flowingContent.getParagraphBoundaries();
+    // Repeating sections only work in body (document-level)
+    return this.document.bodyFlowingContent.getParagraphBoundaries();
   }
 
   /**
@@ -2267,13 +2833,8 @@ export class PCEditor extends EventEmitter {
       throw new Error('Editor is not ready');
     }
 
-    // Repeating sections only work in body
-    const currentPage = this.document.pages[0];
-    if (!currentPage) {
-      throw new Error('No page available');
-    }
-
-    const section = currentPage.flowingContent.createRepeatingSection(startIndex, endIndex, fieldPath);
+    // Repeating sections only work in body (document-level)
+    const section = this.document.bodyFlowingContent.createRepeatingSection(startIndex, endIndex, fieldPath);
 
     if (section) {
       this.canvasManager.render();
@@ -2291,12 +2852,7 @@ export class PCEditor extends EventEmitter {
       return null;
     }
 
-    const currentPage = this.document.pages[0];
-    if (!currentPage) {
-      return null;
-    }
-
-    return currentPage.flowingContent.getRepeatingSection(id) || null;
+    return this.document.bodyFlowingContent.getRepeatingSection(id) || null;
   }
 
   /**
@@ -2307,12 +2863,7 @@ export class PCEditor extends EventEmitter {
       return [];
     }
 
-    const currentPage = this.document.pages[0];
-    if (!currentPage) {
-      return [];
-    }
-
-    return currentPage.flowingContent.getRepeatingSections();
+    return this.document.bodyFlowingContent.getRepeatingSections();
   }
 
   /**
@@ -2323,12 +2874,7 @@ export class PCEditor extends EventEmitter {
       return false;
     }
 
-    const currentPage = this.document.pages[0];
-    if (!currentPage) {
-      return false;
-    }
-
-    const success = currentPage.flowingContent.updateRepeatingSectionFieldPath(id, fieldPath);
+    const success = this.document.bodyFlowingContent.updateRepeatingSectionFieldPath(id, fieldPath);
 
     if (success) {
       this.canvasManager.render();
@@ -2346,12 +2892,7 @@ export class PCEditor extends EventEmitter {
       return false;
     }
 
-    const currentPage = this.document.pages[0];
-    if (!currentPage) {
-      return false;
-    }
-
-    const success = currentPage.flowingContent.removeRepeatingSection(id);
+    const success = this.document.bodyFlowingContent.removeRepeatingSection(id);
 
     if (success) {
       this.canvasManager.render();
@@ -2369,12 +2910,7 @@ export class PCEditor extends EventEmitter {
       return null;
     }
 
-    const currentPage = this.document.pages[0];
-    if (!currentPage) {
-      return null;
-    }
-
-    return currentPage.flowingContent.getRepeatingSectionAtBoundary(textIndex) || null;
+    return this.document.bodyFlowingContent.getRepeatingSectionAtBoundary(textIndex) || null;
   }
 
   // ============================================
@@ -2467,6 +3003,10 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.clearSelection();
 
     this.document.headerFlowingContent.insertEmbeddedObject(object, position);
+
+    // Observe the new object for undo/redo tracking
+    this.observeEmbeddedObject(object);
+
     this.canvasManager.render();
     this.emit('embedded-object-added', { object, position, section: 'header' });
   }
@@ -2483,6 +3023,10 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.clearSelection();
 
     this.document.footerFlowingContent.insertEmbeddedObject(object, position);
+
+    // Observe the new object for undo/redo tracking
+    this.observeEmbeddedObject(object);
+
     this.canvasManager.render();
     this.emit('embedded-object-added', { object, position, section: 'footer' });
   }

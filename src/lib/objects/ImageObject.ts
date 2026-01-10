@@ -3,6 +3,7 @@ import {
   ImageObjectConfig,
   EmbeddedObjectData,
   ImageFitMode,
+  ImageResizeMode,
   Size
 } from './types';
 
@@ -13,6 +14,7 @@ export class ImageObject extends BaseEmbeddedObject {
   private _src: string;
   private _image: HTMLImageElement | null = null;
   private _fit: ImageFitMode;
+  private _resizeMode: ImageResizeMode;
   private _alt: string;
   private _loaded: boolean = false;
   private _error: boolean = false;
@@ -21,6 +23,7 @@ export class ImageObject extends BaseEmbeddedObject {
     super(config);
     this._src = config.src;
     this._fit = config.fit || 'contain';
+    this._resizeMode = config.resizeMode || 'locked-aspect-ratio';
     this._alt = config.alt || '';
     this.loadImage();
   }
@@ -49,6 +52,15 @@ export class ImageObject extends BaseEmbeddedObject {
   set fit(value: ImageFitMode) {
     this._fit = value;
     this.emit('fit-changed', { fit: value });
+  }
+
+  get resizeMode(): ImageResizeMode {
+    return this._resizeMode;
+  }
+
+  set resizeMode(value: ImageResizeMode) {
+    this._resizeMode = value;
+    this.emit('resize-mode-changed', { resizeMode: value });
   }
 
   get alt(): string {
@@ -143,9 +155,36 @@ export class ImageObject extends BaseEmbeddedObject {
         dx = (width - imgWidth) / 2;
         dy = (height - imgHeight) / 2;
         break;
+
+      case 'tile':
+        // Tile the image to fill bounds
+        this.drawTiledImage(ctx, width, height);
+        return; // Early return, tiling handles its own drawing
     }
 
     ctx.drawImage(this._image, sx, sy, sw, sh, dx, dy, dw, dh);
+  }
+
+  private drawTiledImage(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    if (!this._image) return;
+
+    const imgWidth = this._image.naturalWidth;
+    const imgHeight = this._image.naturalHeight;
+
+    // Tile the image across the bounds
+    for (let y = 0; y < height; y += imgHeight) {
+      for (let x = 0; x < width; x += imgWidth) {
+        // Calculate the portion of the image to draw (may be clipped at edges)
+        const drawWidth = Math.min(imgWidth, width - x);
+        const drawHeight = Math.min(imgHeight, height - y);
+
+        ctx.drawImage(
+          this._image,
+          0, 0, drawWidth, drawHeight,  // Source region
+          x, y, drawWidth, drawHeight   // Destination region
+        );
+      }
+    }
   }
 
   private drawLoadingPlaceholder(ctx: CanvasRenderingContext2D): void {
@@ -207,12 +246,59 @@ export class ImageObject extends BaseEmbeddedObject {
       textIndex: this._textIndex,
       position: this._position,
       size: { ...this._size },
+      relativeOffset: this._position === 'relative' ? { ...this._relativeOffset } : undefined,
       data: {
         src: this._src,
         fit: this._fit,
-        alt: this._alt
+        resizeMode: this._resizeMode,
+        alt: this._alt,
+        naturalWidth: this._image?.naturalWidth,
+        naturalHeight: this._image?.naturalHeight
       }
     };
+  }
+
+  /**
+   * Restore the image state from serialized data.
+   * Used for undo/redo operations.
+   */
+  restoreFromData(data: EmbeddedObjectData): void {
+    // Restore size
+    this._size = { ...data.size };
+
+    // Restore position mode
+    if (data.position) {
+      this._position = data.position;
+    }
+
+    // Restore relative offset
+    if (data.relativeOffset) {
+      this._relativeOffset = { ...data.relativeOffset };
+    }
+
+    // Restore image specific data
+    const imageData = data.data as {
+      src?: string;
+      fit?: ImageFitMode;
+      resizeMode?: ImageResizeMode;
+      alt?: string;
+    };
+
+    if (imageData) {
+      // Only reload image if source changed
+      const srcChanged = imageData.src !== undefined && imageData.src !== this._src;
+
+      if (imageData.fit !== undefined) this._fit = imageData.fit;
+      if (imageData.resizeMode !== undefined) this._resizeMode = imageData.resizeMode;
+      if (imageData.alt !== undefined) this._alt = imageData.alt;
+
+      if (srcChanged) {
+        // Reload the image with new source
+        this.setSource(imageData.src!);
+      }
+    }
+
+    this.emit('state-restored', { data });
   }
 
   clone(): ImageObject {
@@ -221,10 +307,52 @@ export class ImageObject extends BaseEmbeddedObject {
       textIndex: this._textIndex,
       position: this._position,
       size: { ...this._size },
+      relativeOffset: this._position === 'relative' ? { ...this._relativeOffset } : undefined,
       src: this._src,
       fit: this._fit,
+      resizeMode: this._resizeMode,
       alt: this._alt
     });
+  }
+
+  /**
+   * Set a new image source (URL or base64 data URI).
+   * Optionally auto-resize to fit within max dimensions.
+   */
+  setSource(src: string, options?: { maxWidth?: number; maxHeight?: number }): void {
+    this._src = src;
+    this._loaded = false;
+    this._error = false;
+    this._image = new Image();
+
+    this._image.onload = () => {
+      this._loaded = true;
+      this._error = false;
+
+      // Auto-resize if max dimensions provided
+      if (options?.maxWidth !== undefined || options?.maxHeight !== undefined) {
+        const natural = this.getNaturalSize();
+        if (natural) {
+          const maxW = options.maxWidth ?? natural.width;
+          const maxH = options.maxHeight ?? natural.height;
+          const scale = Math.min(maxW / natural.width, maxH / natural.height, 1);
+          this.size = {
+            width: natural.width * scale,
+            height: natural.height * scale
+          };
+        }
+      }
+
+      this.emit('image-loaded', { src: this._src });
+    };
+
+    this._image.onerror = () => {
+      this._loaded = false;
+      this._error = true;
+      this.emit('image-error', { src: this._src });
+    };
+
+    this._image.src = src;
   }
 
   /**

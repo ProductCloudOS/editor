@@ -15,10 +15,16 @@ import {
   FlowedPage,
   RepeatingSection,
   OBJECT_REPLACEMENT_CHAR,
+  PAGE_BREAK_CHAR,
   ObjectPosition,
   Focusable
 } from './types';
-import { BaseEmbeddedObject } from '../objects';
+import { BaseEmbeddedObject, EmbeddedObjectFactory } from '../objects';
+import {
+  FlowingTextContentData,
+  TextFormattingRunData,
+  EmbeddedObjectReference
+} from '../types';
 
 // Re-export types
 export type {
@@ -147,6 +153,12 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
       this.emit('embedded-object-removed', data);
     });
 
+    this.embeddedObjects.on('object-updated', (data) => {
+      this.emit('embedded-object-updated', data);
+      // Trigger content-changed to cause reflow when object properties change
+      this.emit('content-changed', { type: 'object-updated', ...data });
+    });
+
     // Forward repeating section events
     this.repeatingSections.on('section-added', (data) => {
       this.emit('repeating-section-added', data);
@@ -218,17 +230,105 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     // Now shift paragraph formatting with the complete content
     this.paragraphFormatting.shiftParagraphs(insertAt, text.length, this.textState.getText());
 
-    // Apply formatting to the newly inserted text
+    // Apply formatting to the newly inserted text (silent=true to avoid breaking undo coalescing)
     if (formattingToApply && text.length > 0) {
-      this.formatting.applyFormatting(insertAt, insertAt + text.length, formattingToApply);
+      this.formatting.applyFormatting(insertAt, insertAt + text.length, formattingToApply, true);
     }
+
+    // Emit text-inserted event for undo recording
+    this.emit('text-inserted', {
+      position: insertAt,
+      text,
+      formatting: formattingToApply as TextFormattingStyle | undefined
+    });
+  }
+
+  /**
+   * Insert a page break at the cursor position.
+   */
+  insertPageBreak(): void {
+    this.insertText(PAGE_BREAK_CHAR);
   }
 
   /**
    * Delete text from a range.
+   * @param start The starting position
+   * @param length The number of characters to delete
+   * @param isBackspace Whether this is a backspace deletion (vs forward delete)
    */
-  deleteText(start: number, length: number): void {
+  deleteText(start: number, length: number, isBackspace: boolean = true): void {
+    // Capture the deleted text and formatting before deletion for undo
+    const deletedText = this.textState.substring(start, start + length);
+    const deletedFormatting = new Map<number, TextFormattingStyle>();
+    for (let i = 0; i < length; i++) {
+      const formatting = this.formatting.getFormattingAt(start + i);
+      if (formatting) {
+        deletedFormatting.set(i, formatting);
+      }
+    }
+
+    // Capture embedded objects in the deleted range before deletion
+    const objectsInRange = this.embeddedObjects.getObjectsInRange(start, start + length);
+    const deletedObjects = objectsInRange.map(entry => ({
+      offset: entry.textIndex - start,
+      object: entry.object
+    }));
+
+    // Capture substitution fields in the deleted range before deletion
+    const fieldsInRange = this.substitutionFields.getFieldsInRange(start, start + length);
+    const deletedFields = fieldsInRange.map(entry => ({
+      offset: entry.textIndex - start,
+      field: entry.field
+    }));
+
+    // Perform the actual deletion
     this.textState.deleteText(start, length);
+
+    // Emit text-deleted event for undo recording
+    this.emit('text-deleted', {
+      position: start,
+      deletedText,
+      deletedFormatting,
+      deletedObjects,
+      deletedFields,
+      isBackspace
+    });
+  }
+
+  /**
+   * Insert text at a specific position (for undo/redo commands).
+   * This method inserts text without moving the cursor or affecting pending formatting.
+   */
+  insertTextAt(position: number, text: string): void {
+    // Shift formatting, fields, objects, and sections after the insertion point
+    this.formatting.shiftFormatting(position, text.length);
+    this.substitutionFields.shiftFields(position, text.length);
+    this.embeddedObjects.shiftObjects(position, text.length);
+    this.repeatingSections.shiftSections(position, text.length);
+
+    // Insert the text
+    const content = this.textState.getText();
+    this.textState.setText(content.slice(0, position) + text + content.slice(position));
+
+    // Shift paragraph formatting with the complete content
+    this.paragraphFormatting.shiftParagraphs(position, text.length, this.textState.getText());
+  }
+
+  /**
+   * Delete text at a specific position (for undo/redo commands).
+   * This method deletes text without moving the cursor.
+   */
+  deleteTextAt(position: number, length: number): void {
+    // Handle deletion in formatting, substitution fields, embedded objects, sections, and paragraph formatting
+    this.formatting.handleDeletion(position, length);
+    this.substitutionFields.handleDeletion(position, length);
+    this.embeddedObjects.handleDeletion(position, length);
+    this.repeatingSections.handleDeletion(position, length);
+    this.paragraphFormatting.handleDeletion(position, length);
+
+    // Delete the text
+    const content = this.textState.getText();
+    this.textState.setText(content.slice(0, position) + content.slice(position + length));
   }
 
   // ============================================
@@ -310,6 +410,15 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
   }
 
   /**
+   * Set a selection range.
+   * Sets the anchor at start and cursor at end.
+   */
+  setSelection(start: number, end: number): void {
+    this.textState.setSelectionAnchor(start);
+    this.textState.setCursorPosition(end);
+  }
+
+  /**
    * Get the selected text content.
    */
   getSelectedText(): string {
@@ -320,7 +429,45 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
    * Delete the selected text.
    */
   deleteSelection(): boolean {
-    return this.textState.deleteSelection();
+    const selection = this.getSelection();
+    if (!selection) {
+      return false;
+    }
+    // Use our deleteText method which properly records undo
+    this.deleteText(selection.start, selection.end - selection.start);
+    // Clear the selection
+    this.clearSelection();
+    return true;
+  }
+
+  /**
+   * Replace the selected text with new text.
+   * This is a compound operation that will be undone as a single action.
+   */
+  replaceSelection(text: string): void {
+    const hasSelection = this.hasSelection();
+    if (hasSelection) {
+      this.emit('compound-operation-start', {});
+      this.deleteSelection();
+    }
+    this.insertText(text);
+    if (hasSelection) {
+      this.emit('compound-operation-end', { description: 'Replace' });
+    }
+  }
+
+  /**
+   * Signal the start of a compound operation (for undo grouping).
+   */
+  beginCompoundOperation(description?: string): void {
+    this.emit('compound-operation-start', { description });
+  }
+
+  /**
+   * Signal the end of a compound operation (for undo grouping).
+   */
+  endCompoundOperation(): void {
+    this.emit('compound-operation-end', {});
   }
 
   /**
@@ -353,6 +500,15 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
    * Also updates any substitution fields within the range.
    */
   applyFormatting(start: number, end: number, formatting: Partial<TextFormattingStyle>): void {
+    // Capture previous formatting for undo
+    const previousFormatting = new Map<number, TextFormattingStyle>();
+    for (let i = start; i < end; i++) {
+      const fmt = this.formatting.getFormattingAt(i);
+      if (fmt) {
+        previousFormatting.set(i - start, fmt);
+      }
+    }
+
     this.formatting.applyFormatting(start, end, formatting);
 
     // Also update any substitution fields within the range
@@ -367,6 +523,14 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
         this.substitutionFields.setFieldFormatting(field.textIndex, mergedFormatting);
       }
     }
+
+    // Emit formatting-changed event for undo recording
+    this.emit('formatting-changed', {
+      start,
+      end,
+      newFormatting: formatting,
+      previousFormatting
+    });
 
     // Emit content-changed to trigger reflow (e.g., for table cells)
     this.emit('content-changed', {
@@ -467,6 +631,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
 
   /**
    * Insert a substitution field at the current cursor position.
+   * The field inherits the text formatting at the cursor position.
    */
   insertSubstitutionField(
     fieldName: string,
@@ -474,15 +639,39 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
   ): SubstitutionField {
     const insertAt = this.textState.getCursorPosition();
 
-    // Shift existing fields and objects
+    // Get the text formatting at the cursor position to inherit
+    // If config already has formatting, use that instead
+    const cursorFormatting = config?.formatting || this.formatting.getFormattingAt(insertAt);
+
+    // Shift existing formatting, fields, objects, and sections
+    this.formatting.shiftFormatting(insertAt, 1);
     this.substitutionFields.shiftFields(insertAt, 1);
     this.embeddedObjects.shiftObjects(insertAt, 1);
+    this.repeatingSections.shiftSections(insertAt, 1);
 
     // Insert the placeholder character
     this.textState.insertText(OBJECT_REPLACEMENT_CHAR, insertAt);
 
-    // Register the substitution field
-    const field = this.substitutionFields.insert(fieldName, insertAt, config);
+    // Shift paragraph formatting with the complete content
+    this.paragraphFormatting.shiftParagraphs(insertAt, 1, this.textState.getText());
+
+    // Register the substitution field with inherited formatting
+    const field = this.substitutionFields.insert(fieldName, insertAt, {
+      ...config,
+      formatting: cursorFormatting
+    });
+
+    // Apply formatting to the placeholder character
+    if (cursorFormatting) {
+      this.formatting.applyFormatting(insertAt, insertAt + 1, cursorFormatting, true);
+    }
+
+    // Emit substitution-field-inserted event for undo recording
+    // (not text-inserted, because redo needs to re-register the field)
+    this.emit('substitution-field-inserted', {
+      position: insertAt,
+      field
+    });
 
     this.emit('content-changed', {
       text: this.textState.getText(),
@@ -571,9 +760,46 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     // Insert the placeholder character
     this.textState.insertText(OBJECT_REPLACEMENT_CHAR, insertAt);
 
+    // Tables ONLY support block positioning - enforce this constraint
+    const effectivePosition = object.objectType === 'table' ? 'block' : position;
+
+    // Set the object's position mode and register it
+    object.position = effectivePosition;
+    this.embeddedObjects.insert(object, insertAt);
+
+    // Emit event for undo recording
+    this.emit('embedded-object-inserted', {
+      position: insertAt,
+      object,
+      objectPosition: effectivePosition
+    });
+
+    this.emit('content-changed', {
+      text: this.textState.getText(),
+      cursorPosition: this.textState.getCursorPosition()
+    });
+  }
+
+  /**
+   * Insert an embedded object at a specific position (for undo/redo).
+   * This doesn't emit the embedded-object-inserted event to avoid duplicate undo entries.
+   */
+  insertEmbeddedObjectAt(
+    object: BaseEmbeddedObject,
+    textIndex: number,
+    position: ObjectPosition = 'inline'
+  ): void {
+    // Shift existing fields and objects
+    this.substitutionFields.shiftFields(textIndex, 1);
+    this.embeddedObjects.shiftObjects(textIndex, 1);
+
+    // Insert the placeholder character
+    const content = this.textState.getText();
+    this.textState.setText(content.slice(0, textIndex) + OBJECT_REPLACEMENT_CHAR + content.slice(textIndex));
+
     // Set the object's position mode and register it
     object.position = position;
-    this.embeddedObjects.insert(object, insertAt);
+    this.embeddedObjects.insert(object, textIndex);
 
     this.emit('content-changed', {
       text: this.textState.getText(),
@@ -763,7 +989,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
         if (!this.deleteSelection()) {
           const deletePos = this.getCursorPosition();
           if (deletePos < this.getText().length) {
-            this.deleteText(deletePos, 1);
+            this.deleteText(deletePos, 1, false); // Forward delete, not backspace
           }
         }
         return true;
@@ -803,22 +1029,24 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
 
       case 'Enter':
         e.preventDefault();
-        this.deleteSelection();
-        this.insertText('\n');
+        // Ctrl+Enter (or Cmd+Enter on Mac) inserts a page break
+        if (e.ctrlKey || e.metaKey) {
+          this.replaceSelection(PAGE_BREAK_CHAR);
+        } else {
+          this.replaceSelection('\n');
+        }
         return true;
 
       case 'Tab':
         e.preventDefault();
-        this.deleteSelection();
-        this.insertText('\t');
+        this.replaceSelection('\t');
         return true;
 
       default:
         // Handle regular text input
         if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
           e.preventDefault();
-          this.deleteSelection();
-          this.insertText(e.key);
+          this.replaceSelection(e.key);
           return true;
         }
         return false;
@@ -895,7 +1123,18 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     const cursorPos = this.textState.getCursorPosition();
     const content = this.textState.getText();
     const paragraphStart = this.paragraphFormatting.getParagraphStart(cursorPos, content);
+
+    // Capture previous alignment for undo
+    const previousAlignment = this.paragraphFormatting.getFormattingAt(cursorPos, content).alignment;
+
     this.paragraphFormatting.setAlignment(paragraphStart, alignment);
+
+    // Emit alignment-changed event for undo recording (using paragraph start as index)
+    this.emit('alignment-changed', {
+      paragraphIndex: paragraphStart,
+      newAlignment: alignment,
+      previousAlignment
+    });
 
     this.emit('content-changed', {
       text: content,
@@ -1058,5 +1297,221 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
       });
     }
     return result;
+  }
+
+  // ============================================
+  // Serialization
+  // ============================================
+
+  /**
+   * Serialize the complete FlowingTextContent state to JSON-compatible data.
+   */
+  toData(): FlowingTextContentData {
+    // Serialize text content
+    const text = this.textState.getText();
+
+    // Serialize text formatting as runs - only output when format changes
+    // This optimizes document size by not storing redundant formatting entries
+    const formattingRuns: TextFormattingRunData[] = [];
+    const defaultFormat = this.formatting.defaultFormatting;
+    let lastFormat: TextFormattingStyle | null = null;
+
+    for (let i = 0; i < text.length; i++) {
+      const currentFormat = this.formatting.getFormattingAt(i);
+
+      // Check if formatting changed from previous character
+      const formatChanged = lastFormat === null ||
+        currentFormat.fontFamily !== lastFormat.fontFamily ||
+        currentFormat.fontSize !== lastFormat.fontSize ||
+        currentFormat.fontWeight !== lastFormat.fontWeight ||
+        currentFormat.fontStyle !== lastFormat.fontStyle ||
+        currentFormat.color !== lastFormat.color ||
+        currentFormat.backgroundColor !== lastFormat.backgroundColor;
+
+      if (formatChanged) {
+        // Only output if different from default (to further reduce size)
+        const isDefault =
+          currentFormat.fontFamily === defaultFormat.fontFamily &&
+          currentFormat.fontSize === defaultFormat.fontSize &&
+          currentFormat.fontWeight === defaultFormat.fontWeight &&
+          currentFormat.fontStyle === defaultFormat.fontStyle &&
+          currentFormat.color === defaultFormat.color &&
+          currentFormat.backgroundColor === defaultFormat.backgroundColor;
+
+        // Always output first run if it's not default, or output when format changes
+        if (!isDefault || formattingRuns.length > 0) {
+          formattingRuns.push({
+            index: i,
+            formatting: {
+              fontFamily: currentFormat.fontFamily,
+              fontSize: currentFormat.fontSize,
+              fontWeight: currentFormat.fontWeight,
+              fontStyle: currentFormat.fontStyle,
+              color: currentFormat.color,
+              backgroundColor: currentFormat.backgroundColor
+            }
+          });
+        }
+        lastFormat = currentFormat;
+      }
+    }
+
+    // Serialize paragraph formatting
+    const paragraphFormatting = this.paragraphFormatting.toJSON();
+
+    // Serialize substitution fields
+    const substitutionFieldsData = this.substitutionFields.toJSON().map(field => ({
+      id: field.id,
+      textIndex: field.textIndex,
+      fieldName: field.fieldName,
+      fieldType: field.fieldType,
+      displayFormat: field.displayFormat,
+      defaultValue: field.defaultValue,
+      formatting: field.formatting ? {
+        fontFamily: field.formatting.fontFamily,
+        fontSize: field.formatting.fontSize,
+        fontWeight: field.formatting.fontWeight,
+        fontStyle: field.formatting.fontStyle,
+        color: field.formatting.color,
+        backgroundColor: field.formatting.backgroundColor
+      } : undefined
+    }));
+
+    // Serialize repeating sections
+    const repeatingSectionsData = this.repeatingSections.toJSON();
+
+    // Serialize embedded objects
+    const embeddedObjects: EmbeddedObjectReference[] = [];
+    const objectsMap = this.embeddedObjects.getObjects();
+    objectsMap.forEach((object, textIndex) => {
+      embeddedObjects.push({
+        textIndex,
+        object: object.toData()
+      });
+    });
+
+    return {
+      text,
+      formattingRuns: formattingRuns.length > 0 ? formattingRuns : undefined,
+      paragraphFormatting: paragraphFormatting.length > 0 ? paragraphFormatting : undefined,
+      substitutionFields: substitutionFieldsData.length > 0 ? substitutionFieldsData : undefined,
+      repeatingSections: repeatingSectionsData.length > 0 ? repeatingSectionsData : undefined,
+      embeddedObjects: embeddedObjects.length > 0 ? embeddedObjects : undefined
+    };
+  }
+
+  /**
+   * Restore FlowingTextContent state from serialized data.
+   * Static factory method for creating from data.
+   */
+  static fromData(data: FlowingTextContentData): FlowingTextContent {
+    const content = new FlowingTextContent(data.text);
+
+    // Restore text formatting from runs
+    // Each run specifies where formatting changes; apply it to the range until the next run
+    if (data.formattingRuns && data.formattingRuns.length > 0) {
+      const textLength = data.text.length;
+      const formattingManager = content.getFormattingManager();
+
+      for (let i = 0; i < data.formattingRuns.length; i++) {
+        const run = data.formattingRuns[i];
+        const nextRun = data.formattingRuns[i + 1];
+
+        // Range is from this run's index to the next run's index (or end of text)
+        const start = run.index;
+        const end = nextRun ? nextRun.index : textLength;
+
+        if (start < end) {
+          formattingManager.applyFormatting(start, end, run.formatting as TextFormattingStyle);
+        }
+      }
+    }
+
+    // Restore paragraph formatting
+    if (data.paragraphFormatting && data.paragraphFormatting.length > 0) {
+      content.getParagraphFormattingManager().fromJSON(data.paragraphFormatting);
+    }
+
+    // Restore substitution fields
+    if (data.substitutionFields && data.substitutionFields.length > 0) {
+      content.getSubstitutionFieldManager().fromJSON(data.substitutionFields);
+    }
+
+    // Restore repeating sections
+    if (data.repeatingSections && data.repeatingSections.length > 0) {
+      content.getRepeatingSectionManager().fromJSON(data.repeatingSections);
+    }
+
+    // Restore embedded objects using factory
+    if (data.embeddedObjects && data.embeddedObjects.length > 0) {
+      for (const ref of data.embeddedObjects) {
+        const object = EmbeddedObjectFactory.tryCreate(ref.object);
+        if (object) {
+          content.getEmbeddedObjectManager().insert(object, ref.textIndex);
+        } else {
+          console.warn(`Failed to create embedded object of type: ${ref.object.objectType}`);
+        }
+      }
+    }
+
+    return content;
+  }
+
+  /**
+   * Load state from serialized data into this instance.
+   * Instance method for updating existing FlowingTextContent.
+   */
+  loadFromData(data: FlowingTextContentData): void {
+    // Clear existing state
+    this.clear();
+
+    // Set text content
+    this.textState.setText(data.text);
+
+    // Restore text formatting from runs
+    // Each run specifies where formatting changes; apply it to the range until the next run
+    if (data.formattingRuns && data.formattingRuns.length > 0) {
+      const textLength = data.text.length;
+
+      for (let i = 0; i < data.formattingRuns.length; i++) {
+        const run = data.formattingRuns[i];
+        const nextRun = data.formattingRuns[i + 1];
+
+        // Range is from this run's index to the next run's index (or end of text)
+        const start = run.index;
+        const end = nextRun ? nextRun.index : textLength;
+
+        if (start < end) {
+          this.formatting.applyFormatting(start, end, run.formatting as TextFormattingStyle);
+        }
+      }
+    }
+
+    // Restore paragraph formatting
+    if (data.paragraphFormatting && data.paragraphFormatting.length > 0) {
+      this.paragraphFormatting.fromJSON(data.paragraphFormatting);
+    }
+
+    // Restore substitution fields
+    if (data.substitutionFields && data.substitutionFields.length > 0) {
+      this.substitutionFields.fromJSON(data.substitutionFields);
+    }
+
+    // Restore repeating sections
+    if (data.repeatingSections && data.repeatingSections.length > 0) {
+      this.repeatingSections.fromJSON(data.repeatingSections);
+    }
+
+    // Restore embedded objects
+    if (data.embeddedObjects && data.embeddedObjects.length > 0) {
+      for (const ref of data.embeddedObjects) {
+        const object = EmbeddedObjectFactory.tryCreate(ref.object);
+        if (object) {
+          this.embeddedObjects.insert(object, ref.textIndex);
+        } else {
+          console.warn(`Failed to create embedded object of type: ${ref.object.objectType}`);
+        }
+      }
+    }
   }
 }

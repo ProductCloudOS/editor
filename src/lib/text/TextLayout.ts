@@ -11,7 +11,8 @@ import {
   FlowedSubstitutionField,
   FlowedEmbeddedObject,
   TextAlignment,
-  OBJECT_REPLACEMENT_CHAR
+  OBJECT_REPLACEMENT_CHAR,
+  PAGE_BREAK_CHAR
 } from './types';
 
 /**
@@ -44,6 +45,14 @@ interface LineBuilder {
 }
 
 /**
+ * Result from splitting content into logical lines.
+ */
+interface LogicalLine {
+  text: string;
+  delimiter: 'newline' | 'pagebreak' | 'end';  // What terminates this line
+}
+
+/**
  * Handles text layout: line breaking and page flow.
  * This is the core algorithm for flowing text across multiple lines and pages.
  */
@@ -56,7 +65,7 @@ export class TextLayout {
       return [this.createEmptyPage(context)];
     }
 
-    // Split content by explicit newlines into logical lines
+    // Split content by explicit newlines and page breaks into logical lines
     const logicalLines = this.splitIntoLogicalLines(content);
 
     // Wrap each logical line and collect all visual lines
@@ -65,10 +74,10 @@ export class TextLayout {
 
     for (let i = 0; i < logicalLines.length; i++) {
       const logicalLine = logicalLines[i];
-      const isLastLogicalLine = i === logicalLines.length - 1;
+      const { text, delimiter } = logicalLine;
 
-      // Account for newline character at the end (except for last line)
-      const lineEndIndex = globalIndex + logicalLine.length;
+      // Account for delimiter character at the end (except for last line which has 'end' delimiter)
+      const lineEndIndex = globalIndex + text.length;
 
       // Get paragraph alignment for this logical line
       const paragraphFormatting = context.paragraphFormatting.getFormattingForParagraph(globalIndex);
@@ -76,23 +85,27 @@ export class TextLayout {
 
       // Wrap this logical line into one or more visual lines
       const wrappedLines = this.wrapLogicalLine(
-        logicalLine,
+        text,
         globalIndex,
         context,
         alignment,
-        isLastLogicalLine
+        delimiter === 'end'
       );
 
-      // Mark the last visual line of this logical line as ending with newline
-      // (unless it's the very last logical line of the document)
-      if (!isLastLogicalLine && wrappedLines.length > 0) {
-        wrappedLines[wrappedLines.length - 1].endsWithNewline = true;
+      // Mark the last visual line based on the delimiter type
+      if (delimiter !== 'end' && wrappedLines.length > 0) {
+        const lastLine = wrappedLines[wrappedLines.length - 1];
+        if (delimiter === 'newline') {
+          lastLine.endsWithNewline = true;
+        } else if (delimiter === 'pagebreak') {
+          lastLine.endsWithPageBreak = true;
+        }
       }
 
       allLines.push(...wrappedLines);
 
-      // Move past this line plus the newline character
-      globalIndex = lineEndIndex + (i < logicalLines.length - 1 ? 1 : 0);
+      // Move past this line plus the delimiter character (if not end)
+      globalIndex = lineEndIndex + (delimiter !== 'end' ? 1 : 0);
     }
 
     // Paginate the lines
@@ -100,10 +113,30 @@ export class TextLayout {
   }
 
   /**
-   * Split content by newline characters.
+   * Split content by newline and page break characters.
    */
-  private splitIntoLogicalLines(content: string): string[] {
-    return content.split('\n');
+  private splitIntoLogicalLines(content: string): LogicalLine[] {
+    const lines: LogicalLine[] = [];
+    let currentStart = 0;
+
+    for (let i = 0; i < content.length; i++) {
+      const char = content[i];
+      if (char === '\n' || char === PAGE_BREAK_CHAR) {
+        lines.push({
+          text: content.substring(currentStart, i),
+          delimiter: char === '\n' ? 'newline' : 'pagebreak'
+        });
+        currentStart = i + 1;
+      }
+    }
+
+    // Add the last segment (after last delimiter or entire content if no delimiters)
+    lines.push({
+      text: content.substring(currentStart),
+      delimiter: 'end'
+    });
+
+    return lines;
   }
 
   /**
@@ -136,6 +169,24 @@ export class TextLayout {
     for (let segIdx = 0; segIdx < segments.length; segIdx++) {
       const segment = segments[segIdx];
       const isWhitespace = segment.text.length > 0 && /^\s+$/.test(segment.text);
+
+      // Check for block objects - they get their own dedicated line
+      const blockObject = segment.embeddedObjects.find(obj => obj.isBlock);
+      if (blockObject) {
+        // Finalize current line if it has content
+        if (currentLine.text.length > 0) {
+          lines.push(this.finalizeLineBuilder(currentLine, alignment, false, availableWidth));
+        }
+
+        // Create a dedicated line for the block object
+        const blockLine = this.createBlockObjectLine(blockObject, segment, alignment);
+        lines.push(blockLine);
+
+        // Start a new line for subsequent content
+        currentLine = this.createLineBuilder(segment.startIndex + 1, formatting);
+        currentX = 0;
+        continue;
+      }
 
       // Check if segment fits on current line
       if (currentLine.width + segment.width > availableWidth && currentLine.text.length > 0) {
@@ -174,6 +225,30 @@ export class TextLayout {
     }
 
     return lines;
+  }
+
+  /**
+   * Create a dedicated line for a block-positioned object.
+   */
+  private createBlockObjectLine(
+    blockObject: FlowedEmbeddedObject,
+    segment: { text: string; startIndex: number; runs: TextRun[]; substitutionFields: FlowedSubstitutionField[] },
+    alignment: TextAlignment
+  ): FlowedLine {
+    const object = blockObject.object;
+    return {
+      text: segment.text,
+      width: object.width,
+      height: object.height,
+      baseline: object.height,  // Baseline at bottom for block objects
+      runs: segment.runs,
+      substitutionFields: segment.substitutionFields,
+      embeddedObjects: [blockObject],
+      startIndex: segment.startIndex,
+      endIndex: segment.startIndex + segment.text.length,
+      alignment,
+      isBlockObjectLine: true
+    };
   }
 
   /**
@@ -328,23 +403,59 @@ export class TextLayout {
           currentRun = null;
         }
 
-        const objWidth = object.width + 2;
-        objects.push({
-          object,
-          textIndex: charIndex,
-          x: width
-        });
-        runs.push({
-          text: char,
-          formatting: charFormatting,
-          startIndex: charIndex,
-          endIndex: charIndex + 1
-        });
-        width += objWidth;
-        if (object.position === 'inline') {
+        // Handle different positioning modes
+        if (object.position === 'block') {
+          // Block objects don't contribute to line width/height
+          // They will be handled as separate lines
+          objects.push({
+            object,
+            textIndex: charIndex,
+            x: 0,
+            isBlock: true
+          });
+          runs.push({
+            text: char,
+            formatting: charFormatting,
+            startIndex: charIndex,
+            endIndex: charIndex + 1
+          });
+          baseline = Math.max(baseline, charFormatting.fontSize * 0.8);
+
+        } else if (object.position === 'relative') {
+          // Relative objects show anchor marker but don't affect layout
+          objects.push({
+            object,
+            textIndex: charIndex,
+            x: width,  // Anchor position
+            isAnchor: true
+          });
+          runs.push({
+            text: char,
+            formatting: charFormatting,
+            startIndex: charIndex,
+            endIndex: charIndex + 1
+          });
+          // No width added - anchor is zero-width
+          baseline = Math.max(baseline, charFormatting.fontSize * 0.8);
+
+        } else {
+          // Inline: existing behavior
+          const objWidth = object.width + 2;
+          objects.push({
+            object,
+            textIndex: charIndex,
+            x: width
+          });
+          runs.push({
+            text: char,
+            formatting: charFormatting,
+            startIndex: charIndex,
+            endIndex: charIndex + 1
+          });
+          width += objWidth;
           height = Math.max(height, object.height);
+          baseline = Math.max(baseline, charFormatting.fontSize * 0.8);
         }
-        baseline = Math.max(baseline, charFormatting.fontSize * 0.8);
 
       } else if (char === '\uFFFC') {
         // Orphaned replacement character - skip
@@ -640,24 +751,72 @@ export class TextLayout {
     };
 
     for (const line of lines) {
+      // Block object lines are treated as independent units for pagination.
+      // They can break from preceding text (no orphan/widow considerations).
+      const isBlockObjectLine = line.isBlockObjectLine === true;
+
       // Check if adding this line would exceed page height
       if (currentPage.height + line.height > availableHeight && currentPage.lines.length > 0) {
+        // Check if this line contains a TABLE that can be split at page boundary.
+        // Only tables are splittable - images and text boxes should wrap to next page.
+        // A table is only splittable if at least one data row can fit on the current page.
+        // If headers + first data row > remaining height, move entire table to next page.
+        const remainingHeight = availableHeight - currentPage.height;
+        const hasSplittableObject = line.embeddedObjects?.some(obj => {
+          if (obj.object.objectType !== 'table' || obj.object.height <= remainingHeight) {
+            return false;
+          }
+          // Check if at least one data row can fit after headers
+          const table = obj.object as { getHeaderHeight?: () => number; getFirstDataRowHeight?: () => number };
+          if (table.getHeaderHeight && table.getFirstDataRowHeight) {
+            const headerHeight = table.getHeaderHeight();
+            const firstDataRowHeight = table.getFirstDataRowHeight();
+            // Only splittable if headers + at least one data row fit
+            return headerHeight + firstDataRowHeight <= remainingHeight;
+          }
+          return true; // Fall back to old behavior if methods not available
+        });
+
+        if (!hasSplittableObject) {
+          // Finalize current page
+          currentPage.endIndex = currentPage.lines[currentPage.lines.length - 1].endIndex;
+          pages.push(currentPage);
+
+          // Start new page
+          currentPage = {
+            lines: [],
+            height: 0,
+            startIndex: line.startIndex,
+            endIndex: 0
+          };
+        }
+        // If hasSplittableObject, we keep the line on the current page
+        // The rendering layer will split the object as needed
+      } else if (isBlockObjectLine && currentPage.lines.length > 0) {
+        // Block objects act as paragraph breaks - allow page break before them
+        // even if they would fit, if doing so would better balance pages.
+        // For now, we just ensure they CAN break from preceding content.
+        // The actual break happens above when height is exceeded.
+      }
+
+      // Add line to current page
+      currentPage.lines.push(line);
+      currentPage.height += line.height;
+
+      // Force page break if line ends with page break character
+      if (line.endsWithPageBreak && currentPage.lines.length > 0) {
         // Finalize current page
-        currentPage.endIndex = currentPage.lines[currentPage.lines.length - 1].endIndex;
+        currentPage.endIndex = line.endIndex;
         pages.push(currentPage);
 
         // Start new page
         currentPage = {
           lines: [],
           height: 0,
-          startIndex: line.startIndex,
+          startIndex: line.endIndex + 1,  // +1 to skip the page break character
           endIndex: 0
         };
       }
-
-      // Add line to current page
-      currentPage.lines.push(line);
-      currentPage.height += line.height;
     }
 
     // Finalize last page

@@ -1,6 +1,6 @@
 # FEATURE-0001: Remove Regular Elements
 
-**Status: COMPLETE**
+## Status: ✅ COMPLETE
 
 ## Overview
 

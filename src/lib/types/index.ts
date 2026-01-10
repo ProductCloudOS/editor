@@ -47,19 +47,30 @@ export interface EditorOptions {
 }
 
 /**
- * Serialized flowing text content for header/footer.
+ * Complete serialized FlowingTextContent.
  */
 export interface FlowingTextContentData {
   text: string;
-  // Formatting, fields, and embedded objects are serialized by FlowingTextContent
+  formattingRuns?: TextFormattingRunData[];
+  paragraphFormatting?: ParagraphFormattingData[];
+  substitutionFields?: SubstitutionFieldData[];
+  repeatingSections?: RepeatingSectionData[];
+  embeddedObjects?: EmbeddedObjectReference[];
 }
 
 export interface DocumentData {
   version: string;
   pages: PageData[];
   settings?: DocumentSettings;
+  bodyContent?: FlowingTextContentData;
   headerContent?: FlowingTextContentData;
   footerContent?: FlowingTextContentData;
+  metadata?: {
+    createdAt?: string;
+    modifiedAt?: string;
+    title?: string;
+    author?: string;
+  };
 }
 
 export interface DocumentSettings {
@@ -111,4 +122,69 @@ export interface PDFExportOptions {
   quality?: number;
   compress?: boolean;
   embedFonts?: boolean;
+  /** If true, apply merge data before generating PDF */
+  applyMergeData?: boolean;
+  /** Data to use for merge (requires applyMergeData: true) */
+  mergeData?: Record<string, unknown>;
+}
+
+// ============================================
+// Serialization Types
+// ============================================
+
+/**
+ * Serialized text formatting run.
+ * Represents formatting applied at a specific character index.
+ */
+export interface TextFormattingRunData {
+  index: number;
+  formatting: {
+    fontFamily: string;
+    fontSize: number;
+    fontWeight?: string;
+    fontStyle?: string;
+    color: string;
+    backgroundColor?: string;
+  };
+}
+
+/**
+ * Serialized paragraph formatting.
+ */
+export interface ParagraphFormattingData {
+  paragraphStart: number;
+  formatting: {
+    alignment: 'left' | 'center' | 'right' | 'justify';
+  };
+}
+
+/**
+ * Serialized substitution field.
+ */
+export interface SubstitutionFieldData {
+  id: string;
+  textIndex: number;
+  fieldName: string;
+  fieldType?: 'data' | 'pageNumber' | 'pageCount';
+  displayFormat?: string;
+  defaultValue?: string;
+  formatting?: TextFormattingRunData['formatting'];
+}
+
+/**
+ * Serialized repeating section.
+ */
+export interface RepeatingSectionData {
+  id: string;
+  fieldPath: string;
+  startIndex: number;
+  endIndex: number;
+}
+
+/**
+ * Serialized embedded object reference in FlowingTextContent.
+ */
+export interface EmbeddedObjectReference {
+  textIndex: number;
+  object: import('../objects').EmbeddedObjectData;
 }

@@ -5,16 +5,15 @@
 (none)
 
 ## New Features
-
-- [ ] FEATURE-0003 Add a table pane on the right that appears when a table is selected that supports: column/row addition, column/row deletion, cell merging, cell background, borders, header row or column, how many header rows/columns different format for headers vs normal
-- [ ] FEATURE-0004 Tables need to span multiple pages and have the headers replicate at the top of each page that the table crosses over
-- [ ] FEATURE-0006 Implement the image object properly.  When an image is created it should have the image data passed in, in an appropriate format, when it is created.  The client (in our case the demo) is responsible for getting the data in the first place.  A formatting pane (like the text box pane) supporting how the image resizes (freely, locked aspect ration, tiled) and giving the option to change the image should also be created
-- [ ] FEATURE-0007 Different positioning of objects
-- [ ] FEATURE-0008 Implement the PDF Generation function such that it looks identical to the canvas but without control characters, selection marks, cursors, grids, loops or any other operational render.  Also, the demo app should automatically apply data merge prior to creating the PDF.  This should be in the control of the client application though and not the editor
 - [ ] FEATURE-0009 Undo/Redo functionality
-- [ ] FEATURE-0010 Serialisation/Deserialise of document contents
-- [ ] FEATURE-0011 Click/drag to select across pages
-- [ ] FEATURE-0012 Additional selection logic such as double-click to select a word, shift and mouse down, select all, etc
+- [ ] FEATURE-0011 Additional selection logic such as double-click to select a word, shift and mouse down, select all, Click/drag to select across pages, etc
+- [ ] FEATURE-0013 Need support for nested bullet points in text
+- [ ] FEATURE-0014 Need support for hyperlinks
+- [ ] FEATURE-0015 Additional controls in the editor that are optional components of the library but that work with the editor via the editor API only (no bypass).  Start with x and y rulers that can connect to the editor canvas
+- [ ] FEATURE-0016 Fix the handling of text immediately before and after block objects as they do not justify or page split properly
+- [ ] FEATURE-0017 Unit tests at the editor API level to ensure that the editor is operating as expected
+- [ ] FEATURE-0018 Low level unit tests to achieve 95% code coverage
+- [ ] FEATURE-0019 Copy/Paste.  Should support proprietary format that covers all editor capability as well as plain text and rich text.  Also need to support paste of a png image
 
 ### Performance & Polish
 - [ ] **Optimize rendering performance**
@@ -56,6 +55,23 @@
 
 ## Completed Recently ✅
 
+- ✅ BUG-0025 Table Page Splitting - Fixed page splitting when first row intersects page border. Tables now move entirely to next page if no data rows can fit (headers don't count since they repeat). Added getFirstDataRowHeight() method and updated pagination logic to check if at least one data row fits before splitting.
+- ✅ BUG-0024 Substitution Field Formatting - Substitution fields now inherit text formatting from cursor position when inserted. Added formatting to SubstitutionFieldConfig and updated insertSubstitutionField() to pass cursor formatting.
+- ✅ BUG-0023 Serialization Format Optimization - Formatting runs now only output when format changes, reducing document size. Updated toData() to detect format changes and fromData()/loadFromData() to expand runs to ranges.
+- ✅ BUG-0022 PDF Export Document Restoration - PDF export now saves document state before merge and restores it after generation using finally block, keeping original document intact in editor.
+- ✅ FEATURE-0007 Different Positioning of Objects - Added block and relative positioning modes for embedded objects. Block objects appear as standalone paragraphs with dedicated lines. Relative objects can be freely positioned with offset from anchor point in text flow (anchor symbol ⚓ shown when control characters visible). Tables only support block positioning. Added position dropdowns to Image Settings and Text Box panes. Relative objects can be dragged to update offset. Move cursor on hover, selection-change events after drag, arrow key deselection of selected objects.
+- ✅ FEATURE-0006 Enhanced Image Object - Added ImageResizeMode type ('free' | 'locked-aspect-ratio') and 'tile' fit mode. ImageObject now supports resizeMode property, tiled rendering, and setSource() method for changing images. Added getSelectedImage() to PCEditor. Demo has Image Settings pane with fit mode, resize mode, alt text, and file picker for changing images. PDF export now embeds actual images (JPG/PNG) from base64 data URLs with proper fit mode handling.
+- ✅ FEATURE-0012 Page Breaks Support - Implemented Ctrl+Enter to insert page breaks. Visual indicator shows dashed line with "Page Break" label when control characters visible, or subtle single-pixel rule otherwise. Pagination logic forces page break when `endsWithPageBreak` is set. PDF export filters page break character. Demo has "Page Break" button in Structure toolbar.
+- ✅ FEATURE-0010 Serialization/Deserialization - Implemented complete document save/load functionality. Added FlowingTextContent.toData()/fromData()/loadFromData() methods for serializing all content including text, formatting, substitution fields, repeating sections, and embedded objects. Updated Document.toData() to include full content serialization. Added PCEditor.saveDocument(), saveDocumentToFile(), loadDocumentFromJSON(), loadDocumentFromFile() API methods. Demo has Save/Load buttons in toolbar. File format is .pceditor.json with full round-trip fidelity.
+- ✅ FEATURE-0008 PDF Generation - Implemented PDF export that renders document content identically to canvas without UI elements (cursor, selection, control characters, grid, resize handles, loop indicators). Supports text with formatting, tables with multi-page support and header repetition, text boxes with borders, substitution fields. Demo applies merge data before export. Uses pdf-lib with standard fonts (Helvetica, Times, Courier).
+- ✅ BUG-0021 Multi-Page Table Text Click - Fixed click detection in handleMouseDown/handleClick to use slice position and height for tables via getRenderedSlice(pageIndex), preventing clicks on text after table slice from selecting the table.
+- ✅ BUG-0018 Multi-Page Table Edit Mode - Fixed double-click handling and cell click detection for tables crossing page boundaries by storing slice info (yOffset, headerHeight) and using correct coordinate transformation for continuation pages.
+- ✅ BUG-0020 Object Page Wrapping - Fixed pagination logic in TextLayout.ts to only treat tables as splittable; images and text boxes now wrap to next page when they don't fit.
+- ✅ BUG-0019 Table Continuation with Trailing Content - Added `renderTableContinuationsAtPosition` method in FlowingTextRenderer to render table continuations before text content on subsequent pages.
+- ✅ BUG-0016 Object Deselection After Resize - Added `wasResizing` flag in CanvasManager to skip click handler after resize completes, preventing object deselection.
+- ✅ BUG-0017 Table Resize Handle Appearance - Fixed resize handle colors in FlowingTextRenderer to match text box handles (filled blue with white stroke).
+- ✅ FEATURE-0004 Multi-Page Tables - Tables now properly span multiple pages with header rows replicated at the top of each continuation page. Fixed layout timing to ensure row heights are calculated before page split decisions. Added merged cell handling at page boundaries to keep spanned regions together. Added `renderedPageIndex` to TableCell for multi-page hit detection.
+- ✅ FEATURE-0003 Table Pane - Added a table pane on the right sidebar that appears when a table is selected. Supports column/row addition/deletion, cell merging/splitting, cell background color, border styling, header row/column configuration with count settings, and header styling. Added header column support to TableObject. Bug fixes: header count changes now reapply formatting, border removal works correctly, padding changes resize table, new cells copy formatting from current cell, adding rows/columns extends merged cell spans, merged cells use full span width for text wrapping, table pane updates cell formatting on selection change.
 - ✅ BUG-0015 Page 2 Cursor/Selection - Fixed cursor position calculation, text index lookup, cursor visibility check, flowed lines retrieval to all use correct page index; added renderedPageIndex to embedded objects for correct hit detection
 - ✅ FEATURE-0005 Page Number Field - Added page number and page count fields that display actual values in headers/footers across all pages
 - ✅ FEATURE-0002 Support the ability to add a loop to rows in a table. Table row loops are expanded during merge just like text repeating sections.

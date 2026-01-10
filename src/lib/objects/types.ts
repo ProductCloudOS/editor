@@ -4,8 +4,22 @@
 
 /**
  * Position type for objects within text flow.
+ * - inline: Within text flow, affects line height
+ * - block: Standalone paragraph with implicit newlines before and after
+ * - relative: Free position relative to anchor point in text
+ *
+ * Note: Tables only support 'block' positioning.
  */
-export type ObjectPosition = 'inline' | 'float-left' | 'float-right';
+export type ObjectPosition = 'inline' | 'block' | 'relative';
+
+/**
+ * Offset for relative-positioned objects.
+ * Position is relative to the top-left of the anchor line.
+ */
+export interface RelativeOffset {
+  x: number;
+  y: number;
+}
 
 /**
  * Resize handle positions.
@@ -46,6 +60,7 @@ export interface EmbeddedObjectConfig {
   textIndex: number;
   position?: ObjectPosition;
   size: Size;
+  relativeOffset?: RelativeOffset;  // For 'relative' position mode
 }
 
 /**
@@ -58,6 +73,7 @@ export interface EmbeddedObjectData {
   position: ObjectPosition;
   size: Size;
   data: Record<string, unknown>;
+  relativeOffset?: RelativeOffset;  // For 'relative' position mode
 }
 
 /**
@@ -65,8 +81,11 @@ export interface EmbeddedObjectData {
  */
 export interface ImageObjectConfig extends EmbeddedObjectConfig {
   src: string;
-  fit?: 'contain' | 'cover' | 'fill' | 'none';
+  fit?: ImageFitMode;
+  resizeMode?: ImageResizeMode;
   alt?: string;
+  naturalWidth?: number;   // Cached natural dimensions (for serialization)
+  naturalHeight?: number;
 }
 
 /**
@@ -118,6 +137,18 @@ export interface TextBoxObjectConfig extends EmbeddedObjectConfig {
 }
 
 /**
- * Image fit modes.
+ * Image fit modes - how the image content displays within its bounding box.
+ * - contain: Fit image within bounds, preserving aspect ratio (letterboxed)
+ * - cover: Fill bounds, preserving aspect ratio (may crop)
+ * - fill: Stretch to fill (distorts if aspect ratios differ)
+ * - none: Original size, centered
+ * - tile: Repeat image to fill bounds
  */
-export type ImageFitMode = 'contain' | 'cover' | 'fill' | 'none';
+export type ImageFitMode = 'contain' | 'cover' | 'fill' | 'none' | 'tile';
+
+/**
+ * Image resize modes - how the bounding box resizes when user drags handles.
+ * - free: Width and height can be changed independently
+ * - locked-aspect-ratio: Resizing preserves the original aspect ratio
+ */
+export type ImageResizeMode = 'free' | 'locked-aspect-ratio';

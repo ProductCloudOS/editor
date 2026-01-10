@@ -5,6 +5,7 @@ let currentSelectedField: SubstitutionField | null = null;
 let currentSelectedSection: RepeatingSection | null = null;
 let currentSelectedTextBox: TextBoxObject | null = null;
 let currentSelectedTable: TableObject | null = null;
+let currentSelectedImage: ImageObject | null = null;
 let currentSelectedRowLoop: { table: TableObject; loopId: string } | null = null;
 
 function initializeEditor(): void {
@@ -52,6 +53,7 @@ function setupEditorEventLogging(): void {
         updateStatus(`Loop "${section.fieldPath}" selected`);
       }
       hideTextBoxPane();
+      hideImagePane();
       hideFormattingPane();
       return; // Don't hide loop pane or continue processing
     }
@@ -67,9 +69,18 @@ function setupEditorEventLogging(): void {
       hideTextBoxPane();
     }
 
+    // Check if an image is selected (embedded object)
+    const selectedImage = editor.getSelectedImage?.();
+    if (selectedImage) {
+      updateImagePane(selectedImage);
+    } else {
+      hideImagePane();
+    }
+
     // Check if a table is selected or focused
     const selectedTable = editor.getSelectedTable?.() || editor.getFocusedTable?.();
     updateTableTools(selectedTable);
+    updateTablePane(selectedTable);
 
     if (selection.type === 'cursor') {
       console.log(`[Editor Event] selection-change: cursor at position ${selection.position}`);
@@ -112,6 +123,14 @@ function setupEditorEventLogging(): void {
 
   editor.on('document-loaded', (event: any) => {
     console.log('[Editor Event] document-loaded', event);
+  });
+
+  // Undo/Redo state change
+  editor.on('undo-state-changed', (event: { canUndo: boolean; canRedo: boolean }) => {
+    const undoBtn = document.getElementById('undo-btn') as HTMLButtonElement | null;
+    const redoBtn = document.getElementById('redo-btn') as HTMLButtonElement | null;
+    if (undoBtn) undoBtn.disabled = !event.canUndo;
+    if (redoBtn) redoBtn.disabled = !event.canRedo;
   });
 
   // Page events
@@ -190,6 +209,11 @@ function setupEditorEventLogging(): void {
   editor.on('tablecell-cursor-changed', () => {
     // Update formatting pane when cursor moves within table cell
     updateFormattingPane();
+    // Update table pane with current cell info
+    const focusedTable = editor.getFocusedTable?.();
+    if (focusedTable) {
+      updateTablePane(focusedTable);
+    }
   });
 
   // Text events
@@ -241,7 +265,15 @@ function setupEditorEventLogging(): void {
 function setupEventHandlers(): void {
   // Document controls
   document.getElementById('load-sample')?.addEventListener('click', loadSampleDocument);
+  document.getElementById('load-tmd-sample')?.addEventListener('click', loadTMDSample);
   document.getElementById('clear-doc')?.addEventListener('click', clearDocument);
+
+  // Undo/Redo controls
+  const undoBtn = document.getElementById('undo-btn') as HTMLButtonElement | null;
+  const redoBtn = document.getElementById('redo-btn') as HTMLButtonElement | null;
+
+  undoBtn?.addEventListener('click', () => editor?.undo());
+  redoBtn?.addEventListener('click', () => editor?.redo());
 
   // View controls (toolbar)
   document.getElementById('zoom-in')?.addEventListener('click', () => editor?.zoomIn());
@@ -274,20 +306,6 @@ function setupEventHandlers(): void {
   document.getElementById('insert-page-number')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-page-number')?.addEventListener('click', insertPageNumber);
 
-  // Table tools
-  document.getElementById('table-add-row')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-add-row')?.addEventListener('click', tableAddRow);
-  document.getElementById('table-add-col')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-add-col')?.addEventListener('click', tableAddColumn);
-  document.getElementById('table-merge')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-merge')?.addEventListener('click', tableMergeCells);
-  document.getElementById('table-split')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-split')?.addEventListener('click', tableSplitCell);
-  document.getElementById('table-header')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-header')?.addEventListener('click', tableToggleHeader);
-  document.getElementById('table-row-loop')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-row-loop')?.addEventListener('click', tableCreateRowLoop);
-
   // Table row loop section controls
   document.getElementById('apply-table-row-loop')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('apply-table-row-loop')?.addEventListener('click', applyTableRowLoop);
@@ -304,6 +322,16 @@ function setupEventHandlers(): void {
 
   // Merge data
   document.getElementById('apply-merge')?.addEventListener('click', applyMergeData);
+
+  // Export
+  document.getElementById('export-pdf')?.addEventListener('click', exportPDF);
+
+  // Save/Load
+  document.getElementById('save-document')?.addEventListener('click', saveDocumentHandler);
+  document.getElementById('load-document')?.addEventListener('click', () => {
+    document.getElementById('file-input')?.click();
+  });
+  document.getElementById('file-input')?.addEventListener('change', loadDocumentHandler);
 
   // Formatting controls
   document.getElementById('format-bold')?.addEventListener('mousedown', preventFocusSteal);
@@ -339,6 +367,8 @@ function setupEventHandlers(): void {
   // Loop controls
   document.getElementById('create-loop')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('create-loop')?.addEventListener('click', createLoop);
+  document.getElementById('insert-page-break')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('insert-page-break')?.addEventListener('click', insertPageBreak);
   document.getElementById('apply-loop-changes')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('apply-loop-changes')?.addEventListener('click', applyLoopChanges);
   document.getElementById('delete-loop')?.addEventListener('mousedown', preventFocusSteal);
@@ -347,6 +377,55 @@ function setupEventHandlers(): void {
   // Text box controls
   document.getElementById('apply-textbox-changes')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('apply-textbox-changes')?.addEventListener('click', applyTextBoxChanges);
+  document.getElementById('textbox-position')?.addEventListener('change', (e) => {
+    const offsetGroup = document.getElementById('textbox-offset-group');
+    if (offsetGroup) {
+      offsetGroup.style.display = (e.target as HTMLSelectElement).value === 'relative' ? 'block' : 'none';
+    }
+  });
+
+  // Image pane controls
+  document.getElementById('apply-image-changes')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('apply-image-changes')?.addEventListener('click', applyImageChanges);
+  document.getElementById('image-position')?.addEventListener('change', (e) => {
+    const offsetGroup = document.getElementById('image-offset-group');
+    if (offsetGroup) {
+      offsetGroup.style.display = (e.target as HTMLSelectElement).value === 'relative' ? 'block' : 'none';
+    }
+  });
+  document.getElementById('change-image-btn')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('change-image-btn')?.addEventListener('click', () => {
+    document.getElementById('image-file-picker')?.click();
+  });
+  document.getElementById('image-file-picker')?.addEventListener('change', handleImageFileChange);
+
+  // Table pane controls
+  document.getElementById('table-pane-add-row-before')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-pane-add-row-before')?.addEventListener('click', tablePaneAddRowBefore);
+  document.getElementById('table-pane-add-row-after')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-pane-add-row-after')?.addEventListener('click', tablePaneAddRowAfter);
+  document.getElementById('table-pane-delete-row')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-pane-delete-row')?.addEventListener('click', tablePaneDeleteRow);
+  document.getElementById('table-pane-add-col-before')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-pane-add-col-before')?.addEventListener('click', tablePaneAddColBefore);
+  document.getElementById('table-pane-add-col-after')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-pane-add-col-after')?.addEventListener('click', tablePaneAddColAfter);
+  document.getElementById('table-pane-delete-col')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-pane-delete-col')?.addEventListener('click', tablePaneDeleteCol);
+  document.getElementById('table-pane-merge')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-pane-merge')?.addEventListener('click', tablePaneMergeCells);
+  document.getElementById('table-pane-split')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-pane-split')?.addEventListener('click', tablePaneSplitCell);
+  document.getElementById('table-apply-cell-bg')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-apply-cell-bg')?.addEventListener('click', tablePaneApplyCellBackground);
+  document.getElementById('table-apply-borders')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-apply-borders')?.addEventListener('click', tablePaneApplyBorders);
+  document.getElementById('table-apply-headers')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-apply-headers')?.addEventListener('click', tablePaneApplyHeaders);
+  document.getElementById('table-apply-header-style')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-apply-header-style')?.addEventListener('click', tablePaneApplyHeaderStyle);
+  document.getElementById('table-apply-defaults')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('table-apply-defaults')?.addEventListener('click', tablePaneApplyDefaults);
 }
 
 function loadSampleDocument(): void {
@@ -567,6 +646,608 @@ function loadSampleDocument(): void {
   editor.render();
   loadDocumentSettings();
   updateStatus('Sample document loaded with real substitution fields and repeating section');
+}
+
+function loadTMDSample(): void {
+  if (!editor) return;
+
+  // Start with a clean document
+  const emptyDoc: DocumentData = {
+    version: '1.0.0',
+    settings: {
+      pageSize: 'A4',
+      pageOrientation: 'portrait',
+      margins: { top: 20, right: 20, bottom: 20, left: 20 },
+      units: 'mm'
+    },
+    pages: [{ id: 'page_1' }]
+  };
+
+  editor.loadDocument(emptyDoc);
+
+  // Set footer (appears on all pages)
+  editor.setFooterText('LG.003.002 v4.2');
+
+  // Helper to get current text length
+  const getTextLength = () => editor.getFlowingText().length;
+
+  // ===== PAGE 1 =====
+
+  // Title
+  editor.setFlowingText('Target Market Determination: NOW Finance Secured Personal Loan\n\n');
+
+  // Format title - bold and large
+  editor.applyFormattingWithFallback(0, 61, { fontWeight: 'bold', fontSize: 16 });
+
+  // Insert metadata table (Issuer, Start Date, Product)
+  const metadataTable = new TableObject({
+    id: `tmd_metadata_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 530, height: 120 },
+    rows: 3,
+    columns: 2,
+    columnWidths: [90, 440],
+    defaultFontFamily: 'Arial',
+    defaultFontSize: 10,
+    defaultColor: '#000000',
+    defaultCellPadding: 6,
+    defaultBorderWidth: 0,
+    defaultBorderColor: '#ffffff'
+  });
+
+  // Row 0: Issuer
+  const issuerLabelCell = metadataTable.getCell(0, 0);
+  const issuerValueCell = metadataTable.getCell(0, 1);
+  if (issuerLabelCell) {
+    issuerLabelCell.content = 'Issuer:';
+    issuerLabelCell.flowingContent.applyFormatting(0, 7, { fontWeight: 'bold' });
+  }
+  if (issuerValueCell) {
+    issuerValueCell.content = 'Now Finance Group Pty Ltd as agent for NF Finco 2 Pty Ltd (NOW Finance)\nACN 164 213 030 Australian Credit Licence number 425142.';
+    issuerValueCell.flowingContent.applyFormatting(52, 63, { fontWeight: 'bold' });
+  }
+
+  // Row 1: Start Date
+  const startDateLabelCell = metadataTable.getCell(1, 0);
+  const startDateValueCell = metadataTable.getCell(1, 1);
+  if (startDateLabelCell) {
+    startDateLabelCell.content = 'Start Date:';
+    startDateLabelCell.flowingContent.applyFormatting(0, 11, { fontWeight: 'bold' });
+  }
+  if (startDateValueCell) {
+    startDateValueCell.content = '18 November 2025';
+  }
+
+  // Row 2: Product
+  const productLabelCell = metadataTable.getCell(2, 0);
+  const productValueCell = metadataTable.getCell(2, 1);
+  if (productLabelCell) {
+    productLabelCell.content = 'Product:';
+    productLabelCell.flowingContent.applyFormatting(0, 8, { fontWeight: 'bold' });
+  }
+  if (productValueCell) {
+    productValueCell.content = 'NOW Finance Secured Personal Loan\nNOW Finance\'s Secured Personal Loan (the Loan) allows individuals to borrow funds for a number of personal, domestic or household purposes secured against a vehicle, watercraft or caravan. The Loan offers a fixed interest rate and requires individuals to make regular repayments over a fixed term.';
+    productValueCell.flowingContent.applyFormatting(0, 33, { fontWeight: 'bold' });
+  }
+
+  editor.setCursorPosition(getTextLength());
+  editor.insertEmbeddedObject(metadataTable, 'inline');
+
+  // "Purpose of this Document" section header
+  editor.setFlowingText(editor.getFlowingText() + '\n');
+  editor.setCursorPosition(getTextLength());
+
+  const purposeHeaderBox = new TextBoxObject({
+    id: `tmd_purpose_header_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 530, height: 22 },
+    backgroundColor: '#d9d9d9',
+    border: {
+      top: { width: 0, color: '#d9d9d9', style: 'solid' },
+      right: { width: 0, color: '#d9d9d9', style: 'solid' },
+      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
+      left: { width: 0, color: '#d9d9d9', style: 'solid' }
+    },
+    padding: 4
+  });
+  purposeHeaderBox.flowingContent.insertText('Purpose of this Document');
+  purposeHeaderBox.flowingContent.applyFormatting(0, 24, { fontWeight: 'bold', fontSize: 11 });
+  editor.insertEmbeddedObject(purposeHeaderBox, 'inline');
+
+  // Purpose paragraph
+  editor.setFlowingText(editor.getFlowingText() + '\n\nThis target market determination (TMD) seeks to provide consumers, distributors and staff with an understanding of the class of consumers (target market) for which this product has been designed, having regard to the likely objectives, financial situation and needs of the target market.\n\nThis document should not be treated as a full summary of the product\'s terms and conditions or all of the product\'s features. This document is not a customer disclosure document and does not provide financial advice.\n\nConsumers should refer to the Credit Guide, Credit Schedule and the other documents setting out the terms and conditions of the product when making a decision about this product. These documents are provided to a consumer prior to the provision of credit. A copy of these documents can otherwise be requested by contacting us at: customerservice@nowfinance.com.au\n\n');
+
+  // Format "TMD" as bold
+  const tmdText = editor.getFlowingText();
+  const tmdPos = tmdText.indexOf('(TMD)');
+  if (tmdPos >= 0) {
+    editor.applyFormattingWithFallback(tmdPos, tmdPos + 5, { fontWeight: 'bold' });
+  }
+
+  // "Target Market and Key Attributes" section header
+  editor.setCursorPosition(getTextLength());
+  const targetMarketHeaderBox = new TextBoxObject({
+    id: `tmd_target_header_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 530, height: 22 },
+    backgroundColor: '#d9d9d9',
+    border: {
+      top: { width: 0, color: '#d9d9d9', style: 'solid' },
+      right: { width: 0, color: '#d9d9d9', style: 'solid' },
+      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
+      left: { width: 0, color: '#d9d9d9', style: 'solid' }
+    },
+    padding: 4
+  });
+  targetMarketHeaderBox.flowingContent.insertText('Target Market and Key Attributes');
+  targetMarketHeaderBox.flowingContent.applyFormatting(0, 33, { fontWeight: 'bold', fontSize: 11 });
+  editor.insertEmbeddedObject(targetMarketHeaderBox, 'inline');
+
+  // Target Market intro text with bullet list
+  editor.setFlowingText(editor.getFlowingText() + '\n\nThe Loan is designed for the class of consumers who:\n');
+  editor.setFlowingText(editor.getFlowingText() + '  \u2022  wish to borrow a large sum of credit from a non-bank lender and are able to provide an asset as security for the Loan;\n');
+  editor.setFlowingText(editor.getFlowingText() + '  \u2022  meet the eligibility requirements for the Loan (Eligibility Requirements), including:\n');
+  editor.setFlowingText(editor.getFlowingText() + '        o  being of 18+ years of age;\n');
+  editor.setFlowingText(editor.getFlowingText() + '        o  holding Australian citizenship or permanent residency;\n');
+  editor.setFlowingText(editor.getFlowingText() + '        o  currently employed (full time/ part time/ casual) and not on probation;\n');
+  editor.setFlowingText(editor.getFlowingText() + '        o  no unpaid defaults;\n');
+  editor.setFlowingText(editor.getFlowingText() + '        o  Centrelink is not the primary form of income;\n');
+  editor.setFlowingText(editor.getFlowingText() + '        o  not a current or prior bankrupt or party to a court judgement; and\n');
+  editor.setFlowingText(editor.getFlowingText() + '  \u2022  have the likely needs, objectives and financial situation described below (Target Market).\n\n');
+
+  // Format "Eligibility Requirements" and "Target Market" as bold
+  let currentText = editor.getFlowingText();
+  let eligPos = currentText.indexOf('(Eligibility Requirements)');
+  if (eligPos >= 0) {
+    editor.applyFormattingWithFallback(eligPos, eligPos + 26, { fontWeight: 'bold' });
+  }
+  let targetMarketPos = currentText.lastIndexOf('(Target Market)');
+  if (targetMarketPos >= 0) {
+    editor.applyFormattingWithFallback(targetMarketPos, targetMarketPos + 15, { fontWeight: 'bold' });
+  }
+
+  // ===== MAIN TARGET MARKET TABLE (Pages 2-3) =====
+  editor.setCursorPosition(getTextLength());
+
+  const mainTable = new TableObject({
+    id: `tmd_main_table_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 530, height: 700 },
+    rows: 10,
+    columns: 2,
+    columnWidths: [175, 355],
+    defaultFontFamily: 'Arial',
+    defaultFontSize: 10,
+    defaultColor: '#000000',
+    defaultCellPadding: 6,
+    defaultBorderWidth: 1,
+    defaultBorderColor: '#000000'
+  });
+
+  // Row 0: Header row (italic)
+  const headerCell0 = mainTable.getCell(0, 0);
+  const headerCell1 = mainTable.getCell(0, 1);
+  if (headerCell0) {
+    headerCell0.content = 'The NOW Finance Secured Personal Loan has been designed for customers with the following likely needs, objectives and financial situation:';
+    headerCell0.flowingContent.applyFormatting(0, headerCell0.content.length, { fontStyle: 'italic', fontWeight: 'bold' });
+  }
+  if (headerCell1) {
+    headerCell1.content = 'Key Attributes of the NOW Finance Secured Personal Loan that make the product consistent with the likely objectives, financial situation and needs of consumers in the target market.';
+    headerCell1.flowingContent.applyFormatting(0, headerCell1.content.length, { fontStyle: 'italic', fontWeight: 'bold' });
+  }
+
+  // Row 1: Objectives section header
+  const objHeaderCell0 = mainTable.getCell(1, 0);
+  const objHeaderCell1 = mainTable.getCell(1, 1);
+  if (objHeaderCell0) {
+    objHeaderCell0.content = 'Objectives';
+    objHeaderCell0.flowingContent.applyFormatting(0, 10, { fontStyle: 'italic' });
+    objHeaderCell0.backgroundColor = '#f2f2f2';
+  }
+  if (objHeaderCell1) {
+    objHeaderCell1.backgroundColor = '#f2f2f2';
+  }
+
+  // Row 2: Objectives content
+  const objCell0 = mainTable.getCell(2, 0);
+  const objCell1 = mainTable.getCell(2, 1);
+  if (objCell0) {
+    objCell0.content = '\u2022  Obtain a large lump sum which can be used for a wide range of personal, domestic, or household purposes including but not limited to:\n    \u25AA  Vehicle, watercraft or caravan purchases;\n    \u25AA  Home renovations;\n    \u25AA  Household furnishings;\n    \u25AA  Debt consolidation;\n    \u25AA  Travel;\n    \u25AA  Medical expenses; and\n    \u25AA  Wedding expenses.';
+  }
+  if (objCell1) {
+    objCell1.content = '\u2022  A NOW Finance Secured Personal Loan provides:\n    o  a single lump sum of credit (in other words it is not revolving credit);\n    o  a minimum sum of $15,000 and a maximum sum of $100,000, which is a sufficiently large sum for these types of personal, domestic or household purposes.\n    o  it can be used for a wide range of personal, domestic, or household purposes.';
+  }
+
+  // Row 3: Needs section header
+  const needsHeaderCell0 = mainTable.getCell(3, 0);
+  const needsHeaderCell1 = mainTable.getCell(3, 1);
+  if (needsHeaderCell0) {
+    needsHeaderCell0.content = 'Needs';
+    needsHeaderCell0.flowingContent.applyFormatting(0, 5, { fontStyle: 'italic' });
+    needsHeaderCell0.backgroundColor = '#f2f2f2';
+  }
+  if (needsHeaderCell1) {
+    needsHeaderCell1.backgroundColor = '#f2f2f2';
+  }
+
+  // Row 4: First needs item
+  const needs1Cell0 = mainTable.getCell(4, 0);
+  const needs1Cell1 = mainTable.getCell(4, 1);
+  if (needs1Cell0) {
+    needs1Cell0.content = '\u2022  Spread / smooth the repayments over an extended period of time without a balloon payment at the end.';
+  }
+  if (needs1Cell1) {
+    needs1Cell1.content = '\u2022  A NOW Finance Secured Person Loan provides:\n    o  a term between 1.5 years to 7 years which is an extended period of time;\n    o  weekly or fortnightly payments to smooth/spread the repayments; and\n    o  repayments of principal and interest so that it is paid off by the end of the term.';
+  }
+
+  // Row 5: Second needs item (certainty)
+  const needs2Cell0 = mainTable.getCell(5, 0);
+  const needs2Cell1 = mainTable.getCell(5, 1);
+  if (needs2Cell0) {
+    needs2Cell0.content = '\u2022  Need certainty of repayment amounts.';
+  }
+  if (needs2Cell1) {
+    needs2Cell1.content = '\u2022  A NOW Finance Secured Person Loan provides:\n    o  a fixed interest rate which allows repayment amounts to be the same and therefore certain;\n    o  no Loan fees, including upfront fees, periodic fees or event-based fees.';
+  }
+
+  // Row 6: Third needs item (flexibility)
+  const needs3Cell0 = mainTable.getCell(6, 0);
+  const needs3Cell1 = mainTable.getCell(6, 1);
+  if (needs3Cell0) {
+    needs3Cell0.content = '\u2022  Need flexibility to make extra repayments or pay out the Loan early.';
+  }
+  if (needs3Cell1) {
+    needs3Cell1.content = '\u2022  A NOW Finance Secured Person Loan provides:\n    o  No extra repayment charges: customers can make early repayments during the Loan without any fees.\n    o  No early repayment charges: customers can pay out their Loan at any time without any fees or charges.';
+    // Bold the "No extra repayment charges" and "No early repayment charges"
+    const noExtraPos = needs3Cell1.content.indexOf('No extra repayment charges');
+    const noEarlyPos = needs3Cell1.content.indexOf('No early repayment charges');
+    if (noExtraPos >= 0) {
+      needs3Cell1.flowingContent.applyFormatting(noExtraPos, noExtraPos + 26, { fontWeight: 'bold' });
+    }
+    if (noEarlyPos >= 0) {
+      needs3Cell1.flowingContent.applyFormatting(noEarlyPos, noEarlyPos + 26, { fontWeight: 'bold' });
+    }
+  }
+
+  // Row 7: Financial situation header
+  const finHeaderCell0 = mainTable.getCell(7, 0);
+  const finHeaderCell1 = mainTable.getCell(7, 1);
+  if (finHeaderCell0) {
+    finHeaderCell0.content = 'Financial situation';
+    finHeaderCell0.flowingContent.applyFormatting(0, 19, { fontStyle: 'italic' });
+    finHeaderCell0.backgroundColor = '#f2f2f2';
+  }
+  if (finHeaderCell1) {
+    finHeaderCell1.backgroundColor = '#f2f2f2';
+  }
+
+  // Row 8: First financial situation item
+  const fin1Cell0 = mainTable.getCell(8, 0);
+  const fin1Cell1 = mainTable.getCell(8, 1);
+  if (fin1Cell0) {
+    fin1Cell0.content = '\u2022  Owns (or will acquire with the funds) a vehicle, watercraft or caravan to provide as security for the Loan.';
+  }
+  if (fin1Cell1) {
+    fin1Cell1.content = '\u2022  Security: a customer is required to provide security for the Loaned amount.';
+    const securityPos = fin1Cell1.content.indexOf('Security');
+    if (securityPos >= 0) {
+      fin1Cell1.flowingContent.applyFormatting(securityPos, securityPos + 8, { fontWeight: 'bold' });
+    }
+  }
+
+  // Row 9: Second financial situation item
+  const fin2Cell0 = mainTable.getCell(9, 0);
+  const fin2Cell1 = mainTable.getCell(9, 1);
+  if (fin2Cell0) {
+    fin2Cell0.content = '\u2022  Have the financial capacity to service the Loan.';
+  }
+  if (fin2Cell1) {
+    fin2Cell1.content = '\u2022  NOW Finance analyses and assesses the suitability and affordability of the Loan to the consumer\'s needs and objectives when assessing an application for the Loan and conducts a credit assessment to confirm whether the consumer would have the financial capacity to service the ongoing financial obligations under the Loan.';
+  }
+
+  editor.insertEmbeddedObject(mainTable, 'inline');
+
+  // ===== EXCLUDED CUSTOMERS SECTION =====
+  editor.setFlowingText(editor.getFlowingText() + '\n');
+  editor.setCursorPosition(getTextLength());
+
+  const excludedHeaderBox = new TextBoxObject({
+    id: `tmd_excluded_header_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 530, height: 22 },
+    backgroundColor: '#d9d9d9',
+    border: {
+      top: { width: 0, color: '#d9d9d9', style: 'solid' },
+      right: { width: 0, color: '#d9d9d9', style: 'solid' },
+      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
+      left: { width: 0, color: '#d9d9d9', style: 'solid' }
+    },
+    padding: 4
+  });
+  excludedHeaderBox.flowingContent.insertText('Excluded customers');
+  excludedHeaderBox.flowingContent.applyFormatting(0, 18, { fontWeight: 'bold', fontSize: 11 });
+  editor.insertEmbeddedObject(excludedHeaderBox, 'inline');
+
+  editor.setFlowingText(editor.getFlowingText() + '\n\nThe NOW Finance Secured Personal Loan is not designed for individuals who:\n');
+  editor.setFlowingText(editor.getFlowingText() + '  \u2022  do not satisfy each of the Eligibility Requirements;\n');
+  editor.setFlowingText(editor.getFlowingText() + '  \u2022  do not have consistent income;\n');
+  editor.setFlowingText(editor.getFlowingText() + '  \u2022  want the interest rate to increase/decrease over the life of the Loan;\n');
+  editor.setFlowingText(editor.getFlowingText() + '  \u2022  want to be able to redraw any additional repayments made on the Loan;\n');
+  editor.setFlowingText(editor.getFlowingText() + '  \u2022  do not have a suitable asset to provide as security for the Loan;\n');
+  editor.setFlowingText(editor.getFlowingText() + '  \u2022  are seeking a Loan amount of less than $15,000 or more than $100,000; and/or\n');
+  editor.setFlowingText(editor.getFlowingText() + '  \u2022  require an ongoing line of credit that can be redrawn up to the limit.\n\n');
+
+  // ===== DISTRIBUTION SECTION =====
+  editor.setCursorPosition(getTextLength());
+
+  const distHeaderBox = new TextBoxObject({
+    id: `tmd_dist_header_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 530, height: 22 },
+    backgroundColor: '#d9d9d9',
+    border: {
+      top: { width: 0, color: '#d9d9d9', style: 'solid' },
+      right: { width: 0, color: '#d9d9d9', style: 'solid' },
+      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
+      left: { width: 0, color: '#d9d9d9', style: 'solid' }
+    },
+    padding: 4
+  });
+  distHeaderBox.flowingContent.insertText('Distribution of the NOW Finance Secured Personal Loan');
+  distHeaderBox.flowingContent.applyFormatting(0, 53, { fontWeight: 'bold', fontSize: 11 });
+  editor.insertEmbeddedObject(distHeaderBox, 'inline');
+
+  editor.setFlowingText(editor.getFlowingText() + '\n\nNOW Finance has the following distribution channels and applies the following conditions and restrictions to the distribution of the NOW Finance Secured Personal Loan through the channels so that this product is likely to be provided to customers who are in the target market.\n\n');
+
+  // Distribution table
+  editor.setCursorPosition(getTextLength());
+
+  const distTable = new TableObject({
+    id: `tmd_dist_table_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 530, height: 500 },
+    rows: 2,
+    columns: 2,
+    columnWidths: [120, 410],
+    defaultFontFamily: 'Arial',
+    defaultFontSize: 10,
+    defaultColor: '#000000',
+    defaultCellPadding: 6,
+    defaultBorderWidth: 1,
+    defaultBorderColor: '#000000'
+  });
+
+  // Distribution Channels row
+  const distChannelsLabel = distTable.getCell(0, 0);
+  const distChannelsValue = distTable.getCell(0, 1);
+  if (distChannelsLabel) {
+    distChannelsLabel.content = 'Distribution Channels:';
+    distChannelsLabel.flowingContent.applyFormatting(0, 22, { fontWeight: 'bold' });
+  }
+  if (distChannelsValue) {
+    distChannelsValue.content = 'Direct Channels\n\u2022  The NOW Finance website; and\n\u2022  The NOW Finance call centre.\n\nThird Party Distributions Channels\nAuthorised third party distributors such as:\n\u2022  finance brokers and aggregators;\n\u2022  partner websites (including comparison websites); and\n\u2022  authorised referrers.\n(Distributors)';
+    distChannelsValue.flowingContent.applyFormatting(0, 15, { fontWeight: 'bold' });
+    const thirdPartyPos = distChannelsValue.content.indexOf('Third Party Distributions Channels');
+    if (thirdPartyPos >= 0) {
+      distChannelsValue.flowingContent.applyFormatting(thirdPartyPos, thirdPartyPos + 34, { fontWeight: 'bold' });
+    }
+    const distributorsPos = distChannelsValue.content.indexOf('(Distributors)');
+    if (distributorsPos >= 0) {
+      distChannelsValue.flowingContent.applyFormatting(distributorsPos, distributorsPos + 14, { fontWeight: 'bold' });
+    }
+  }
+
+  // Distribution Conditions row
+  const distCondLabel = distTable.getCell(1, 0);
+  const distCondValue = distTable.getCell(1, 1);
+  if (distCondLabel) {
+    distCondLabel.content = 'Distribution Conditions:';
+    distCondLabel.flowingContent.applyFormatting(0, 24, { fontWeight: 'bold' });
+  }
+  if (distCondValue) {
+    distCondValue.content = 'The NOW Finance Secured Personal Loan can only be distributed in accordance with the distribution conditions below.\n\nDirect Channels\n\u2022  NOW Finance website: Consumers click through a website journey which collects information on the consumer\'s objectives, needs and financial situation for assessment by NOW Finance. A Loan cannot be provided to a consumer until this information is collected and verified.\n\u2022  NOW Finance call centre: Call centre staff are trained and follow a call script which asks questions of a consumer to collect information on their objectives, needs and financial situation for assessment by NOW Finance. A Loan cannot be provided to a consumer until this information is collected and verified.\n\u2022  NOW Finance assesses each application against the Eligibility Requirements and conducts a credit assessment check to confirm that the consumer has an appropriate borrowing capacity to service the Loan, in accordance with NOW Finance\'s responsible lending guidelines and product and process requirements.\n\u2022  Consumers who access the Loan via direct channels are provided with information and disclosures that make it more likely that the consumer will be able to assess whether the Loan is suitable for their objectives, needs and financial situation.\n\nThird Party Distributors\n\u2022  All Distributors must have entered into a written agreement with NOW Finance which controls what they can and cannot do in distributing the product including in relation to marketing materials.\n\u2022  For partner websites and referrers, they are not permitted to market the product other than through NOW Finance approved marketing material, most only display product information on their websites and must refer the customer lead through to NOW Finance\'s direct channels above which then follow the conditions above.\n\u2022  All Distributors (excluding partner websites and referrers) must hold an Australian Credit Licence or be an authorised Credit Representative and be accredited by NOW Finance. This means that they are regulated (or subject to regulatory requirements), have their own requirements to comply with regulatory requirements, are of good standing and insured. This allows these distributors to do more than simply provide product information, they can also market and have unscripted conversations with customers.\n\u2022  All Distributors (excluding partner websites and referrers) must be trained by NOW Finance on the product features and attributes, eligibility requirements, target market and distribution to inform their conversations with customers and so they can discharge their regulatory obligations. This training is also on the Eligibility Requirements for the Loan.\n\u2022  To comply with their own regulatory obligations, all Distributors (excluding partner websites and referrers) ask questions to assess the individual customer\'s specific objectives, needs and financial situation and if they meet the eligibility criteria.\n\nIn all circumstances, a Loan cannot be provided to a consumer until NOW Finance has collected and verified required consumer information. As part of this process, NOW Finance will assess the suitability of the consumer and confirm whether the Loan will meet the consumers objectives and requirements.';
+    // Bold section headers
+    const directChannelsPos = distCondValue.content.indexOf('Direct Channels');
+    if (directChannelsPos >= 0) {
+      distCondValue.flowingContent.applyFormatting(directChannelsPos, directChannelsPos + 15, { fontWeight: 'bold' });
+    }
+    const thirdPartyDistPos = distCondValue.content.indexOf('Third Party Distributors');
+    if (thirdPartyDistPos >= 0) {
+      distCondValue.flowingContent.applyFormatting(thirdPartyDistPos, thirdPartyDistPos + 24, { fontWeight: 'bold' });
+    }
+    // Bold specific terms
+    const nowWebsitePos = distCondValue.content.indexOf('NOW Finance website:');
+    if (nowWebsitePos >= 0) {
+      distCondValue.flowingContent.applyFormatting(nowWebsitePos, nowWebsitePos + 20, { fontWeight: 'bold' });
+    }
+    const nowCallCentrePos = distCondValue.content.indexOf('NOW Finance call centre:');
+    if (nowCallCentrePos >= 0) {
+      distCondValue.flowingContent.applyFormatting(nowCallCentrePos, nowCallCentrePos + 24, { fontWeight: 'bold' });
+    }
+  }
+
+  editor.insertEmbeddedObject(distTable, 'inline');
+
+  // ===== REVIEW OF TMD SECTION =====
+  editor.setFlowingText(editor.getFlowingText() + '\n');
+  editor.setCursorPosition(getTextLength());
+
+  const reviewHeaderBox = new TextBoxObject({
+    id: `tmd_review_header_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 530, height: 22 },
+    backgroundColor: '#d9d9d9',
+    border: {
+      top: { width: 0, color: '#d9d9d9', style: 'solid' },
+      right: { width: 0, color: '#d9d9d9', style: 'solid' },
+      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
+      left: { width: 0, color: '#d9d9d9', style: 'solid' }
+    },
+    padding: 4
+  });
+  reviewHeaderBox.flowingContent.insertText('Review of TMD');
+  reviewHeaderBox.flowingContent.applyFormatting(0, 13, { fontWeight: 'bold', fontSize: 11 });
+  editor.insertEmbeddedObject(reviewHeaderBox, 'inline');
+
+  editor.setFlowingText(editor.getFlowingText() + '\n\nNOW Finance will review this TMD periodically to ensure it remains appropriate.\n\n');
+
+  // Review table
+  editor.setCursorPosition(getTextLength());
+
+  const reviewTable = new TableObject({
+    id: `tmd_review_table_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 530, height: 200 },
+    rows: 2,
+    columns: 2,
+    columnWidths: [120, 410],
+    defaultFontFamily: 'Arial',
+    defaultFontSize: 10,
+    defaultColor: '#000000',
+    defaultCellPadding: 6,
+    defaultBorderWidth: 1,
+    defaultBorderColor: '#000000'
+  });
+
+  // Review Period row
+  const reviewPeriodLabel = reviewTable.getCell(0, 0);
+  const reviewPeriodValue = reviewTable.getCell(0, 1);
+  if (reviewPeriodLabel) {
+    reviewPeriodLabel.content = 'Review Period';
+    reviewPeriodLabel.flowingContent.applyFormatting(0, 13, { fontWeight: 'bold' });
+  }
+  if (reviewPeriodValue) {
+    reviewPeriodValue.content = 'Initial Review: Within 12 months of the date of this TMD.\n\nOngoing Review: Within 12 months of the date of the previous review.';
+    reviewPeriodValue.flowingContent.applyFormatting(0, 15, { fontWeight: 'bold' });
+    const ongoingPos = reviewPeriodValue.content.indexOf('Ongoing Review:');
+    if (ongoingPos >= 0) {
+      reviewPeriodValue.flowingContent.applyFormatting(ongoingPos, ongoingPos + 15, { fontWeight: 'bold' });
+    }
+  }
+
+  // Review Triggers row
+  const reviewTriggersLabel = reviewTable.getCell(1, 0);
+  const reviewTriggersValue = reviewTable.getCell(1, 1);
+  if (reviewTriggersLabel) {
+    reviewTriggersLabel.content = 'Review Triggers';
+    reviewTriggersLabel.flowingContent.applyFormatting(0, 15, { fontWeight: 'bold' });
+  }
+  if (reviewTriggersValue) {
+    reviewTriggersValue.content = 'NOW Finance will also review this TMD if one or more of the following events occur:\n\u2022  Material changes to the NOW Finance Secured Personal Loan terms and conditions;\n\u2022  Occurrence of a significant dealing (where the NOW Finance Secured Personal Loan is not consistent with this TMD);\n\u2022  If the distribution conditions are found to be inadequate;\n\u2022  If there is an external event such as adverse media coverage or regulatory attention;\n\u2022  If there is a significant change in metrics, including but not limited to, complaints, default rates and application rates.';
+  }
+
+  editor.insertEmbeddedObject(reviewTable, 'inline');
+
+  // ===== INFORMATION REPORTING SECTION =====
+  editor.setFlowingText(editor.getFlowingText() + '\n');
+  editor.setCursorPosition(getTextLength());
+
+  const infoHeaderBox = new TextBoxObject({
+    id: `tmd_info_header_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 530, height: 22 },
+    backgroundColor: '#d9d9d9',
+    border: {
+      top: { width: 0, color: '#d9d9d9', style: 'solid' },
+      right: { width: 0, color: '#d9d9d9', style: 'solid' },
+      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
+      left: { width: 0, color: '#d9d9d9', style: 'solid' }
+    },
+    padding: 4
+  });
+  infoHeaderBox.flowingContent.insertText('Information Reporting');
+  infoHeaderBox.flowingContent.applyFormatting(0, 21, { fontWeight: 'bold', fontSize: 11 });
+  editor.insertEmbeddedObject(infoHeaderBox, 'inline');
+
+  editor.setFlowingText(editor.getFlowingText() + '\n\nDistributors or any \'regulated person\' who engages in relation distribution conduct must provide Now Finance the following information:\n\n');
+
+  // Information Reporting table (3 columns)
+  editor.setCursorPosition(getTextLength());
+
+  const infoTable = new TableObject({
+    id: `tmd_info_table_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 530, height: 250 },
+    rows: 3,
+    columns: 3,
+    columnWidths: [100, 215, 215],
+    defaultFontFamily: 'Arial',
+    defaultFontSize: 10,
+    defaultColor: '#000000',
+    defaultCellPadding: 6,
+    defaultBorderWidth: 1,
+    defaultBorderColor: '#000000'
+  });
+
+  // Header row
+  const infoHeader0 = infoTable.getCell(0, 0);
+  const infoHeader1 = infoTable.getCell(0, 1);
+  const infoHeader2 = infoTable.getCell(0, 2);
+  if (infoHeader0) {
+    infoHeader0.content = 'Category';
+    infoHeader0.flowingContent.applyFormatting(0, 8, { fontStyle: 'italic', fontWeight: 'bold' });
+    infoHeader0.backgroundColor = '#f2f2f2';
+  }
+  if (infoHeader1) {
+    infoHeader1.content = 'Information to be provided';
+    infoHeader1.flowingContent.applyFormatting(0, 26, { fontStyle: 'italic', fontWeight: 'bold' });
+    infoHeader1.backgroundColor = '#f2f2f2';
+  }
+  if (infoHeader2) {
+    infoHeader2.content = 'How and When to Report';
+    infoHeader2.flowingContent.applyFormatting(0, 22, { fontStyle: 'italic', fontWeight: 'bold' });
+    infoHeader2.backgroundColor = '#f2f2f2';
+  }
+  infoTable.setHeaderRow(0, true);
+
+  // Complaints row
+  const complaints0 = infoTable.getCell(1, 0);
+  const complaints1 = infoTable.getCell(1, 1);
+  const complaints2 = infoTable.getCell(1, 2);
+  if (complaints0) {
+    complaints0.content = 'Complaints';
+    complaints0.flowingContent.applyFormatting(0, 10, { fontWeight: 'bold' });
+  }
+  if (complaints1) {
+    complaints1.content = 'Any complaints made in relation to the NOW Finance Secured Personal Loan including:\n\u2022  the number of complaints received during the reporting period and;\n\u2022  written details of any complaints in the form as instructed by Now Finance.';
+  }
+  if (complaints2) {
+    complaints2.content = 'When to report:\nWithin 10 days following the end of every six months.\n\nHow to report:\nReports should be made to: Head of Dispute Resolution by email at: disputeresolution@nowfinance.com.au';
+    complaints2.flowingContent.applyFormatting(0, 15, { fontWeight: 'bold' });
+    const howToReportPos = complaints2.content.indexOf('How to report:');
+    if (howToReportPos >= 0) {
+      complaints2.flowingContent.applyFormatting(howToReportPos, howToReportPos + 14, { fontWeight: 'bold' });
+    }
+  }
+
+  // Significant dealings row
+  const dealings0 = infoTable.getCell(2, 0);
+  const dealings1 = infoTable.getCell(2, 1);
+  const dealings2 = infoTable.getCell(2, 2);
+  if (dealings0) {
+    dealings0.content = 'Significant dealings';
+    dealings0.flowingContent.applyFormatting(0, 20, { fontWeight: 'bold' });
+  }
+  if (dealings1) {
+    dealings1.content = 'Any significant dealing in relation to the NOW Finance Secured Personal Loan and this TMD';
+  }
+  if (dealings2) {
+    dealings2.content = 'When to report:\nAs soon as possible but no later than 10 days after the person becomes aware of the significant dealing.\n\nHow to report:\nReports should be made to the General Counsel by email at: legal@nowfinance.com.au';
+    dealings2.flowingContent.applyFormatting(0, 15, { fontWeight: 'bold' });
+    const howToReportPos2 = dealings2.content.indexOf('How to report:');
+    if (howToReportPos2 >= 0) {
+      dealings2.flowingContent.applyFormatting(howToReportPos2, howToReportPos2 + 14, { fontWeight: 'bold' });
+    }
+  }
+
+  editor.insertEmbeddedObject(infoTable, 'inline');
+
+  // Last Review date
+  editor.setFlowingText(editor.getFlowingText() + '\n\nLast Review: November 2025');
+
+  editor.render();
+  loadDocumentSettings();
+  updateStatus('TMD Sample document loaded');
 }
 
 function clearDocument(): void {
@@ -1349,7 +2030,113 @@ function applyMergeData(): void {
   }
 }
 
+/**
+ * Export the document to PDF.
+ * Gets merge data from the textarea if valid JSON.
+ */
+async function exportPDF(): Promise<void> {
+  if (!editor) return;
+
+  try {
+    updateStatus('Generating PDF...');
+
+    // Get merge data from textarea (if valid)
+    const textarea = document.getElementById('merge-data-input') as HTMLTextAreaElement;
+    let mergeData: Record<string, unknown> | undefined;
+
+    if (textarea?.value) {
+      try {
+        mergeData = JSON.parse(textarea.value);
+      } catch {
+        // Invalid JSON - proceed without merge data
+      }
+    }
+
+    // Export with merge data applied
+    const pdfBlob = await editor.exportPDF({
+      applyMergeData: !!mergeData,
+      mergeData
+    });
+
+    // Download the PDF
+    const url = URL.createObjectURL(pdfBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'document.pdf';
+    link.click();
+    URL.revokeObjectURL(url);
+
+    updateStatus('PDF exported successfully');
+  } catch (error) {
+    updateStatus('PDF export failed', 'error');
+    console.error('PDF export error:', error);
+  }
+}
+
 // ============================================
+// Save/Load Functions
+// ============================================
+
+/**
+ * Save the current document to a file.
+ */
+function saveDocumentHandler(): void {
+  if (!editor) return;
+
+  try {
+    editor.saveDocumentToFile('my-document.pceditor.json');
+    updateStatus('Document saved');
+  } catch (error) {
+    console.error('Failed to save document:', error);
+    updateStatus('Failed to save document', 'error');
+  }
+}
+
+/**
+ * Load a document from a file.
+ */
+async function loadDocumentHandler(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (!file || !editor) {
+    return;
+  }
+
+  try {
+    updateStatus('Loading document...');
+    await editor.loadDocumentFromFile(file);
+    updateStatus('Document loaded');
+    loadDocumentSettings(); // Refresh settings panel
+  } catch (error) {
+    console.error('Failed to load document:', error);
+    updateStatus('Failed to load document: ' + (error as Error).message, 'error');
+  }
+
+  // Reset the input so the same file can be loaded again
+  input.value = '';
+}
+
+// ============================================
+// Page Break Functions
+// ============================================
+
+/**
+ * Insert a page break at the current cursor position.
+ * Only works in body content.
+ */
+function insertPageBreak(): void {
+  if (!editor) return;
+
+  try {
+    editor.insertPageBreak();
+    updateStatus('Page break inserted');
+  } catch (e) {
+    // If not in body content, show a helpful message
+    updateStatus('Click in the body content first', 'error');
+  }
+}
+
 // Loop Pane Functions
 // ============================================
 
@@ -1522,6 +2309,10 @@ function deleteLoop(): void {
  */
 function updateTextBoxPane(textBox: TextBoxObject | null): void {
   const textboxSection = document.getElementById('textbox-section');
+  const positionSelect = document.getElementById('textbox-position') as HTMLSelectElement;
+  const offsetGroup = document.getElementById('textbox-offset-group');
+  const offsetXInput = document.getElementById('textbox-offset-x') as HTMLInputElement;
+  const offsetYInput = document.getElementById('textbox-offset-y') as HTMLInputElement;
   const bgColorInput = document.getElementById('textbox-bg-color') as HTMLInputElement;
   const borderWidthInput = document.getElementById('textbox-border-width') as HTMLInputElement;
   const borderColorInput = document.getElementById('textbox-border-color') as HTMLInputElement;
@@ -1535,7 +2326,15 @@ function updateTextBoxPane(textBox: TextBoxObject | null): void {
     textboxSection.style.display = 'block';
     currentSelectedTextBox = textBox;
 
-    // Populate controls
+    // Populate position controls
+    if (positionSelect) positionSelect.value = textBox.position || 'inline';
+    if (offsetGroup) {
+      offsetGroup.style.display = textBox.position === 'relative' ? 'block' : 'none';
+    }
+    if (offsetXInput) offsetXInput.value = String(textBox.relativeOffset?.x ?? 0);
+    if (offsetYInput) offsetYInput.value = String(textBox.relativeOffset?.y ?? 0);
+
+    // Populate other controls
     if (bgColorInput) bgColorInput.value = textBox.backgroundColor || '#ffffff';
     if (borderWidthInput) borderWidthInput.value = String(textBox.border?.top?.width ?? 1);
     if (borderColorInput) borderColorInput.value = textBox.border?.top?.color ?? '#cccccc';
@@ -1590,11 +2389,27 @@ function applyTextBoxChanges(): void {
     return;
   }
 
+  const positionSelect = document.getElementById('textbox-position') as HTMLSelectElement;
+  const offsetXInput = document.getElementById('textbox-offset-x') as HTMLInputElement;
+  const offsetYInput = document.getElementById('textbox-offset-y') as HTMLInputElement;
   const bgColorInput = document.getElementById('textbox-bg-color') as HTMLInputElement;
   const borderWidthInput = document.getElementById('textbox-border-width') as HTMLInputElement;
   const borderColorInput = document.getElementById('textbox-border-color') as HTMLInputElement;
   const borderStyleSelect = document.getElementById('textbox-border-style') as HTMLSelectElement;
   const paddingInput = document.getElementById('textbox-padding') as HTMLInputElement;
+
+  // Apply position changes
+  if (positionSelect) {
+    currentSelectedTextBox.position = positionSelect.value as 'inline' | 'block' | 'relative';
+  }
+
+  // Apply offset for relative positioning
+  if (positionSelect?.value === 'relative' && offsetXInput && offsetYInput) {
+    currentSelectedTextBox.relativeOffset = {
+      x: parseInt(offsetXInput.value) || 0,
+      y: parseInt(offsetYInput.value) || 0
+    };
+  }
 
   // Apply changes to the text box
   if (bgColorInput) {
@@ -1626,23 +2441,156 @@ function applyTextBoxChanges(): void {
 }
 
 // ============================================
+// Image Pane Functions
+// ============================================
+
+/**
+ * Update the image pane when an image is selected.
+ */
+function updateImagePane(image: ImageObject | null): void {
+  const imageSection = document.getElementById('image-section');
+  const positionSelect = document.getElementById('image-position') as HTMLSelectElement;
+  const offsetGroup = document.getElementById('image-offset-group');
+  const offsetXInput = document.getElementById('image-offset-x') as HTMLInputElement;
+  const offsetYInput = document.getElementById('image-offset-y') as HTMLInputElement;
+  const fitModeSelect = document.getElementById('image-fit-mode') as HTMLSelectElement;
+  const resizeModeSelect = document.getElementById('image-resize-mode') as HTMLSelectElement;
+  const altTextInput = document.getElementById('image-alt-text') as HTMLInputElement;
+
+  if (!imageSection) return;
+
+  if (image) {
+    // Show the image pane and populate with image data
+    imageSection.style.display = 'block';
+    currentSelectedImage = image;
+
+    // Populate position controls
+    if (positionSelect) positionSelect.value = image.position || 'inline';
+    if (offsetGroup) {
+      offsetGroup.style.display = image.position === 'relative' ? 'block' : 'none';
+    }
+    if (offsetXInput) offsetXInput.value = String(image.relativeOffset?.x ?? 0);
+    if (offsetYInput) offsetYInput.value = String(image.relativeOffset?.y ?? 0);
+
+    // Populate other controls
+    if (fitModeSelect) fitModeSelect.value = image.fit || 'contain';
+    if (resizeModeSelect) resizeModeSelect.value = image.resizeMode || 'locked-aspect-ratio';
+    if (altTextInput) altTextInput.value = image.alt || '';
+
+    console.log(`[Image Pane] Showing image: ${image.id}`);
+  } else {
+    hideImagePane();
+  }
+}
+
+/**
+ * Hide the image pane.
+ */
+function hideImagePane(): void {
+  const imageSection = document.getElementById('image-section');
+
+  if (imageSection) {
+    imageSection.style.display = 'none';
+  }
+
+  currentSelectedImage = null;
+}
+
+/**
+ * Apply changes to the currently selected image.
+ */
+function applyImageChanges(): void {
+  if (!editor || !currentSelectedImage) {
+    updateStatus('No image selected', 'error');
+    return;
+  }
+
+  const positionSelect = document.getElementById('image-position') as HTMLSelectElement;
+  const offsetXInput = document.getElementById('image-offset-x') as HTMLInputElement;
+  const offsetYInput = document.getElementById('image-offset-y') as HTMLInputElement;
+  const fitModeSelect = document.getElementById('image-fit-mode') as HTMLSelectElement;
+  const resizeModeSelect = document.getElementById('image-resize-mode') as HTMLSelectElement;
+  const altTextInput = document.getElementById('image-alt-text') as HTMLInputElement;
+
+  // Apply position changes
+  if (positionSelect) {
+    currentSelectedImage.position = positionSelect.value as 'inline' | 'block' | 'relative';
+  }
+
+  // Apply offset for relative positioning
+  if (positionSelect?.value === 'relative' && offsetXInput && offsetYInput) {
+    currentSelectedImage.relativeOffset = {
+      x: parseInt(offsetXInput.value) || 0,
+      y: parseInt(offsetYInput.value) || 0
+    };
+  }
+
+  // Apply changes to the image
+  if (fitModeSelect) {
+    currentSelectedImage.fit = fitModeSelect.value as 'contain' | 'cover' | 'fill' | 'none' | 'tile';
+  }
+
+  if (resizeModeSelect) {
+    currentSelectedImage.resizeMode = resizeModeSelect.value as 'free' | 'locked-aspect-ratio';
+  }
+
+  if (altTextInput) {
+    currentSelectedImage.alt = altTextInput.value;
+  }
+
+  // Re-render
+  editor.render();
+  updateStatus('Image updated');
+}
+
+/**
+ * Handle image file selection from the file picker.
+ */
+function handleImageFileChange(event: Event): void {
+  if (!editor || !currentSelectedImage) {
+    updateStatus('No image selected', 'error');
+    return;
+  }
+
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (!file) return;
+
+  // Read the file as a data URL
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const dataUrl = e.target?.result as string;
+    if (dataUrl && currentSelectedImage) {
+      // Use reasonable max dimensions for auto-sizing
+      // (roughly 80% of A4 content width and 50% of content height)
+      currentSelectedImage.setSource(dataUrl, {
+        maxWidth: 400,
+        maxHeight: 400
+      });
+
+      editor.render();
+      updateStatus('Image source changed');
+    }
+  };
+  reader.onerror = () => {
+    updateStatus('Failed to read image file', 'error');
+  };
+  reader.readAsDataURL(file);
+
+  // Clear the input for future selections
+  input.value = '';
+}
+
+// ============================================
 // Table Tools Functions
 // ============================================
 
 /**
- * Update the table tools visibility based on selected/focused table.
+ * Update the current selected table reference.
  */
 function updateTableTools(table: TableObject | null): void {
-  const tableTools = document.getElementById('table-tools');
-  if (!tableTools) return;
-
   currentSelectedTable = table;
-
-  if (table) {
-    tableTools.style.display = '';
-  } else {
-    tableTools.style.display = 'none';
-  }
 }
 
 /**
@@ -1654,8 +2602,7 @@ function tableAddRow(): void {
   const focusedCell = currentSelectedTable.focusedCell;
   const insertIndex = focusedCell ? focusedCell.row + 1 : currentSelectedTable.rowCount;
 
-  currentSelectedTable.insertRow(insertIndex);
-  editor.render();
+  editor.tableInsertRow(currentSelectedTable, insertIndex);
   updateStatus(`Added row at index ${insertIndex}`);
 }
 
@@ -1668,8 +2615,7 @@ function tableAddColumn(): void {
   const focusedCell = currentSelectedTable.focusedCell;
   const insertIndex = focusedCell ? focusedCell.col + 1 : currentSelectedTable.columnCount;
 
-  currentSelectedTable.insertColumn(insertIndex);
-  editor.render();
+  editor.tableInsertColumn(currentSelectedTable, insertIndex);
   updateStatus(`Added column at index ${insertIndex}`);
 }
 
@@ -1687,9 +2633,9 @@ function tableMergeCells(): void {
     return;
   }
 
+  // Table operations are automatically tracked for undo via ObjectMutationObserver
   const result = currentSelectedTable.mergeCells();
   if (result.success) {
-    editor.render();
     updateStatus('Cells merged');
   } else {
     updateStatus(`Merge failed: ${result.error}`, 'error');
@@ -1708,9 +2654,9 @@ function tableSplitCell(): void {
     return;
   }
 
+  // Table operations are automatically tracked for undo via ObjectMutationObserver
   const result = currentSelectedTable.splitCell(focusedCell.row, focusedCell.col);
   if (result.success) {
-    editor.render();
     updateStatus('Cell split');
   } else {
     updateStatus(`Split failed: ${result.error}`, 'error');
@@ -1864,6 +2810,557 @@ function hideTableRowLoopSection(): void {
   if (section) {
     section.style.display = 'none';
   }
+}
+
+// ============================================
+// Table Pane Functions
+// ============================================
+
+/**
+ * Update the table pane when a table is selected or focused.
+ */
+function updateTablePane(table: TableObject | null): void {
+  const tableSection = document.getElementById('table-section');
+  if (!tableSection) return;
+
+  if (table) {
+    tableSection.style.display = 'block';
+    currentSelectedTable = table;
+
+    // Update structure info
+    const rowCountEl = document.getElementById('table-row-count');
+    const colCountEl = document.getElementById('table-col-count');
+    if (rowCountEl) rowCountEl.textContent = String(table.rowCount);
+    if (colCountEl) colCountEl.textContent = String(table.columnCount);
+
+    // Update cell selection info
+    updateTableCellSelectionInfo(table);
+
+    // Update header counts
+    const headerRowInput = document.getElementById('table-header-row-count') as HTMLInputElement;
+    const headerColInput = document.getElementById('table-header-col-count') as HTMLInputElement;
+    if (headerRowInput) headerRowInput.value = String(table.headerRowCount);
+    if (headerColInput) headerColInput.value = String(table.headerColumnCount);
+
+    // Update defaults
+    const paddingInput = document.getElementById('table-default-padding') as HTMLInputElement;
+    const borderColorInput = document.getElementById('table-default-border-color') as HTMLInputElement;
+    if (paddingInput) paddingInput.value = String(table.defaultCellPadding);
+    if (borderColorInput) borderColorInput.value = table.defaultBorderColor;
+
+    // Update cell-specific formatting if a cell is selected
+    const focusedCell = table.focusedCell;
+    if (focusedCell) {
+      const cell = table.getCell(focusedCell.row, focusedCell.col);
+      if (cell) {
+        // Update background color
+        const cellBgInput = document.getElementById('table-cell-bg-color') as HTMLInputElement;
+        if (cellBgInput) cellBgInput.value = cell.backgroundColor || '#ffffff';
+
+        // Update border controls from cell's current borders
+        const border = cell.border;
+        const topCheck = document.getElementById('table-border-top') as HTMLInputElement;
+        const rightCheck = document.getElementById('table-border-right') as HTMLInputElement;
+        const bottomCheck = document.getElementById('table-border-bottom') as HTMLInputElement;
+        const leftCheck = document.getElementById('table-border-left') as HTMLInputElement;
+        const widthInput = document.getElementById('table-border-width') as HTMLInputElement;
+        const colorInput = document.getElementById('table-border-color') as HTMLInputElement;
+        const styleSelect = document.getElementById('table-border-style') as HTMLSelectElement;
+
+        // Check which borders are active (not 'none')
+        if (topCheck) topCheck.checked = border.top.style !== 'none';
+        if (rightCheck) rightCheck.checked = border.right.style !== 'none';
+        if (bottomCheck) bottomCheck.checked = border.bottom.style !== 'none';
+        if (leftCheck) leftCheck.checked = border.left.style !== 'none';
+
+        // Use the first active border's settings for width/color/style
+        const activeBorder = border.top.style !== 'none' ? border.top :
+                            border.right.style !== 'none' ? border.right :
+                            border.bottom.style !== 'none' ? border.bottom :
+                            border.left.style !== 'none' ? border.left : null;
+        if (activeBorder) {
+          if (widthInput) widthInput.value = String(activeBorder.width);
+          if (colorInput) colorInput.value = activeBorder.color;
+          if (styleSelect) styleSelect.value = activeBorder.style;
+        }
+      }
+    }
+  } else {
+    hideTablePane();
+  }
+}
+
+/**
+ * Update the cell selection info display.
+ */
+function updateTableCellSelectionInfo(table: TableObject): void {
+  const infoEl = document.getElementById('table-cell-selection-info');
+  if (!infoEl) return;
+
+  const focusedCell = table.focusedCell;
+  const selectedRange = table.selectedRange;
+
+  if (selectedRange) {
+    const rows = selectedRange.end.row - selectedRange.start.row + 1;
+    const cols = selectedRange.end.col - selectedRange.start.col + 1;
+    infoEl.textContent = `${rows}x${cols} cells selected`;
+  } else if (focusedCell) {
+    infoEl.textContent = `Row ${focusedCell.row + 1}, Col ${focusedCell.col + 1}`;
+  } else {
+    infoEl.textContent = 'No cell selected';
+  }
+}
+
+/**
+ * Hide the table pane.
+ */
+function hideTablePane(): void {
+  const tableSection = document.getElementById('table-section');
+  if (tableSection) {
+    tableSection.style.display = 'none';
+  }
+}
+
+// Table pane action handlers
+
+/**
+ * Get the current header styling from the pane controls.
+ */
+function getHeaderStyling(): { bgColor: string; bold: boolean } {
+  const bgColorInput = document.getElementById('table-header-bg-color') as HTMLInputElement;
+  const boldCheck = document.getElementById('table-header-bold') as HTMLInputElement;
+  return {
+    bgColor: bgColorInput?.value || '#f0f0f0',
+    bold: boldCheck?.checked ?? true
+  };
+}
+
+/**
+ * Apply header styling to a cell.
+ */
+function applyHeaderStylingToCell(cell: import('../lib').TableCell, styling: { bgColor: string; bold: boolean }): void {
+  cell.backgroundColor = styling.bgColor;
+  if (styling.bold) {
+    const text = cell.flowingContent.getText();
+    if (text.length > 0) {
+      cell.flowingContent.applyFormatting(0, text.length, { fontWeight: 'bold' });
+    }
+  }
+}
+
+/**
+ * Copy cell styling (background, border, padding) from source to target.
+ */
+function copyCellStyling(source: import('../lib').TableCell, target: import('../lib').TableCell): void {
+  target.backgroundColor = source.backgroundColor;
+  target.padding = { ...source.padding };
+  target.border = {
+    top: { ...source.border.top },
+    right: { ...source.border.right },
+    bottom: { ...source.border.bottom },
+    left: { ...source.border.left }
+  };
+}
+
+/**
+ * Apply styling to new cells in a row based on header status or source row.
+ */
+function styleNewRowCells(table: TableObject, rowIndex: number, sourceRowIndex?: number): void {
+  const row = table.rows[rowIndex];
+  if (!row) return;
+
+  const styling = getHeaderStyling();
+  const headerColIndices = table.getHeaderColumnIndices();
+
+  // If we have a source row, copy styling from corresponding cells
+  if (sourceRowIndex !== undefined && sourceRowIndex >= 0 && sourceRowIndex < table.rows.length) {
+    const sourceRow = table.rows[sourceRowIndex];
+    for (let colIdx = 0; colIdx < row.cells.length && colIdx < sourceRow.cells.length; colIdx++) {
+      const sourceCell = sourceRow.getCell(colIdx);
+      const targetCell = row.getCell(colIdx);
+      if (sourceCell && targetCell) {
+        copyCellStyling(sourceCell, targetCell);
+      }
+    }
+  } else if (row.isHeader) {
+    // If this is a header row with no source, apply header styling
+    for (const cell of row.cells) {
+      applyHeaderStylingToCell(cell, styling);
+    }
+  } else {
+    // Otherwise, only style cells in header columns
+    for (const colIdx of headerColIndices) {
+      const cell = row.getCell(colIdx);
+      if (cell) {
+        applyHeaderStylingToCell(cell, styling);
+      }
+    }
+  }
+}
+
+/**
+ * Apply styling to new cells in a column based on header status or source column.
+ */
+function styleNewColumnCells(table: TableObject, colIndex: number, sourceColIndex?: number): void {
+  const col = table.columns[colIndex];
+  if (!col) return;
+
+  const styling = getHeaderStyling();
+
+  for (let rowIdx = 0; rowIdx < table.rows.length; rowIdx++) {
+    const row = table.rows[rowIdx];
+    const targetCell = row.getCell(colIndex);
+    if (!targetCell) continue;
+
+    // If we have a source column, copy styling from corresponding cell
+    if (sourceColIndex !== undefined && sourceColIndex >= 0 && sourceColIndex < table.columns.length) {
+      const sourceCell = row.getCell(sourceColIndex);
+      if (sourceCell) {
+        copyCellStyling(sourceCell, targetCell);
+        continue;
+      }
+    }
+
+    // Otherwise, style if this is a header column or if the row is a header row
+    if (col.isHeader || row.isHeader) {
+      applyHeaderStylingToCell(targetCell, styling);
+    }
+  }
+}
+
+function tablePaneAddRowBefore(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  const insertIndex = focusedCell ? focusedCell.row : 0;
+  // Source row is the current row (which shifts down after insert)
+  const sourceRowIndex = focusedCell ? insertIndex + 1 : undefined;
+
+  // Table operations are automatically tracked for undo via ObjectMutationObserver
+  currentSelectedTable.insertRow(insertIndex);
+  styleNewRowCells(currentSelectedTable, insertIndex, sourceRowIndex);
+  updateTablePane(currentSelectedTable);
+  updateStatus(`Added row before index ${insertIndex}`);
+}
+
+function tablePaneAddRowAfter(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  const insertIndex = focusedCell ? focusedCell.row + 1 : currentSelectedTable.rowCount;
+  // Source row is the current row (before the new row)
+  const sourceRowIndex = focusedCell ? focusedCell.row : undefined;
+
+  // Table operations are automatically tracked for undo via ObjectMutationObserver
+  currentSelectedTable.insertRow(insertIndex);
+  styleNewRowCells(currentSelectedTable, insertIndex, sourceRowIndex);
+  updateTablePane(currentSelectedTable);
+  updateStatus(`Added row after index ${insertIndex - 1}`);
+}
+
+function tablePaneDeleteRow(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  if (!focusedCell) {
+    updateStatus('Select a cell in the row to delete');
+    return;
+  }
+
+  if (currentSelectedTable.rowCount <= 1) {
+    updateStatus('Cannot delete the last row');
+    return;
+  }
+
+  editor.tableRemoveRow(currentSelectedTable, focusedCell.row);
+  updateTablePane(currentSelectedTable);
+  updateStatus(`Deleted row ${focusedCell.row + 1}`);
+}
+
+function tablePaneAddColBefore(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  const insertIndex = focusedCell ? focusedCell.col : 0;
+  // Source column is the current column (which shifts right after insert)
+  const sourceColIndex = focusedCell ? insertIndex + 1 : undefined;
+
+  // Table operations are automatically tracked for undo via ObjectMutationObserver
+  currentSelectedTable.insertColumn(insertIndex);
+  styleNewColumnCells(currentSelectedTable, insertIndex, sourceColIndex);
+  updateTablePane(currentSelectedTable);
+  updateStatus(`Added column before index ${insertIndex}`);
+}
+
+function tablePaneAddColAfter(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  const insertIndex = focusedCell ? focusedCell.col + 1 : currentSelectedTable.columnCount;
+  // Source column is the current column (before the new column)
+  const sourceColIndex = focusedCell ? focusedCell.col : undefined;
+
+  // Table operations are automatically tracked for undo via ObjectMutationObserver
+  currentSelectedTable.insertColumn(insertIndex);
+  styleNewColumnCells(currentSelectedTable, insertIndex, sourceColIndex);
+  updateTablePane(currentSelectedTable);
+  updateStatus(`Added column after index ${insertIndex - 1}`);
+}
+
+function tablePaneDeleteCol(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  if (!focusedCell) {
+    updateStatus('Select a cell in the column to delete');
+    return;
+  }
+
+  if (currentSelectedTable.columnCount <= 1) {
+    updateStatus('Cannot delete the last column');
+    return;
+  }
+
+  editor.tableRemoveColumn(currentSelectedTable, focusedCell.col);
+  updateTablePane(currentSelectedTable);
+  updateStatus(`Deleted column ${focusedCell.col + 1}`);
+}
+
+function tablePaneMergeCells(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  // Table operations are automatically tracked for undo via ObjectMutationObserver
+  const result = currentSelectedTable.mergeCells();
+  if (result.success) {
+    updateTablePane(currentSelectedTable);
+    updateStatus('Cells merged');
+  } else {
+    updateStatus(`Merge failed: ${result.error}`, 'error');
+  }
+}
+
+function tablePaneSplitCell(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  if (!focusedCell) {
+    updateStatus('Select a merged cell to split');
+    return;
+  }
+
+  // Table operations are automatically tracked for undo via ObjectMutationObserver
+  const result = currentSelectedTable.splitCell(focusedCell.row, focusedCell.col);
+  if (result.success) {
+    updateTablePane(currentSelectedTable);
+    updateStatus('Cell split');
+  } else {
+    updateStatus(`Split failed: ${result.error}`, 'error');
+  }
+}
+
+function tablePaneApplyCellBackground(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  const selectedRange = currentSelectedTable.selectedRange;
+  const colorInput = document.getElementById('table-cell-bg-color') as HTMLInputElement;
+  const color = colorInput?.value || '#ffffff';
+
+  if (selectedRange) {
+    // Apply to all cells in range
+    for (let r = selectedRange.start.row; r <= selectedRange.end.row; r++) {
+      for (let c = selectedRange.start.col; c <= selectedRange.end.col; c++) {
+        const cell = currentSelectedTable.getCell(r, c);
+        if (cell) cell.backgroundColor = color;
+      }
+    }
+    updateStatus('Background applied to selected cells');
+  } else if (focusedCell) {
+    const cell = currentSelectedTable.getCell(focusedCell.row, focusedCell.col);
+    if (cell) cell.backgroundColor = color;
+    updateStatus('Background applied to cell');
+  } else {
+    updateStatus('Select a cell first');
+    return;
+  }
+
+  editor.render();
+}
+
+function tablePaneApplyBorders(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const focusedCell = currentSelectedTable.focusedCell;
+  const selectedRange = currentSelectedTable.selectedRange;
+
+  const widthInput = document.getElementById('table-border-width') as HTMLInputElement;
+  const colorInput = document.getElementById('table-border-color') as HTMLInputElement;
+  const styleSelect = document.getElementById('table-border-style') as HTMLSelectElement;
+  const topCheck = document.getElementById('table-border-top') as HTMLInputElement;
+  const rightCheck = document.getElementById('table-border-right') as HTMLInputElement;
+  const bottomCheck = document.getElementById('table-border-bottom') as HTMLInputElement;
+  const leftCheck = document.getElementById('table-border-left') as HTMLInputElement;
+
+  const borderSide = {
+    width: parseInt(widthInput?.value || '1'),
+    color: colorInput?.value || '#000000',
+    style: (styleSelect?.value || 'solid') as 'solid' | 'dashed' | 'dotted' | 'none'
+  };
+
+  const noBorder = { width: 0, color: 'transparent', style: 'none' as const };
+
+  const applyToCell = (cell: import('../lib').TableCell) => {
+    const border = cell.border;
+    // Apply border or remove it based on checkbox state
+    border.top = topCheck?.checked ? { ...borderSide } : { ...noBorder };
+    border.right = rightCheck?.checked ? { ...borderSide } : { ...noBorder };
+    border.bottom = bottomCheck?.checked ? { ...borderSide } : { ...noBorder };
+    border.left = leftCheck?.checked ? { ...borderSide } : { ...noBorder };
+    cell.border = border;
+  };
+
+  if (selectedRange) {
+    for (let r = selectedRange.start.row; r <= selectedRange.end.row; r++) {
+      for (let c = selectedRange.start.col; c <= selectedRange.end.col; c++) {
+        const cell = currentSelectedTable.getCell(r, c);
+        if (cell) applyToCell(cell);
+      }
+    }
+    updateStatus('Borders applied to selected cells');
+  } else if (focusedCell) {
+    const cell = currentSelectedTable.getCell(focusedCell.row, focusedCell.col);
+    if (cell) applyToCell(cell);
+    updateStatus('Borders applied to cell');
+  } else {
+    updateStatus('Select a cell first');
+    return;
+  }
+
+  editor.render();
+}
+
+function tablePaneApplyHeaders(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const headerRowInput = document.getElementById('table-header-row-count') as HTMLInputElement;
+  const headerColInput = document.getElementById('table-header-col-count') as HTMLInputElement;
+
+  const headerRowCount = parseInt(headerRowInput?.value || '0');
+  const headerColCount = parseInt(headerColInput?.value || '0');
+
+  // Get the current header styling settings
+  const styling = getHeaderStyling();
+
+  // Apply header row/column counts
+  currentSelectedTable.setHeaderRowCount(headerRowCount);
+  currentSelectedTable.setHeaderColumnCount(headerColCount);
+
+  // Apply styling to all header cells (both rows and columns)
+  for (let rowIdx = 0; rowIdx < currentSelectedTable.rows.length; rowIdx++) {
+    const row = currentSelectedTable.rows[rowIdx];
+    for (let colIdx = 0; colIdx < row.cells.length; colIdx++) {
+      const cell = row.getCell(colIdx);
+      if (!cell) continue;
+
+      const isHeader = currentSelectedTable.isHeaderCell(rowIdx, colIdx);
+      if (isHeader) {
+        // Apply header styling
+        applyHeaderStylingToCell(cell, styling);
+      } else {
+        // Reset to normal styling (white background, normal weight)
+        cell.backgroundColor = '#ffffff';
+        const text = cell.flowingContent.getText();
+        if (text.length > 0) {
+          cell.flowingContent.applyFormatting(0, text.length, { fontWeight: 'normal' });
+        }
+      }
+    }
+  }
+
+  editor.render();
+  updateStatus(`Set ${headerRowCount} header rows and ${headerColCount} header columns`);
+}
+
+function tablePaneApplyHeaderStyle(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const bgColorInput = document.getElementById('table-header-bg-color') as HTMLInputElement;
+  const boldCheck = document.getElementById('table-header-bold') as HTMLInputElement;
+
+  const bgColor = bgColorInput?.value || '#f0f0f0';
+  const bold = boldCheck?.checked ?? true;
+
+  // Apply to header rows
+  for (const row of currentSelectedTable.rows) {
+    if (row.isHeader) {
+      for (const cell of row.cells) {
+        cell.backgroundColor = bgColor;
+        if (bold) {
+          // Apply bold formatting to all text in the cell
+          const text = cell.flowingContent.getText();
+          if (text.length > 0) {
+            cell.flowingContent.applyFormatting(0, text.length, { fontWeight: 'bold' });
+          }
+        }
+      }
+    }
+  }
+
+  // Apply to header columns
+  const headerColIndices = currentSelectedTable.getHeaderColumnIndices();
+  for (const colIdx of headerColIndices) {
+    for (const row of currentSelectedTable.rows) {
+      if (!row.isHeader) {  // Skip header rows (already styled above)
+        const cell = row.getCell(colIdx);
+        if (cell) {
+          cell.backgroundColor = bgColor;
+          if (bold) {
+            const text = cell.flowingContent.getText();
+            if (text.length > 0) {
+              cell.flowingContent.applyFormatting(0, text.length, { fontWeight: 'bold' });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  editor.render();
+  updateStatus('Header styling applied');
+}
+
+function tablePaneApplyDefaults(): void {
+  if (!currentSelectedTable || !editor) return;
+
+  const paddingInput = document.getElementById('table-default-padding') as HTMLInputElement;
+  const borderColorInput = document.getElementById('table-default-border-color') as HTMLInputElement;
+
+  const padding = parseInt(paddingInput?.value || '4');
+  const borderColor = borderColorInput?.value || '#000000';
+
+  currentSelectedTable.defaultCellPadding = padding;
+  currentSelectedTable.defaultBorderColor = borderColor;
+
+  // Apply to all existing cells and mark them for reflow
+  for (const row of currentSelectedTable.rows) {
+    for (const cell of row.cells) {
+      cell.padding = { top: padding, right: padding, bottom: padding, left: padding };
+      const border = cell.border;
+      border.top.color = borderColor;
+      border.right.color = borderColor;
+      border.bottom.color = borderColor;
+      border.left.color = borderColor;
+      cell.border = border;
+      // Mark cell for reflow since padding affects text layout
+      cell.markReflowDirty();
+    }
+  }
+
+  // Mark table layout as dirty so it recalculates size
+  currentSelectedTable.markLayoutDirty();
+
+  editor.render();
+  updateStatus('Table defaults applied to all cells');
 }
 
 // Initialize when DOM is ready

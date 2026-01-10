@@ -90,8 +90,10 @@ export class EmbeddedObjectFactory {
       textIndex: data.textIndex,
       position: data.position,
       size: data.size,
+      relativeOffset: data.relativeOffset,
       src: data.data.src as string,
-      fit: data.data.fit as 'contain' | 'cover' | 'fill' | 'none' | undefined,
+      fit: data.data.fit as 'contain' | 'cover' | 'fill' | 'none' | 'tile' | undefined,
+      resizeMode: data.data.resizeMode as 'free' | 'locked-aspect-ratio' | undefined,
       alt: data.data.alt as string | undefined
     }));
 
@@ -102,6 +104,7 @@ export class EmbeddedObjectFactory {
         textIndex: data.textIndex,
         position: data.position,
         size: data.size,
+        relativeOffset: data.relativeOffset,
         content: data.data.content as string | undefined,
         fontFamily: data.data.fontFamily as string | undefined,
         fontSize: data.data.fontSize as number | undefined,

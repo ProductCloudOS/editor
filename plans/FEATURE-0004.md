@@ -1,5 +1,18 @@
 # FEATURE-0004: Multi-Page Table Support with Header Replication
 
+## Status: ✅ COMPLETE
+
+Implemented multi-page table support with the following changes:
+- Phase 1: Fixed layout timing in FlowingTextRenderer.ts - ensure calculateLayout is called before page split decisions
+- Phase 2: Improved row fitting algorithm in calculatePageLayout to handle header rows correctly
+- Phase 3: Added adjustSliceEndForMergedCells() to handle merged cells at page boundaries
+- Phase 4: Added renderedPageIndex property to TableCell for multi-page hit detection; updated renderTableCellText() to set page index when rendering cells in slices
+
+Key files modified:
+- src/lib/objects/table/TableObject.ts - calculatePageLayout improvements, merged cell handling
+- src/lib/objects/table/TableCell.ts - added renderedPageIndex property
+- src/lib/rendering/FlowingTextRenderer.ts - layout timing fixes, cell position tracking in slices
+
 ## Overview
 
 Tables need to properly span multiple pages with header rows automatically replicated at the top of each page that the table crosses over.

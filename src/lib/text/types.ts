@@ -89,6 +89,7 @@ export interface SubstitutionFieldConfig {
   displayFormat?: string;
   defaultValue?: string;
   fieldType?: SubstitutionFieldType;
+  formatting?: TextFormattingStyle;
 }
 
 /**
@@ -113,6 +114,8 @@ export interface FlowedEmbeddedObject {
   object: BaseEmbeddedObject;
   textIndex: number;
   x: number;
+  isBlock?: boolean;      // True for block-positioned objects (standalone paragraph)
+  isAnchor?: boolean;     // True for relative objects (anchor marker only, object rendered separately)
 }
 
 /**
@@ -139,8 +142,10 @@ export interface FlowedLine {
   startIndex: number;
   endIndex: number;
   endsWithNewline?: boolean;
+  endsWithPageBreak?: boolean;  // Line ends with page break character
   alignment: TextAlignment;
   extraWordSpacing?: number;  // For justify mode - extra space per word gap
+  isBlockObjectLine?: boolean;  // True if line contains only a block-positioned object
 }
 
 /**
@@ -176,6 +181,12 @@ export const DEFAULT_PARAGRAPH_FORMATTING: ParagraphFormatting = {
  * Both substitution fields and embedded objects use this character.
  */
 export const OBJECT_REPLACEMENT_CHAR = '\uFFFC';
+
+/**
+ * The Form Feed character used for page breaks.
+ * Inserted via Ctrl+Enter and forces content to start on a new page.
+ */
+export const PAGE_BREAK_CHAR = '\u000C';
 
 /**
  * Visual state of a repeating section, computed during render.

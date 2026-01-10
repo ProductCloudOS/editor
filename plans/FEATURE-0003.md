@@ -1,5 +1,16 @@
 # FEATURE-0003: Table Pane Implementation Plan
 
+## Status: ✅ COMPLETE
+
+Implemented and tested. All phases complete including bug fixes:
+- Header count changes now reapply formatting to cells
+- Border removal works correctly (sets style to 'none')
+- Padding changes trigger table resize
+- New cells copy formatting from current cell
+- Adding rows/columns extends merged cell spans
+- Merged cells use full span width for text wrapping
+- Table pane updates cell formatting on selection change
+
 ## Overview
 
 Add a table pane on the right sidebar that appears when a table is selected or being edited. This pane will provide controls for:

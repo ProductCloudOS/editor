@@ -96,6 +96,7 @@ export interface TableColumnConfig {
   id?: string;
   width: number;
   minWidth?: number;
+  isHeader?: boolean;  // Header column (rendered with header styling)
 }
 
 /**

@@ -5,7 +5,7 @@ import { EventEmitter } from '../events/EventEmitter';
 import { FlowingTextRenderer } from './FlowingTextRenderer';
 import { TextBoxObject, BaseEmbeddedObject } from '../objects';
 import { TableObject, TableResizeHandler } from '../objects/table';
-import { Focusable } from '../text/types';
+import { Focusable, FlowedPage } from '../text/types';
 import {
   RegionManager,
   BodyTextRegion,
@@ -29,9 +29,11 @@ export class CanvasManager extends EventEmitter {
   private isDragging: boolean = false;
   private dragStart: Point | null = null;
   private isResizing: boolean = false;
+  private wasResizing: boolean = false; // Flag to skip click handler after resize
   private resizeHandle: string | null = null;
   private resizeStartSize: Size | null = null;
   private resizeStartPos: Point | null = null;
+  private resizingElementId: string | null = null;
   private flowingTextRenderer: FlowingTextRenderer;
   private showMargins: boolean = true;
   private isHandlingOverflow: boolean = false;
@@ -56,6 +58,14 @@ export class CanvasManager extends EventEmitter {
   private isSelectingTextInTableCell: boolean = false;
   private static readonly CELL_SELECTION_THRESHOLD = 5; // Minimum pixels to drag before cell selection starts
 
+  // Relative object dragging state
+  private isDraggingRelativeObject: boolean = false;
+  private relativeObjectDragPending: boolean = false;
+  private relativeObjectDragStart: Point | null = null;
+  private relativeObjectBeingDragged: BaseEmbeddedObject | null = null;
+  private relativeObjectDragStartOffset: { x: number; y: number } | null = null;
+  private static readonly RELATIVE_DRAG_THRESHOLD = 3; // Minimum pixels to drag before moving starts
+
   constructor(container: HTMLElement, document: Document, options: Required<Omit<EditorOptions, 'customPageSize'>> & { customPageSize?: PageDimensions }) {
     super();
     this.container = container;
@@ -71,12 +81,9 @@ export class CanvasManager extends EventEmitter {
    * Initialize text regions from the document.
    */
   private initializeRegions(): void {
-    const page = this.document.pages[0];
-    if (!page) return;
-
-    // Create body region
+    // Create body region using document-level bodyFlowingContent
     const bodyRegion = new BodyTextRegion(
-      page.flowingContent,
+      this.document.bodyFlowingContent,
       (pageIndex: number) => this.document.pages[pageIndex] || null
     );
     this.regionManager.setBodyRegion(bodyRegion);
@@ -101,10 +108,7 @@ export class CanvasManager extends EventEmitter {
     this.setupEventListeners();
 
     // Set initial focus on the body flowing content
-    const page = this.document.pages[0];
-    if (page?.flowingContent) {
-      this.setFocus(page.flowingContent);
-    }
+    this.setFocus(this.document.bodyFlowingContent);
 
     this.render();
   }
@@ -149,10 +153,7 @@ export class CanvasManager extends EventEmitter {
     this._focusedControl = null;
 
     // Set focus on the body flowing content
-    const page = this.document.pages[0];
-    if (page?.flowingContent) {
-      this.setFocus(page.flowingContent);
-    }
+    this.setFocus(this.document.bodyFlowingContent);
 
     this.render();
   }
@@ -203,7 +204,7 @@ export class CanvasManager extends EventEmitter {
 
       // Render repeating section indicators (only in body)
       // Always get sections from the first page's flowingContent since body text flows from page 0
-      const bodyFlowingContent = this.document.pages[0]?.flowingContent;
+      const bodyFlowingContent = this.document.bodyFlowingContent;
       const sections = bodyFlowingContent?.getRepeatingSections() ?? [];
       if (sections.length > 0) {
         const flowedPages = this.flowingTextRenderer.getFlowedPagesForPage(this.document.pages[0].id);
@@ -304,10 +305,13 @@ export class CanvasManager extends EventEmitter {
    * Render selection marks (resize handles) for selected embedded objects.
    * Called separately to ensure selection marks are drawn on top of all other content.
    */
-  private renderSelectionMarks(_page: any, ctx: CanvasRenderingContext2D): void {
+  private renderSelectionMarks(page: Page, ctx: CanvasRenderingContext2D): void {
     // Draw resize handles for selected embedded objects
+    // Note: Tables are handled by FlowingTextRenderer with slice-aware dimensions
+    const pageIndex = this.document.pages.indexOf(page);
+
     const flowingContents = [
-      this.document.pages[0]?.flowingContent,
+      this.document.bodyFlowingContent,
       this.document.headerFlowingContent,
       this.document.footerFlowingContent
     ].filter(Boolean);
@@ -315,7 +319,12 @@ export class CanvasManager extends EventEmitter {
     for (const flowingContent of flowingContents) {
       const embeddedObjects = flowingContent.getEmbeddedObjects();
       for (const [, obj] of embeddedObjects.entries()) {
-        if (obj.selected && !obj.locked && obj.renderedPosition) {
+        // Skip tables - FlowingTextRenderer handles their selection with correct slice size
+        if (obj instanceof TableObject) {
+          continue;
+        }
+        // Only draw handles on the page where the object is actually rendered
+        if (obj.selected && !obj.locked && obj.renderedPosition && obj.renderedPageIndex === pageIndex) {
           this.drawBaseEmbeddedObjectResizeHandles(ctx, obj);
         }
       }
@@ -375,7 +384,6 @@ export class CanvasManager extends EventEmitter {
     // Check if clicking on a resize handle
     const handle = this.getResizeHandleAt(point, pageId);
     if (handle) {
-      console.log('Mouse down on resize handle:', handle.handle, 'for element:', handle.element.id);
       this.isResizing = true;
       this.resizeHandle = handle.handle;
       this.dragStart = point;
@@ -384,6 +392,7 @@ export class CanvasManager extends EventEmitter {
       if (element && element.renderedPosition) {
         this.resizeStartSize = { width: element.width, height: element.height };
         this.resizeStartPos = { ...element.renderedPosition };
+        this.resizingElementId = element.id;
       }
 
       e.preventDefault();
@@ -391,7 +400,7 @@ export class CanvasManager extends EventEmitter {
     }
 
     // Check if clicking on a table resize handle (column/row dividers)
-    const tableResizeHandle = this.getTableResizeHandleAt(point);
+    const tableResizeHandle = this.getTableResizeHandleAt(point, pageId);
     if (tableResizeHandle && tableResizeHandle.handleInfo) {
       const { table, handleInfo, tablePosition } = tableResizeHandle;
       this.tableResizeHandler.startResize(table, handleInfo, tablePosition);
@@ -402,14 +411,38 @@ export class CanvasManager extends EventEmitter {
     // Check if clicking inside an editing table - handle cell selection or text selection
     if (this._focusedControl instanceof TableObject) {
       const table = this._focusedControl;
-      if (table.renderedPosition && table.containsPoint(point, table.renderedPosition)) {
+      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+
+      // Get the slice for this page (for multi-page tables)
+      const slice = table.getRenderedSlice(pageIndex);
+      const tablePosition = slice?.position || table.renderedPosition;
+      const sliceHeight = slice?.height || table.height;
+
+      // Check if point is within the table slice on this page
+      const isInsideTable = tablePosition &&
+        point.x >= tablePosition.x &&
+        point.x <= tablePosition.x + table.width &&
+        point.y >= tablePosition.y &&
+        point.y <= tablePosition.y + sliceHeight;
+
+      if (isInsideTable && tablePosition) {
         const localPoint = {
-          x: point.x - table.renderedPosition.x,
-          y: point.y - table.renderedPosition.y
+          x: point.x - tablePosition.x,
+          y: point.y - tablePosition.y
         };
+
+        // If this is a continuation slice, adjust y for the slice offset
+        if (slice && (slice.slicePosition === 'middle' || slice.slicePosition === 'last')) {
+          const headerHeight = slice.headerHeight;
+          if (localPoint.y >= headerHeight) {
+            // Click is in the data rows area - transform coordinates
+            localPoint.y = slice.yOffset + (localPoint.y - headerHeight);
+          }
+          // If y < headerHeight, click is in repeated header - no adjustment needed
+        }
+
         const cellAddr = table.getCellAtPoint(localPoint);
         if (cellAddr) {
-          const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
           const ctx = this.contexts.get(pageId);
 
           // Handle Shift+Click for range selection
@@ -512,28 +545,27 @@ export class CanvasManager extends EventEmitter {
     }
 
 
-    // Check if clicking on an embedded object in the active section
+    // Check if clicking on an embedded object using HitTestManager
     // Object selection is handled in handleClick
-    const activeFlowingContent = this.getFlowingContentForActiveSection();
+    const mouseDownPageIndex = this.document.pages.findIndex(p => p.id === pageId);
+    const hitTestManager = this.flowingTextRenderer.hitTestManager;
+    const embeddedObjectHit = hitTestManager.queryByType(mouseDownPageIndex, point, 'embedded-object');
 
-    if (activeFlowingContent) {
-      const embeddedObjects = activeFlowingContent.getEmbeddedObjects();
-      for (const [, obj] of embeddedObjects.entries()) {
-        if (obj.renderedPosition) {
-          const objBounds = {
-            x: obj.renderedPosition.x,
-            y: obj.renderedPosition.y,
-            width: obj.width,
-            height: obj.height
-          };
-          if (point.x >= objBounds.x && point.x <= objBounds.x + objBounds.width &&
-              point.y >= objBounds.y && point.y <= objBounds.y + objBounds.height) {
-            // Clicking on embedded object - don't start text selection
-            // handleClick will handle object selection
-            return;
-          }
-        }
+    if (embeddedObjectHit && embeddedObjectHit.data.type === 'embedded-object') {
+      const object = embeddedObjectHit.data.object as BaseEmbeddedObject;
+
+      // For relative-positioned objects, prepare for potential drag
+      // Don't start drag immediately - wait for threshold to allow double-click
+      if (object.position === 'relative') {
+        this.relativeObjectDragPending = true;
+        this.relativeObjectDragStart = { ...point };
+        this.relativeObjectBeingDragged = object;
+        this.relativeObjectDragStartOffset = { ...object.relativeOffset };
       }
+
+      // Clicking on embedded object - don't start text selection
+      // handleClick will handle object selection
+      return;
     }
 
     // Check if clicking on text - start text selection for all sections
@@ -571,6 +603,37 @@ export class CanvasManager extends EventEmitter {
 
   private handleMouseMove(e: MouseEvent, pageId: string): void {
     const point = this.getMousePosition(e);
+
+    // Handle relative object dragging
+    if (this.relativeObjectDragPending && this.relativeObjectDragStart && this.relativeObjectBeingDragged) {
+      // Check if we've moved enough to start dragging
+      const distance = Math.sqrt(
+        Math.pow(point.x - this.relativeObjectDragStart.x, 2) +
+        Math.pow(point.y - this.relativeObjectDragStart.y, 2)
+      );
+
+      if (distance >= CanvasManager.RELATIVE_DRAG_THRESHOLD) {
+        // Start actual dragging
+        this.relativeObjectDragPending = false;
+        this.isDraggingRelativeObject = true;
+      }
+    }
+
+    if (this.isDraggingRelativeObject && this.relativeObjectBeingDragged && this.relativeObjectDragStart && this.relativeObjectDragStartOffset) {
+      // Calculate delta from drag start
+      const deltaX = point.x - this.relativeObjectDragStart.x;
+      const deltaY = point.y - this.relativeObjectDragStart.y;
+
+      // Update the relative offset
+      this.relativeObjectBeingDragged.relativeOffset = {
+        x: this.relativeObjectDragStartOffset.x + deltaX,
+        y: this.relativeObjectDragStartOffset.y + deltaY
+      };
+
+      this.render();
+      e.preventDefault();
+      return;
+    }
 
     // Handle text selection in text box
     if (this.isSelectingTextInTextBox && this.editingTextBox && this._editingTextBoxPageId === pageId) {
@@ -690,10 +753,11 @@ export class CanvasManager extends EventEmitter {
 
         if (newSize.size.width > 20 && newSize.size.height > 20) {
           // Update the embedded object's size
-          const page = this.document.getPage(pageId);
+          // Body content is always in page 0's flowingContent (flows across all pages)
+          const bodyFlowingContent = this.document.bodyFlowingContent;
 
           const flowingContents = [
-            page?.flowingContent,
+            bodyFlowingContent,
             this.document.headerFlowingContent,
             this.document.footerFlowingContent
           ];
@@ -763,12 +827,47 @@ export class CanvasManager extends EventEmitter {
       // Selection state is maintained by the TableObject
     }
 
+    // Finalize relative object dragging
+    if (this.isDraggingRelativeObject || this.relativeObjectDragPending) {
+      // If we were actually dragging (not just pending), don't process click
+      // and emit selection-change so UI panes update with new offset values
+      if (this.isDraggingRelativeObject) {
+        this.wasResizing = true; // Reuse this flag to skip click handler
+        // Emit selection-change to trigger UI pane update with new offset
+        this.emit('selection-change', { selectedElements: Array.from(this.selectedElements) });
+      }
+      this.isDraggingRelativeObject = false;
+      this.relativeObjectDragPending = false;
+      this.relativeObjectDragStart = null;
+      this.relativeObjectBeingDragged = null;
+      this.relativeObjectDragStartOffset = null;
+    }
+
     this.isDragging = false;
+    // Set wasResizing flag before clearing isResizing so handleClick knows a resize just ended
+    if (this.isResizing && this.resizingElementId && this.resizeStartSize) {
+      this.wasResizing = true;
+
+      // Find the element and emit resize event for undo recording
+      const element = this.findEmbeddedObjectById(this.resizingElementId);
+      if (element) {
+        const newSize = { width: element.size.width, height: element.size.height };
+        // Only emit if size actually changed
+        if (newSize.width !== this.resizeStartSize.width || newSize.height !== this.resizeStartSize.height) {
+          this.emit('object-resized', {
+            object: element,
+            previousSize: this.resizeStartSize,
+            newSize: newSize
+          });
+        }
+      }
+    }
     this.isResizing = false;
     this.dragStart = null;
     this.resizeHandle = null;
     this.resizeStartSize = null;
     this.resizeStartPos = null;
+    this.resizingElementId = null;
   }
 
   private handleMouseLeave(_e: MouseEvent, _pageId: string): void {
@@ -803,6 +902,15 @@ export class CanvasManager extends EventEmitter {
       this.tableCellSelectionTable = null;
     }
 
+    // Cancel relative object dragging if active
+    if (this.isDraggingRelativeObject || this.relativeObjectDragPending) {
+      this.isDraggingRelativeObject = false;
+      this.relativeObjectDragPending = false;
+      this.relativeObjectDragStart = null;
+      this.relativeObjectBeingDragged = null;
+      this.relativeObjectDragStartOffset = null;
+    }
+
     this.isDragging = false;
     this.isResizing = false;
     this.dragStart = null;
@@ -818,6 +926,16 @@ export class CanvasManager extends EventEmitter {
   }
 
   private handleClick(e: MouseEvent, pageId: string): void {
+    // Skip click handling if we just finished resizing - don't clear the selection
+    if (this.wasResizing) {
+      this.wasResizing = false;
+      return;
+    }
+    // Skip click handling if we're in resize mode - mousedown already handled it
+    if (this.isResizing) {
+      return;
+    }
+
     const point = this.getMousePosition(e);
     const now = Date.now();
 
@@ -845,20 +963,30 @@ export class CanvasManager extends EventEmitter {
     // Handle focused table - clicks inside are handled by mousedown
     if (this._focusedControl instanceof TableObject) {
       const table = this._focusedControl;
-      console.log('[handleClick] Focused table detected, checking if click is inside');
-      console.log('[handleClick] Table renderedPosition:', table.renderedPosition);
-      console.log('[handleClick] Click point:', point);
-      if (table.renderedPosition && table.containsPoint(point, table.renderedPosition)) {
+      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+
+      // Check if click is inside any slice of the table
+      let isInsideTable = false;
+      const slice = table.getRenderedSlice(pageIndex);
+      if (slice) {
+        const sliceHeight = slice.height;
+        isInsideTable =
+          point.x >= slice.position.x &&
+          point.x <= slice.position.x + table.width &&
+          point.y >= slice.position.y &&
+          point.y <= slice.position.y + sliceHeight;
+      } else if (table.renderedPosition && table.renderedPageIndex === pageIndex) {
+        // Fallback to renderedPosition if no slice info
+        isInsideTable = table.containsPoint(point, table.renderedPosition);
+      }
+
+      if (isInsideTable) {
         // Click inside focused table - already handled by mousedown
-        console.log('[handleClick] Click INSIDE focused table - returning early (mousedown handles it)');
         return;
       } else {
         // Click outside focused table - exit editing mode
-        console.log('[handleClick] Click OUTSIDE focused table - exiting edit mode');
         this.setFocus(null);
       }
-    } else {
-      console.log('[handleClick] No focused table. _focusedControl:', this._focusedControl);
     }
 
     // Handle text box editing
@@ -896,36 +1024,21 @@ export class CanvasManager extends EventEmitter {
     // Get the page for later use
     const page = this.document.getPage(pageId);
 
-    // Check if we clicked on an embedded object (inline table/text box in text flow)
+    // Check if we clicked on an embedded object using HitTestManager
     // This must be checked BEFORE the text selection early return
-    const activeFlowingContent = this.getFlowingContentForActiveSection();
-
-    // Get the page index for the clicked page
     const clickedPageIndex = this.document.pages.findIndex(p => p.id === pageId);
+    const hitTestManager = this.flowingTextRenderer.hitTestManager;
+    const embeddedObjectHit = hitTestManager.queryByType(clickedPageIndex, point, 'embedded-object');
 
-    if (activeFlowingContent) {
-      const embeddedObjects = activeFlowingContent.getEmbeddedObjects();
-      for (const [, obj] of embeddedObjects.entries()) {
-        // Only check objects rendered on the same page as the click
-        if (obj.renderedPosition && obj.renderedPageIndex === clickedPageIndex) {
-          const objBounds = {
-            x: obj.renderedPosition.x,
-            y: obj.renderedPosition.y,
-            width: obj.width,
-            height: obj.height
-          };
-          if (point.x >= objBounds.x && point.x <= objBounds.x + objBounds.width &&
-              point.y >= objBounds.y && point.y <= objBounds.y + objBounds.height) {
-            // Clicked on embedded object - clear text selection and select it
-            if (activeFlowingContent) {
-              activeFlowingContent.clearSelection();
-            }
-            this.clearSelection();
-            this.selectInlineElement(obj);
-            return;
-          }
-        }
+    if (embeddedObjectHit && embeddedObjectHit.data.type === 'embedded-object') {
+      // Clicked on embedded object - clear text selection and select it
+      const activeFlowingContent = this.getFlowingContentForActiveSection();
+      if (activeFlowingContent) {
+        activeFlowingContent.clearSelection();
       }
+      this.clearSelection();
+      this.selectInlineElement(embeddedObjectHit.data.object);
+      return;
     }
 
     // Check if there's an active text selection - if so, don't process click
@@ -940,9 +1053,10 @@ export class CanvasManager extends EventEmitter {
     }
 
     // First check if we clicked on a repeating section indicator
-    if (page && page.flowingContent) {
-      const sections = page.flowingContent.getRepeatingSections();
-      if (sections.length > 0) {
+    const bodyFlowingContent = this.document.bodyFlowingContent;
+    if (bodyFlowingContent) {
+      const sections = bodyFlowingContent.getRepeatingSections();
+      if (sections.length > 0 && page) {
         const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
         const flowedPages = this.flowingTextRenderer.getFlowedPagesForPage(this.document.pages[0].id);
         if (flowedPages && flowedPages[pageIndex]) {
@@ -1052,7 +1166,7 @@ export class CanvasManager extends EventEmitter {
         return this.document.footerFlowingContent;
       case 'body':
       default:
-        return this.document.pages[0]?.flowingContent || null;
+        return this.document.bodyFlowingContent || null;
     }
   }
 
@@ -1069,46 +1183,18 @@ export class CanvasManager extends EventEmitter {
     const page = this.document.getPage(pageId);
     if (!page) return null;
 
-    // Check selected embedded objects for resize handles
-    for (const elementId of this.selectedElements) {
-      // Check embedded objects in all flowing content sources
-      const flowingContents = [
-        page.flowingContent,
-        this.document.headerFlowingContent,
-        this.document.footerFlowingContent
-      ];
+    // Get page index for HitTestManager query
+    const pageIndex = this.document.pages.indexOf(page);
 
-      for (const flowingContent of flowingContents) {
-        if (flowingContent) {
-          const embeddedObjects = flowingContent.getEmbeddedObjects();
-          for (const [, embeddedObj] of embeddedObjects.entries()) {
-            if (embeddedObj.id === elementId && !embeddedObj.locked) {
-              // Use the rendered position for accurate handle detection
-              const renderedPos = embeddedObj.renderedPosition;
-              if (!renderedPos) continue;
+    // Query HitTestManager for resize handle at this point
+    const hitTestManager = this.flowingTextRenderer.hitTestManager;
+    const target = hitTestManager.queryByType(pageIndex, point, 'resize-handle');
 
-              const bounds = {
-                x: renderedPos.x,
-                y: renderedPos.y,
-                width: embeddedObj.width,
-                height: embeddedObj.height
-              };
-              const handles = this.getResizeHandles(bounds);
-              const handleSize = 8; // Match the handle size used in drawing
-
-              for (const [handleKey, handlePos] of Object.entries(handles)) {
-                const distance = Math.sqrt(
-                  Math.pow(point.x - handlePos.x, 2) + Math.pow(point.y - handlePos.y, 2)
-                );
-
-                if (distance <= handleSize) {
-                  return { handle: handleKey, element: embeddedObj };
-                }
-              }
-            }
-          }
-        }
-      }
+    if (target && target.data.type === 'resize-handle') {
+      return {
+        handle: target.data.handle,
+        element: target.data.element
+      };
     }
 
     return null;
@@ -1123,8 +1209,10 @@ export class CanvasManager extends EventEmitter {
     const firstSelected = Array.from(this.selectedElements)[0];
 
     // Check embedded objects in all flowing content sources
+    // Body content is always in page 0's flowingContent (flows across all pages)
+    const bodyFlowingContent = this.document.bodyFlowingContent;
     const flowingContents = [
-      page.flowingContent,
+      bodyFlowingContent,
       this.document.headerFlowingContent,
       this.document.footerFlowingContent
     ];
@@ -1215,10 +1303,22 @@ export class CanvasManager extends EventEmitter {
     }
 
     // Check for table resize handles
-    const tableHandle = this.getTableResizeHandleAt(point);
+    const tableHandle = this.getTableResizeHandleAt(point, pageId);
     if (tableHandle && tableHandle.handleInfo) {
       canvas.style.cursor = TableResizeHandler.getCursorForHandle(tableHandle.handleInfo.type);
       return;
+    }
+
+    // Check for relative-positioned objects (show move cursor)
+    const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+    const hitTestManager = this.flowingTextRenderer.hitTestManager;
+    const embeddedObjectHit = hitTestManager.queryByType(pageIndex, point, 'embedded-object');
+    if (embeddedObjectHit && embeddedObjectHit.data.type === 'embedded-object') {
+      const object = embeddedObjectHit.data.object as BaseEmbeddedObject;
+      if (object.position === 'relative') {
+        canvas.style.cursor = 'move';
+        return;
+      }
     }
 
     canvas.style.cursor = 'default';
@@ -1226,31 +1326,51 @@ export class CanvasManager extends EventEmitter {
 
   /**
    * Get table resize handle at a point, if any.
+   * Uses HitTestManager to find registered table dividers.
    */
-  private getTableResizeHandleAt(point: Point): {
+  private getTableResizeHandleAt(point: Point, pageId: string): {
     table: TableObject;
     handleInfo: ReturnType<TableResizeHandler['detectResizeHandle']>;
     tablePosition: Point;
   } | null {
-    // Get the active flowing content
-    const activeFlowingContent = this.getFlowingContentForActiveSection();
-    if (!activeFlowingContent) return null;
+    const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
 
-    const embeddedObjects = activeFlowingContent.getEmbeddedObjects();
-    for (const [, obj] of embeddedObjects.entries()) {
-      if (obj instanceof TableObject && obj.renderedPosition) {
-        const handleInfo = this.tableResizeHandler.detectResizeHandle(
-          obj,
-          point,
-          obj.renderedPosition
-        );
-        if (handleInfo) {
-          return {
-            table: obj,
-            handleInfo,
-            tablePosition: obj.renderedPosition
-          };
+    // Query HitTestManager for table divider at this point
+    const hitTestManager = this.flowingTextRenderer.hitTestManager;
+    const target = hitTestManager.queryByType(pageIndex, point, 'table-divider');
+
+    if (target && target.data.type === 'table-divider') {
+      const { table, dividerType, index } = target.data;
+
+      // Get the table position from slice info
+      const slice = table.getRenderedSlice(pageIndex);
+      const tablePosition = slice?.position || table.renderedPosition;
+
+      if (tablePosition) {
+        // Calculate the divider position based on type and index
+        let position: number;
+        if (dividerType === 'column') {
+          const columnPositions = table.getColumnPositions();
+          const columnWidths = table.getColumnWidths();
+          position = columnPositions[index] + columnWidths[index];
+        } else {
+          // Row divider - calculate cumulative height
+          let rowY = 0;
+          for (let i = 0; i <= index; i++) {
+            rowY += table.rows[i].calculatedHeight;
+          }
+          position = rowY;
         }
+
+        return {
+          table,
+          handleInfo: {
+            type: dividerType,
+            index,
+            position
+          },
+          tablePosition
+        };
       }
     }
 
@@ -1260,7 +1380,7 @@ export class CanvasManager extends EventEmitter {
   removeEmbeddedObject(objectId: string): void {
     // Find and remove embedded object from any flowing content
     const flowingContents = [
-      this.document.pages[0]?.flowingContent,
+      this.document.bodyFlowingContent,
       this.document.headerFlowingContent,
       this.document.footerFlowingContent
     ].filter(Boolean);
@@ -1287,7 +1407,7 @@ export class CanvasManager extends EventEmitter {
 
     // Update embedded object's selected state
     const flowingContents = [
-      this.document.pages[0]?.flowingContent,
+      this.document.bodyFlowingContent,
       this.document.headerFlowingContent,
       this.document.footerFlowingContent
     ].filter(Boolean);
@@ -1304,7 +1424,57 @@ export class CanvasManager extends EventEmitter {
 
     console.log('Selected elements after selection:', Array.from(this.selectedElements));
     this.render();
+    this.updateResizeHandleHitTargets();
     this.emit('selection-change', { selectedElements: Array.from(this.selectedElements) });
+  }
+
+  /**
+   * Find an embedded object by ID across all flowing content sources.
+   */
+  private findEmbeddedObjectById(objectId: string): BaseEmbeddedObject | null {
+    const flowingContents = [
+      this.document.bodyFlowingContent,
+      this.document.headerFlowingContent,
+      this.document.footerFlowingContent
+    ].filter(Boolean);
+
+    for (const flowingContent of flowingContents) {
+      const manager = flowingContent.getEmbeddedObjectManager();
+      const entry = manager.findById(objectId);
+      if (entry) {
+        return entry.object;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Update resize handle hit targets based on current selection.
+   * Call this whenever selection changes.
+   */
+  private updateResizeHandleHitTargets(): void {
+    // Collect all selected embedded objects
+    const selectedObjects: BaseEmbeddedObject[] = [];
+    const flowingContents = [
+      this.document.bodyFlowingContent,
+      this.document.headerFlowingContent,
+      this.document.footerFlowingContent
+    ].filter(Boolean);
+
+    for (const elementId of this.selectedElements) {
+      for (const flowingContent of flowingContents) {
+        const embeddedObjects = flowingContent.getEmbeddedObjects();
+        for (const [, obj] of embeddedObjects.entries()) {
+          if (obj.id === elementId) {
+            selectedObjects.push(obj);
+            break;
+          }
+        }
+      }
+    }
+
+    // Update hit targets through FlowingTextRenderer
+    this.flowingTextRenderer.updateResizeHandleTargets(selectedObjects);
   }
 
   clearSelection(): void {
@@ -1314,7 +1484,7 @@ export class CanvasManager extends EventEmitter {
       console.log('Clearing selection for element:', elementId);
       // Check embedded objects in all flowing content sources (body, header, footer)
       const flowingContents = [
-        this.document.pages[0]?.flowingContent,
+        this.document.bodyFlowingContent,
         this.document.headerFlowingContent,
         this.document.footerFlowingContent
       ].filter(Boolean);
@@ -1334,6 +1504,7 @@ export class CanvasManager extends EventEmitter {
     this.selectedSectionId = null;
     console.log('About to render after clearing selection...');
     this.render();
+    this.updateResizeHandleHitTargets();
     this.emit('selection-change', { selectedElements: [] });
   }
 
@@ -1342,6 +1513,13 @@ export class CanvasManager extends EventEmitter {
    */
   getSelectedElements(): string[] {
     return Array.from(this.selectedElements);
+  }
+
+  /**
+   * Check if there are any selected elements.
+   */
+  hasSelectedElements(): boolean {
+    return this.selectedElements.size > 0;
   }
 
   selectBaseEmbeddedObject(embeddedObject: any, isPartOfRangeSelection: boolean = false): void {
@@ -1353,9 +1531,8 @@ export class CanvasManager extends EventEmitter {
     // Also mark the object in the flowing content's embedded objects map
     // This ensures the selected state persists through text reflow
     // Check all flowing content sources (body, header, footer)
-    const page = this.document.pages[0];
     const flowingContents = [
-      page?.flowingContent,
+      this.document.bodyFlowingContent,
       this.document.headerFlowingContent,
       this.document.footerFlowingContent
     ].filter(Boolean);
@@ -1386,6 +1563,7 @@ export class CanvasManager extends EventEmitter {
     }
 
     this.render();
+    this.updateResizeHandleHitTargets();
     this.emit('selection-change', { selectedElements: Array.from(this.selectedElements) });
   }
 
@@ -1399,7 +1577,7 @@ export class CanvasManager extends EventEmitter {
   getBaseEmbeddedObjectAtPoint(point: Point, _pageId: string): BaseEmbeddedObject | null {
     // Check embedded objects in all flowing content sources
     const flowingContents = [
-      this.document.pages[0]?.flowingContent,
+      this.document.bodyFlowingContent,
       this.document.headerFlowingContent,
       this.document.footerFlowingContent
     ].filter(Boolean);
@@ -1850,48 +2028,69 @@ export class CanvasManager extends EventEmitter {
         }
 
         // Handle TableObject double-clicks (enter editing mode)
-        if (obj instanceof TableObject && obj.renderedPosition) {
-          console.log('[handleDoubleClick] Found TableObject, checking containsPoint');
-          console.log('[handleDoubleClick] Table renderedPosition:', obj.renderedPosition, 'size:', obj.size);
-          console.log('[handleDoubleClick] Click point:', point);
-          // Check if point is inside the table
-          if (obj.containsPoint(point, obj.renderedPosition)) {
-            console.log('[handleDoubleClick] Point IS inside table');
-            const ctx = this.contexts.get(pageId);
-            if (ctx && pageIndex >= 0) {
-              // Convert point to table-local coordinates
-              const localPoint = {
-                x: point.x - obj.renderedPosition.x,
-                y: point.y - obj.renderedPosition.y
-              };
+        if (obj instanceof TableObject) {
+          // For multi-page tables, check if this page has a rendered slice
+          const slice = obj.getRenderedSlice(pageIndex);
+          const tablePosition = slice?.position || obj.renderedPosition;
 
-              // Find which cell was double-clicked
-              const cellAddr = obj.getCellAtPoint(localPoint);
-              console.log('[handleDoubleClick] Cell at point:', cellAddr);
-              if (cellAddr) {
-                // Clear any existing text box editing
-                if (this.editingTextBox) {
-                  this.setEditingTextBox(null);
+          if (tablePosition) {
+            // Check if point is inside the table slice on this page
+            const sliceHeight = slice?.height || obj.height;
+            const isInsideTable =
+              point.x >= tablePosition.x &&
+              point.x <= tablePosition.x + obj.width &&
+              point.y >= tablePosition.y &&
+              point.y <= tablePosition.y + sliceHeight;
+
+            if (isInsideTable) {
+              const ctx = this.contexts.get(pageId);
+              if (ctx && pageIndex >= 0) {
+                // Convert point to table-local coordinates
+                // For multi-page tables, we need to adjust the y coordinate based on which slice we're in
+                const localPoint = {
+                  x: point.x - tablePosition.x,
+                  y: point.y - tablePosition.y
+                };
+
+                // If this is a continuation slice (middle or last), adjust y for rows already on previous pages
+                if (slice && (slice.slicePosition === 'middle' || slice.slicePosition === 'last')) {
+                  // On continuation pages, headers are repeated at the top
+                  // The visual layout is: [repeated headers][data rows starting from startRow]
+                  const headerHeight = slice.headerHeight;
+
+                  if (localPoint.y >= headerHeight) {
+                    // Click is in the data rows area
+                    // Transform: subtract header height, add offset where data rows start in full table
+                    localPoint.y = slice.yOffset + (localPoint.y - headerHeight);
+                  }
+                  // If y < headerHeight, click is in repeated header - no adjustment needed
+                  // as row 0 is at y=0 in getCellAtPoint
                 }
 
-                // Focus the clicked cell
-                console.log('[handleDoubleClick] Focusing cell:', cellAddr);
-                obj.focusCell(cellAddr.row, cellAddr.col);
+                // Find which cell was double-clicked
+                const cellAddr = obj.getCellAtPoint(localPoint);
+                if (cellAddr) {
+                  // Clear any existing text box editing
+                  if (this.editingTextBox) {
+                    this.setEditingTextBox(null);
+                  }
 
-                // Get the cell and handle click for cursor positioning
-                const cell = obj.getCell(cellAddr.row, cellAddr.col);
-                console.log('[handleDoubleClick] Got cell:', cell?.id);
-                if (cell) {
-                  // Set this table as the focused control
-                  console.log('[handleDoubleClick] Setting focus to table via setFocus()');
-                  this.setFocus(obj);
+                  // Focus the clicked cell
+                  obj.focusCell(cellAddr.row, cellAddr.col);
 
-                  // Position cursor using handleRegionClick
-                  this.flowingTextRenderer.handleRegionClick(cell, point, pageIndex, ctx);
+                  // Get the cell and handle click for cursor positioning
+                  const cell = obj.getCell(cellAddr.row, cellAddr.col);
+                  if (cell) {
+                    // Set this table as the focused control
+                    this.setFocus(obj);
+
+                    // Position cursor using handleRegionClick
+                    this.flowingTextRenderer.handleRegionClick(cell, point, pageIndex, ctx);
+                  }
+
+                  this.render();
+                  return;
                 }
-
-                this.render();
-                return;
               }
             }
           }
@@ -1942,10 +2141,7 @@ export class CanvasManager extends EventEmitter {
       this.setFocus(textBox);
 
       // Clear selection in main flowing content
-      const page = this.document.pages[0];
-      if (page?.flowingContent) {
-        page.flowingContent.clearSelection();
-      }
+      this.document.bodyFlowingContent.clearSelection();
       // Select the text box
       this.clearSelection();
       this.selectInlineElement({ type: 'embedded-object', object: textBox, textIndex: textBox.textIndex });
@@ -2006,6 +2202,11 @@ export class CanvasManager extends EventEmitter {
       return;
     }
 
+    // Clear table dividers if the previous control was a table
+    if (this._focusedControl instanceof TableObject) {
+      this.flowingTextRenderer.updateTableDividerTargets(null);
+    }
+
     // Blur the previous control and unsubscribe from cursor blink
     if (this._focusedControl) {
       this._focusedControl.offCursorBlink(this.handleFocusedCursorBlink);
@@ -2013,6 +2214,11 @@ export class CanvasManager extends EventEmitter {
     }
 
     this._focusedControl = control;
+
+    // Register table dividers if the new control is a table
+    if (control instanceof TableObject) {
+      this.flowingTextRenderer.updateTableDividerTargets(control);
+    }
 
     // Focus the new control and subscribe to cursor blink
     if (control) {
@@ -2029,6 +2235,17 @@ export class CanvasManager extends EventEmitter {
    */
   getFocusedControl(): Focusable | null {
     return this._focusedControl;
+  }
+
+  /**
+   * Get a snapshot of all flowed content for PDF export.
+   */
+  getFlowedPagesSnapshot(): {
+    body: FlowedPage[];
+    header: FlowedPage | null;
+    footer: FlowedPage | null;
+  } {
+    return this.flowingTextRenderer.getFlowedPagesSnapshot();
   }
 
   /**

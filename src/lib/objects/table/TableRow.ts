@@ -209,7 +209,12 @@ export class TableRow extends EventEmitter {
 
     for (let i = 0; i < this._cells.length; i++) {
       const cell = this._cells[i];
-      const cellWidth = columnWidths[i] || DEFAULT_TABLE_STYLE.defaultColumnWidth;
+
+      // Calculate cell width including colSpan
+      let cellWidth = 0;
+      for (let c = i; c < i + cell.colSpan && c < columnWidths.length; c++) {
+        cellWidth += columnWidths[c] || DEFAULT_TABLE_STYLE.defaultColumnWidth;
+      }
 
       // Set cell bounds temporarily for width calculation
       cell.setBounds({ x: 0, y: 0, width: cellWidth, height: 1000 });

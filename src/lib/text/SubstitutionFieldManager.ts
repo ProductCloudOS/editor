@@ -39,7 +39,7 @@ export class SubstitutionFieldManager extends EventEmitter {
       fieldType: config?.fieldType,
       displayFormat: config?.displayFormat,
       defaultValue: config?.defaultValue,
-      formatting: undefined
+      formatting: config?.formatting
     };
 
     this.fields.set(textIndex, field);
@@ -72,6 +72,31 @@ export class SubstitutionFieldManager extends EventEmitter {
    */
   hasFieldAt(textIndex: number): boolean {
     return this.fields.has(textIndex);
+  }
+
+  /**
+   * Get all substitution fields in a range.
+   * @param start Start of range (inclusive)
+   * @param end End of range (exclusive)
+   */
+  getFieldsInRange(start: number, end: number): Array<{ textIndex: number; field: SubstitutionField }> {
+    const result: Array<{ textIndex: number; field: SubstitutionField }> = [];
+    for (const [textIndex, field] of this.fields) {
+      if (textIndex >= start && textIndex < end) {
+        result.push({ textIndex, field });
+      }
+    }
+    return result.sort((a, b) => a.textIndex - b.textIndex);
+  }
+
+  /**
+   * Insert a field at a specific position (for undo restoration).
+   * Unlike insert(), this preserves the field's existing ID.
+   */
+  insertAt(textIndex: number, field: SubstitutionField): void {
+    field.textIndex = textIndex;
+    this.fields.set(textIndex, field);
+    this.emit('field-added', { field });
   }
 
   /**

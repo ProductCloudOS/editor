@@ -44,13 +44,19 @@ export class TextFormattingManager extends EventEmitter {
 
   /**
    * Apply formatting to a range of characters.
+   * @param start Start position
+   * @param end End position
+   * @param formatting Formatting to apply
+   * @param silent If true, don't emit the formatting-changed event (used for inherited formatting during text insertion)
    */
-  applyFormatting(start: number, end: number, formatting: Partial<TextFormattingStyle>): void {
+  applyFormatting(start: number, end: number, formatting: Partial<TextFormattingStyle>, silent: boolean = false): void {
     for (let i = start; i < end; i++) {
       const current = this.formatting.get(i) || { ...this._defaultFormatting };
       this.formatting.set(i, { ...current, ...formatting });
     }
-    this.emit('formatting-changed', { start, end, formatting });
+    if (!silent) {
+      this.emit('formatting-changed', { start, end, formatting });
+    }
   }
 
   /**

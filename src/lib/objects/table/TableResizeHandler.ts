@@ -68,15 +68,19 @@ export class TableResizeHandler {
   detectResizeHandle(
     table: TableObject,
     point: Point,
-    tablePosition: Point
+    tablePosition: Point,
+    sliceHeight?: number
   ): ResizeHandleInfo | null {
     // Convert to table-local coordinates
     const localX = point.x - tablePosition.x;
     const localY = point.y - tablePosition.y;
 
-    // Check if point is within table bounds
+    // Use slice height if provided (for multi-page tables), otherwise full table height
+    const effectiveHeight = sliceHeight !== undefined ? sliceHeight : table.size.height;
+
+    // Check if point is within table/slice bounds
     if (localX < 0 || localY < 0 ||
-        localX > table.size.width || localY > table.size.height) {
+        localX > table.size.width || localY > effectiveHeight) {
       return null;
     }
 

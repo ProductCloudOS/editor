@@ -1,48 +1,24 @@
 import { PageData, DocumentSettings, Point, Size } from '../types';
 import { EventEmitter } from '../events/EventEmitter';
-import { FlowingTextContent } from '../text';
 
+/**
+ * Represents a single page in the document.
+ *
+ * Note: Body content is now document-level (Document.bodyFlowingContent),
+ * not page-level. Pages are primarily used for layout and rendering purposes.
+ */
 export class Page extends EventEmitter {
   private _id: string;
-  private _flowingContent: FlowingTextContent;
   private _settings: DocumentSettings;
 
   constructor(data: PageData, settings: DocumentSettings) {
     super();
     this._id = data.id;
     this._settings = settings;
-    this._flowingContent = new FlowingTextContent();
-
-    this.setupFlowingContentListeners();
-  }
-
-  private setupFlowingContentListeners(): void {
-    this._flowingContent.on('content-changed', () => {
-      this.emit('flowing-content-changed');
-      this.emit('change');
-    });
-
-    this._flowingContent.on('cursor-moved', (data) => {
-      this.emit('cursor-moved', data);
-    });
-
-    this._flowingContent.on('formatting-changed', (data) => {
-      this.emit('formatting-changed', data);
-      this.emit('change');
-    });
-
-    this._flowingContent.on('inline-element-added', (data) => {
-      this.emit('inline-element-added', data);
-      this.emit('change');
-    });
   }
 
   get id(): string {
     return this._id;
-  }
-
-  get flowingContent(): FlowingTextContent {
-    return this._flowingContent;
   }
 
   get settings(): DocumentSettings {

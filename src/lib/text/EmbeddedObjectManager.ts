@@ -70,6 +70,18 @@ export class EmbeddedObjectManager extends EventEmitter {
   insert(object: BaseEmbeddedObject, textIndex: number): void {
     object.textIndex = textIndex;
     this.objects.set(textIndex, object);
+
+    // Listen to object property changes and forward them
+    object.on('position-changed', () => {
+      this.emit('object-updated', { object, textIndex: object.textIndex });
+    });
+    object.on('offset-changed', () => {
+      this.emit('object-updated', { object, textIndex: object.textIndex });
+    });
+    object.on('size-changed', () => {
+      this.emit('object-updated', { object, textIndex: object.textIndex });
+    });
+
     this.emit('object-added', { object, textIndex });
   }
 

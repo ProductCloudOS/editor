@@ -1,7 +1,7 @@
 import { BaseEmbeddedObject } from './BaseEmbeddedObject';
 import { TextBoxObjectConfig, EmbeddedObjectData, Point, TextBoxBorder, BorderSide, DEFAULT_BORDER_SIDE, Rect } from './types';
 import { FlowingTextContent } from '../text/FlowingTextContent';
-import { FlowedLine, FlowedPage, Focusable } from '../text/types';
+import { FlowedLine, FlowedPage, Focusable, TextFormattingStyle, SubstitutionField } from '../text/types';
 import { TextPositionCalculator } from '../text/TextPositionCalculator';
 import { EditableTextRegion, RegionType } from '../text/EditableTextRegion';
 
@@ -484,6 +484,7 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable, Edit
       textIndex: this._textIndex,
       position: this._position,
       size: { ...this._size },
+      relativeOffset: this._position === 'relative' ? { ...this._relativeOffset } : undefined,
       data: {
         content: this._content,
         fontFamily: this._fontFamily,
@@ -499,12 +500,82 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable, Edit
     };
   }
 
+  /**
+   * Restore the text box state from serialized data.
+   * Used for undo/redo operations.
+   */
+  restoreFromData(data: EmbeddedObjectData): void {
+    // Restore size
+    this._size = { ...data.size };
+
+    // Restore position mode
+    if (data.position) {
+      this._position = data.position;
+    }
+
+    // Restore relative offset
+    if (data.relativeOffset) {
+      this._relativeOffset = { ...data.relativeOffset };
+    }
+
+    // Restore text box specific data
+    const boxData = data.data as {
+      content?: string;
+      fontFamily?: string;
+      fontSize?: number;
+      color?: string;
+      backgroundColor?: string;
+      border?: TextBoxBorder;
+      padding?: number;
+      formattingRuns?: Array<[number, Record<string, unknown>]>;
+      substitutionFields?: SubstitutionField[];
+    };
+
+    if (boxData) {
+      if (boxData.content !== undefined) {
+        this._content = boxData.content;
+        // Update the FlowingTextContent
+        this._flowingContent.setText(boxData.content);
+      }
+      if (boxData.fontFamily !== undefined) this._fontFamily = boxData.fontFamily;
+      if (boxData.fontSize !== undefined) this._fontSize = boxData.fontSize;
+      if (boxData.color !== undefined) this._color = boxData.color;
+      if (boxData.backgroundColor !== undefined) this._backgroundColor = boxData.backgroundColor;
+      if (boxData.border !== undefined) this._border = { ...boxData.border };
+      if (boxData.padding !== undefined) this._padding = boxData.padding;
+
+      // Restore formatting runs
+      if (boxData.formattingRuns) {
+        const formattingManager = this._flowingContent.getFormattingManager();
+        formattingManager.clear();
+        for (const [index, style] of boxData.formattingRuns) {
+          formattingManager.applyFormatting(index, index + 1, style as unknown as TextFormattingStyle);
+        }
+      }
+
+      // Restore substitution fields
+      if (boxData.substitutionFields) {
+        const fieldManager = this._flowingContent.getSubstitutionFieldManager();
+        fieldManager.clear();
+        for (const field of boxData.substitutionFields) {
+          fieldManager.insertAt(field.textIndex, field);
+        }
+      }
+    }
+
+    // Mark layout as dirty and emit change
+    this._flowedLines = [];
+    this._flowedPage = null;
+    this.emit('state-restored', { data });
+  }
+
   clone(): TextBoxObject {
     return new TextBoxObject({
       id: `${this._id}-clone-${Date.now()}`,
       textIndex: this._textIndex,
       position: this._position,
       size: { ...this._size },
+      relativeOffset: this._position === 'relative' ? { ...this._relativeOffset } : undefined,
       content: this._content,
       fontFamily: this._fontFamily,
       fontSize: this._fontSize,

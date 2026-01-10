@@ -69,8 +69,21 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
   private _cachedRowHeights: number[] = [];
   private _cachedRowPositions: number[] = [];
 
+  // Multi-page rendering info: pageIndex -> slice render info
+  private _renderedSlices: Map<number, {
+    position: Point;
+    height: number;
+    slicePosition: 'only' | 'first' | 'middle' | 'last';
+    sliceIndex: number;
+    yOffset: number;  // Y offset in full table where this slice's data rows start
+    headerHeight: number;  // Height of repeated header on continuation pages
+  }> = new Map();
+
   constructor(config: TableObjectConfig) {
     super(config);
+
+    // Tables ONLY support block positioning - force it regardless of config
+    this._position = 'block';
 
     // Initialize defaults
     this._defaultCellPadding = config.defaultCellPadding ?? DEFAULT_TABLE_STYLE.cellPadding;
@@ -133,6 +146,23 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
   get objectType(): string {
     return 'table';
+  }
+
+  /**
+   * Tables ONLY support block positioning.
+   * Override the setter to enforce this constraint.
+   */
+  override set position(value: 'inline' | 'block' | 'relative') {
+    // Tables only support block positioning - ignore any attempt to set other modes
+    if (value !== 'block') {
+      console.warn(`Tables only support 'block' positioning. Ignoring attempt to set '${value}'.`);
+    }
+    // Always set to block
+    super.position = 'block';
+  }
+
+  override get position(): 'inline' | 'block' | 'relative' {
+    return super.position;
   }
 
   // ============================================
@@ -213,6 +243,20 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
   }
 
   /**
+   * Get the height of the first non-header (data) row.
+   * Returns 0 if there are no data rows.
+   * Used to determine if at least one data row can fit when splitting tables.
+   */
+  getFirstDataRowHeight(): number {
+    for (const row of this._rows) {
+      if (!row.isHeader) {
+        return row.calculatedHeight;
+      }
+    }
+    return 0;
+  }
+
+  /**
    * Get header row indices.
    */
   getHeaderRowIndices(): number[] {
@@ -223,6 +267,71 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       }
     }
     return indices;
+  }
+
+  // ============================================
+  // Header Column Management
+  // ============================================
+
+  /**
+   * Get all header columns.
+   */
+  get headerColumns(): TableColumnConfig[] {
+    return this._columns.filter(col => col.isHeader);
+  }
+
+  /**
+   * Get the number of header columns.
+   */
+  get headerColumnCount(): number {
+    return this._columns.filter(col => col.isHeader).length;
+  }
+
+  /**
+   * Set a column as a header column.
+   * @param colIndex The column index to set as header.
+   * @param isHeader Whether the column is a header (default true).
+   */
+  setHeaderColumn(colIndex: number, isHeader: boolean = true): void {
+    const col = this._columns[colIndex];
+    if (!col) return;
+
+    col.isHeader = isHeader;
+    this.emit('header-column-changed', { colIndex, isHeader });
+  }
+
+  /**
+   * Set multiple columns as header columns.
+   * All columns from 0 to colCount-1 will be set as headers.
+   * @param colCount Number of header columns (starting from column 0).
+   */
+  setHeaderColumnCount(colCount: number): void {
+    for (let i = 0; i < this._columns.length; i++) {
+      this._columns[i].isHeader = i < colCount;
+    }
+    this.emit('header-columns-changed', { count: colCount });
+  }
+
+  /**
+   * Get header column indices.
+   */
+  getHeaderColumnIndices(): number[] {
+    const indices: number[] = [];
+    for (let i = 0; i < this._columns.length; i++) {
+      if (this._columns[i].isHeader) {
+        indices.push(i);
+      }
+    }
+    return indices;
+  }
+
+  /**
+   * Check if a cell is in a header row or header column.
+   */
+  isHeaderCell(rowIndex: number, colIndex: number): boolean {
+    const row = this._rows[rowIndex];
+    const col = this._columns[colIndex];
+    return (row?.isHeader === true) || (col?.isHeader === true);
   }
 
   // ============================================
@@ -477,6 +586,7 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
   /**
    * Insert a column at the specified index.
+   * If the column is inserted within a merged cell region, the merge is extended.
    */
   insertColumn(colIndex: number, width?: number): void {
     const actualWidth = width ?? DEFAULT_TABLE_STYLE.defaultColumnWidth;
@@ -488,6 +598,20 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
     if (colIndex < 0) colIndex = 0;
     if (colIndex > this._columns.length) colIndex = this._columns.length;
+
+    // Extend colSpan for cells that span across the insertion point
+    for (let rowIdx = 0; rowIdx < this._rows.length; rowIdx++) {
+      const row = this._rows[rowIdx];
+      for (let c = 0; c < colIndex; c++) {
+        const cell = row.getCell(c);
+        if (cell && cell.colSpan > 1) {
+          // Check if this cell's span crosses the insertion point
+          if (c + cell.colSpan > colIndex) {
+            cell.colSpan++;
+          }
+        }
+      }
+    }
 
     this._columns.splice(colIndex, 0, newColumn);
 
@@ -534,6 +658,7 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
   /**
    * Insert a row at the specified index.
+   * If the row is inserted within a merged cell region, the merge is extended.
    */
   insertRow(rowIndex: number, config?: TableRowConfig): TableRow {
     const defaultCellConfig: Partial<TableCellConfig> = {
@@ -548,6 +673,20 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
     if (rowIndex < 0) rowIndex = 0;
     if (rowIndex > this._rows.length) rowIndex = this._rows.length;
+
+    // Extend rowSpan for cells that span across the insertion point
+    for (let r = 0; r < rowIndex; r++) {
+      const existingRow = this._rows[r];
+      for (let c = 0; c < existingRow.cellCount; c++) {
+        const cell = existingRow.getCell(c);
+        if (cell && cell.rowSpan > 1) {
+          // Check if this cell's span crosses the insertion point
+          if (r + cell.rowSpan > rowIndex) {
+            cell.rowSpan++;
+          }
+        }
+      }
+    }
 
     this._rows.splice(rowIndex, 0, row);
 
@@ -984,39 +1123,66 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       };
     }
 
+    // Find the first non-header row index
+    let firstDataRowIndex = 0;
+    while (firstDataRowIndex < this._rows.length && this._rows[firstDataRowIndex].isHeader) {
+      firstDataRowIndex++;
+    }
+
+    // Check if at least one data row fits on the first page
+    // If no data rows fit, the entire table should move to the next page
+    // Header rows don't count since they repeat on every page anyway
+    const firstDataRowHeight = firstDataRowIndex < this._rows.length
+      ? this._rows[firstDataRowIndex].calculatedHeight
+      : 0;
+
+    // Calculate if first data row can fit after all headers on first page
+    const firstPageHasRoom = headerHeight + firstDataRowHeight <= availableHeightFirstPage;
+
+    // If first data row doesn't fit on first page, table should start on "next page"
+    // which becomes the first page of the table (not a continuation)
+    // Note: TextLayout.paginateLines() will detect this case and move the table to the next page
+    const effectiveFirstPageHeight = firstPageHasRoom
+      ? availableHeightFirstPage
+      : availableHeightOtherPages;
+
     const slices: TablePageSlice[] = [];
     let currentRow = 0;
     let yOffset = 0;
-    let isFirstPage = true;
+    let isActuallyFirstSlice = true;  // Track if this is the first slice we're actually adding
 
     while (currentRow < this._rows.length) {
-      const availableHeight = isFirstPage ? availableHeightFirstPage : availableHeightOtherPages;
-      const isContinuation = !isFirstPage;
-
-      // On continuation pages, we need space for header rows
-      const effectiveAvailable = isContinuation
-        ? availableHeight - headerHeight
-        : availableHeight;
+      const availableHeight = isActuallyFirstSlice ? effectiveFirstPageHeight : availableHeightOtherPages;
+      // isContinuation = true only for slices after the first one we add
+      // The first slice of a table (regardless of page) should have isContinuation = false
+      // because headers are included, not repeated
+      const isContinuation = !isActuallyFirstSlice;
 
       // Find how many rows fit in this slice
       let sliceHeight = isContinuation ? headerHeight : 0;
       let sliceEndRow = currentRow;
       const sliceStartY = yOffset;
 
-      // Skip header rows on first page (they're included normally)
-      // On continuation pages, we'll render header rows separately
+      // On first slice (with headers), start from row 0
+      // On continuation slices, skip to first data row (headers are rendered separately)
+      if (isContinuation && currentRow < firstDataRowIndex) {
+        currentRow = firstDataRowIndex;
+        sliceEndRow = currentRow;
+      }
+
       while (sliceEndRow < this._rows.length) {
         const row = this._rows[sliceEndRow];
-        const rowHeight = row.calculatedHeight;
 
-        // Skip header rows when counting - they're handled separately on continuation pages
+        // Skip header rows on continuation pages - they're handled separately
         if (isContinuation && row.isHeader) {
           sliceEndRow++;
           continue;
         }
 
+        const rowHeight = row.calculatedHeight;
+
         // Check if this row fits
-        if (sliceHeight + rowHeight > (isContinuation ? availableHeight : effectiveAvailable)) {
+        if (sliceHeight + rowHeight > availableHeight) {
           // Row doesn't fit, end this slice
           break;
         }
@@ -1026,7 +1192,22 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
         sliceEndRow++;
       }
 
-      // Ensure we make progress (at least one row per slice)
+      // Check for merged cells that span past sliceEndRow - adjust break point
+      sliceEndRow = this.adjustSliceEndForMergedCells(currentRow, sliceEndRow);
+
+      // Recalculate slice height if we adjusted the end row
+      if (sliceEndRow < this._rows.length) {
+        sliceHeight = isContinuation ? headerHeight : 0;
+        yOffset = sliceStartY;
+        for (let r = currentRow; r < sliceEndRow; r++) {
+          if (!(isContinuation && this._rows[r].isHeader)) {
+            sliceHeight += this._rows[r].calculatedHeight;
+            yOffset += this._rows[r].calculatedHeight;
+          }
+        }
+      }
+
+      // Ensure we make progress (at least one data row per slice)
       if (sliceEndRow === currentRow && currentRow < this._rows.length) {
         // Force include at least one non-header row
         while (sliceEndRow < this._rows.length && this._rows[sliceEndRow].isHeader) {
@@ -1039,16 +1220,27 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
         }
       }
 
-      slices.push({
-        startRow: currentRow,
-        endRow: sliceEndRow,
-        isContinuation,
-        height: sliceHeight,
-        yOffset: sliceStartY
-      });
+      // Check if this slice contains any data rows
+      // (first slice should contain headers + at least one data row)
+      const hasDataRows = isActuallyFirstSlice
+        ? sliceEndRow > firstDataRowIndex
+        : sliceEndRow > currentRow;
+
+      // Only add the slice if it contains data rows
+      // (don't create header-only slices)
+      if (hasDataRows || sliceEndRow === this._rows.length) {
+        slices.push({
+          startRow: currentRow,
+          endRow: sliceEndRow,
+          isContinuation,
+          height: sliceHeight,
+          yOffset: sliceStartY
+        });
+        // Only mark as no longer first slice after we actually add one
+        isActuallyFirstSlice = false;
+      }
 
       currentRow = sliceEndRow;
-      isFirstPage = false;
     }
 
     return {
@@ -1057,6 +1249,35 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       headerHeight,
       headerRowIndices
     };
+  }
+
+  /**
+   * Adjust slice end row to avoid breaking merged cells across pages.
+   * If a cell in the current slice spans past sliceEndRow, move the break earlier.
+   */
+  private adjustSliceEndForMergedCells(sliceStartRow: number, sliceEndRow: number): number {
+    // Look for any cells in rows before sliceEndRow that span past it
+    for (let r = sliceStartRow; r < sliceEndRow; r++) {
+      const row = this._rows[r];
+      for (let c = 0; c < row.cellCount; c++) {
+        const cell = row.getCell(c);
+        if (cell && cell.rowSpan > 1) {
+          const spanEnd = r + cell.rowSpan;
+          if (spanEnd > sliceEndRow && spanEnd <= this._rows.length) {
+            // This cell spans past our break point
+            // Option 1: Break before this cell's row
+            // Option 2: Include all spanned rows (if they fit)
+            // We choose Option 1 for safety - break before the spanning cell
+            if (r > sliceStartRow) {
+              return r;
+            }
+            // If the spanning cell is at the start of the slice, we have to include it
+            // Let the slice include all spanned rows (may overflow, but necessary)
+          }
+        }
+      }
+    }
+    return sliceEndRow;
   }
 
   /**
@@ -1170,14 +1391,7 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       y += row.calculatedHeight;
     }
 
-    // Draw selection border if selected
-    if (this._selected) {
-      ctx.strokeStyle = '#0066ff';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([4, 4]);
-      ctx.strokeRect(0, 0, this._size.width, slice.height);
-      ctx.setLineDash([]);
-    }
+    // Note: Selection border is drawn by FlowingTextRenderer with correct slice height
   }
 
   /**
@@ -1212,6 +1426,54 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
    */
   needsPageSplit(availableHeight: number): boolean {
     return this._size.height > availableHeight;
+  }
+
+  // ============================================
+  // Multi-Page Slice Tracking
+  // ============================================
+
+  /**
+   * Set the rendered slice info for a specific page.
+   * Called by FlowingTextRenderer during rendering.
+   */
+  setRenderedSlice(
+    pageIndex: number,
+    position: Point,
+    height: number,
+    slicePosition: 'only' | 'first' | 'middle' | 'last',
+    sliceIndex: number = 0,
+    yOffset: number = 0,
+    headerHeight: number = 0
+  ): void {
+    this._renderedSlices.set(pageIndex, { position, height, slicePosition, sliceIndex, yOffset, headerHeight });
+  }
+
+  /**
+   * Get the rendered slice info for a specific page.
+   */
+  getRenderedSlice(pageIndex: number): {
+    position: Point;
+    height: number;
+    slicePosition: 'only' | 'first' | 'middle' | 'last';
+    sliceIndex: number;
+    yOffset: number;
+    headerHeight: number;
+  } | undefined {
+    return this._renderedSlices.get(pageIndex);
+  }
+
+  /**
+   * Clear all rendered slice info (called before re-rendering).
+   */
+  clearRenderedSlices(): void {
+    this._renderedSlices.clear();
+  }
+
+  /**
+   * Get all page indices that have rendered slices.
+   */
+  getRenderedPageIndices(): number[] {
+    return Array.from(this._renderedSlices.keys());
   }
 
   // ============================================
@@ -1463,6 +1725,11 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
     if (result.success) {
       this.updateCoveredCells();
+      this.markLayoutDirty();
+      // Mark the merged cell for reflow since its bounds have changed
+      if (result.mergedCell) {
+        result.mergedCell.markReflowDirty();
+      }
       this.clearSelection();
       this.emit('cells-merged', { range: mergeRange });
       this.emit('content-changed', {});
@@ -1482,6 +1749,13 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
     if (result.success) {
       this.updateCoveredCells();
+      this.markLayoutDirty();
+      // Mark all affected cells for reflow since their bounds have changed
+      if (result.newCells) {
+        for (const cell of result.newCells) {
+          cell.markReflowDirty();
+        }
+      }
       this.emit('cell-split', { row, col });
       this.emit('content-changed', {});
     }
@@ -1830,6 +2104,52 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
     table.updateCoveredCells();
     return table;
+  }
+
+  /**
+   * Restore this table's structure from a snapshot.
+   * Used for undo/redo of structure changes.
+   */
+  restoreFromSnapshot(data: TableObjectData): void {
+    // Restore columns
+    this._columns = data.data.columns.map(col => ({ ...col }));
+
+    // Restore rows
+    this._rows = [];
+    for (const rowData of data.data.rows) {
+      const row = TableRow.fromData(rowData);
+      this.setupRowListeners(row);
+      this._rows.push(row);
+    }
+
+    // Restore row loops if any
+    this._rowLoops.clear();
+    if (data.data.rowLoops) {
+      for (const loopData of data.data.rowLoops) {
+        this._rowLoops.set(loopData.id, {
+          id: loopData.id,
+          fieldPath: loopData.fieldPath,
+          startRowIndex: loopData.startRowIndex,
+          endRowIndex: loopData.endRowIndex
+        });
+      }
+    }
+
+    // Restore defaults
+    if (data.data.defaultCellPadding !== undefined) {
+      this._defaultCellPadding = data.data.defaultCellPadding;
+    }
+    if (data.data.defaultBorderColor !== undefined) {
+      this._defaultBorderColor = data.data.defaultBorderColor;
+    }
+    if (data.data.defaultBorderWidth !== undefined) {
+      this._defaultBorderWidth = data.data.defaultBorderWidth;
+    }
+
+    this._layoutDirty = true;
+    this.updateCoveredCells();
+    this.updateSizeFromLayout();
+    this.emit('structure-restored', {});
   }
 
   clone(): TableObject {

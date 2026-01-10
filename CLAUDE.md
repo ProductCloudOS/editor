@@ -228,3 +228,4 @@ When making changes:
 4. Test with both regular and inline elements
 5. Verify multi-page document behavior
 6. Update this CLAUDE.md file with significant changes
+7. **For features that impact document content**: Also update PDF export (`PDFGenerator.ts`) and serialization/deserialization (`FlowingTextContent.toData()/fromData()`, `Document.toData()`) to ensure round-trip fidelity

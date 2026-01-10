@@ -7,16 +7,18 @@ export class Document extends EventEmitter {
   private _pages: Page[] = [];
   private _settings: DocumentSettings;
   private _version: string = '1.0.0';
+  private _bodyFlowingContent: FlowingTextContent;
   private _headerFlowingContent: FlowingTextContent;
   private _footerFlowingContent: FlowingTextContent;
 
   constructor(data?: DocumentData) {
     super();
 
-    // Initialize header and footer flowing content
+    // Initialize body, header and footer flowing content (document-level)
+    this._bodyFlowingContent = new FlowingTextContent();
     this._headerFlowingContent = new FlowingTextContent();
     this._footerFlowingContent = new FlowingTextContent();
-    this.setupHeaderFooterListeners();
+    this.setupFlowingContentListeners();
 
     if (data) {
       this._version = data.version || this._version;
@@ -25,12 +27,15 @@ export class Document extends EventEmitter {
         this.addPage(new Page(pageData, this._settings));
       });
 
-      // Load header/footer content if present
-      if (data.headerContent?.text) {
-        this._headerFlowingContent.setText(data.headerContent.text);
+      // Load body/header/footer content if present (with full serialization support)
+      if (data.bodyContent) {
+        this._bodyFlowingContent.loadFromData(data.bodyContent);
       }
-      if (data.footerContent?.text) {
-        this._footerFlowingContent.setText(data.footerContent.text);
+      if (data.headerContent) {
+        this._headerFlowingContent.loadFromData(data.headerContent);
+      }
+      if (data.footerContent) {
+        this._footerFlowingContent.loadFromData(data.footerContent);
       }
     } else {
       this._settings = this.getDefaultSettings();
@@ -38,7 +43,26 @@ export class Document extends EventEmitter {
     }
   }
 
-  private setupHeaderFooterListeners(): void {
+  private setupFlowingContentListeners(): void {
+    this._bodyFlowingContent.on('content-changed', () => {
+      this.emit('body-content-changed');
+      this.emit('change');
+    });
+
+    this._bodyFlowingContent.on('cursor-moved', (data) => {
+      this.emit('cursor-moved', data);
+    });
+
+    this._bodyFlowingContent.on('formatting-changed', (data) => {
+      this.emit('formatting-changed', data);
+      this.emit('change');
+    });
+
+    this._bodyFlowingContent.on('inline-element-added', (data) => {
+      this.emit('inline-element-added', data);
+      this.emit('change');
+    });
+
     this._headerFlowingContent.on('content-changed', () => {
       this.emit('header-content-changed');
       this.emit('change');
@@ -83,6 +107,10 @@ export class Document extends EventEmitter {
 
   get version(): string {
     return this._version;
+  }
+
+  get bodyFlowingContent(): FlowingTextContent {
+    return this._bodyFlowingContent;
   }
 
   get headerFlowingContent(): FlowingTextContent {
@@ -159,13 +187,13 @@ export class Document extends EventEmitter {
   toData(): DocumentData {
     return {
       version: this._version,
-      settings: this._settings,
+      settings: { ...this._settings },
       pages: this._pages.map(page => page.toData()),
-      headerContent: {
-        text: this._headerFlowingContent.getText()
-      },
-      footerContent: {
-        text: this._footerFlowingContent.getText()
+      bodyContent: this._bodyFlowingContent.toData(),
+      headerContent: this._headerFlowingContent.toData(),
+      footerContent: this._footerFlowingContent.toData(),
+      metadata: {
+        modifiedAt: new Date().toISOString()
       }
     };
   }
@@ -174,7 +202,8 @@ export class Document extends EventEmitter {
     this._pages.forEach(page => page.removeAllListeners());
     this._pages = [];
 
-    // Clear header and footer content
+    // Clear body, header and footer content
+    this._bodyFlowingContent.setText('');
     this._headerFlowingContent.setText('');
     this._footerFlowingContent.setText('');
 
