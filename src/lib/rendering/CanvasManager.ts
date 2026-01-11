@@ -1389,7 +1389,10 @@ export class CanvasManager extends EventEmitter {
       const manager = flowingContent.getEmbeddedObjectManager();
       const entry = manager.findById(objectId);
       if (entry) {
-        manager.remove(entry.textIndex);
+        // Remove the placeholder character from the text first
+        flowingContent.deleteTextAt(entry.textIndex, 1);
+        // The deleteTextAt will shift objects, so we don't need to call manager.remove
+        // The object is automatically removed when the placeholder is deleted
         break;
       }
     }

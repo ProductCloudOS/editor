@@ -58,6 +58,14 @@ export class PCEditor extends EventEmitter {
     this.container = container;
     this.options = this.mergeOptions(options);
     this.document = new Document();
+
+    // Apply constructor options to document settings
+    this.document.updateSettings({
+      pageSize: this.options.pageSize,
+      pageOrientation: this.options.pageOrientation,
+      units: this.options.units
+    });
+
     this.dataBinder = new DataBinder();
     this.pdfGenerator = new PDFGenerator();
 
@@ -1759,6 +1767,14 @@ export class PCEditor extends EventEmitter {
 
     if (flowingContent) {
       flowingContent.setCursorPosition(position);
+
+      // Update currentSelection to reflect the new cursor position
+      this.currentSelection = {
+        type: 'cursor',
+        position: position,
+        section: this._activeEditingSection
+      };
+      this.emitSelectionChange();
     }
   }
 
