@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ParagraphFormattingManager } from '../../../lib/text/ParagraphFormatting';
-import { DEFAULT_PARAGRAPH_FORMATTING } from '../../../lib/text/types';
+import { DEFAULT_PARAGRAPH_FORMATTING, DEFAULT_LIST_FORMATTING, ListFormatting } from '../../../lib/text/types';
 
 describe('ParagraphFormattingManager', () => {
   let manager: ParagraphFormattingManager;
@@ -530,6 +530,491 @@ describe('ParagraphFormattingManager', () => {
       expect(newManager.getFormattingForParagraph(0).alignment).toBe('center');
       expect(newManager.getFormattingForParagraph(10).alignment).toBe('right');
       expect(newManager.getFormattingForParagraph(20).alignment).toBe('justify');
+    });
+  });
+
+  // ============================================================
+  // FEATURE-0013: List Formatting Tests
+  // ============================================================
+
+  describe('setListFormatting()', () => {
+    it('should set bullet list formatting for a paragraph', () => {
+      const listFormatting: ListFormatting = {
+        listType: 'bullet',
+        bulletStyle: 'disc',
+        nestingLevel: 0
+      };
+
+      manager.setListFormatting(0, listFormatting);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting).toBeDefined();
+      expect(formatting.listFormatting?.listType).toBe('bullet');
+      expect(formatting.listFormatting?.bulletStyle).toBe('disc');
+      expect(formatting.listFormatting?.nestingLevel).toBe(0);
+    });
+
+    it('should set numbered list formatting for a paragraph', () => {
+      const listFormatting: ListFormatting = {
+        listType: 'number',
+        numberStyle: 'decimal',
+        nestingLevel: 0,
+        startNumber: 1
+      };
+
+      manager.setListFormatting(0, listFormatting);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.listType).toBe('number');
+      expect(formatting.listFormatting?.numberStyle).toBe('decimal');
+      expect(formatting.listFormatting?.startNumber).toBe(1);
+    });
+
+    it('should emit paragraph-formatting-changed event', () => {
+      const handler = vi.fn();
+      manager.on('paragraph-formatting-changed', handler);
+
+      const listFormatting: ListFormatting = {
+        listType: 'bullet',
+        bulletStyle: 'disc',
+        nestingLevel: 0
+      };
+
+      manager.setListFormatting(5, listFormatting);
+
+      expect(handler).toHaveBeenCalledWith({
+        paragraphStart: 5,
+        listFormatting
+      });
+    });
+
+    it('should update existing list formatting', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+      manager.setListFormatting(0, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.listType).toBe('number');
+    });
+
+    it('should preserve alignment when setting list formatting', () => {
+      manager.setAlignment(0, 'center');
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.alignment).toBe('center');
+      expect(formatting.listFormatting?.listType).toBe('bullet');
+    });
+
+    it('should set undefined to remove list formatting', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+      manager.setListFormatting(0, undefined);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting).toBeUndefined();
+    });
+  });
+
+  describe('clearListFormatting()', () => {
+    it('should remove list formatting from a paragraph', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+      manager.clearListFormatting(0);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting).toBeUndefined();
+    });
+
+    it('should preserve alignment when clearing list formatting', () => {
+      manager.setAlignment(0, 'right');
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+      manager.clearListFormatting(0);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.alignment).toBe('right');
+      expect(formatting.listFormatting).toBeUndefined();
+    });
+
+    it('should emit paragraph-formatting-changed event', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+
+      const handler = vi.fn();
+      manager.on('paragraph-formatting-changed', handler);
+
+      manager.clearListFormatting(0);
+
+      expect(handler).toHaveBeenCalledWith({
+        paragraphStart: 0,
+        listFormatting: undefined
+      });
+    });
+  });
+
+  describe('toggleList()', () => {
+    it('should toggle bullet list on for unformatted paragraph', () => {
+      manager.toggleList(0, 'bullet');
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.listType).toBe('bullet');
+      expect(formatting.listFormatting?.bulletStyle).toBe('disc');
+    });
+
+    it('should toggle numbered list on for unformatted paragraph', () => {
+      manager.toggleList(0, 'number');
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.listType).toBe('number');
+      expect(formatting.listFormatting?.numberStyle).toBe('decimal');
+    });
+
+    it('should toggle off when same list type already applied', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+      manager.toggleList(0, 'bullet');
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting).toBeUndefined();
+    });
+
+    it('should switch list type when different type applied', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+      manager.toggleList(0, 'number');
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.listType).toBe('number');
+    });
+
+    it('should preserve nesting level when switching list type', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 2 });
+      manager.toggleList(0, 'number');
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.listType).toBe('number');
+      expect(formatting.listFormatting?.nestingLevel).toBe(2);
+    });
+
+    it('should emit paragraph-formatting-changed event', () => {
+      const handler = vi.fn();
+      manager.on('paragraph-formatting-changed', handler);
+
+      manager.toggleList(0, 'bullet');
+
+      expect(handler).toHaveBeenCalled();
+    });
+  });
+
+  describe('indentParagraph()', () => {
+    it('should increase nesting level for list paragraph', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+      manager.indentParagraph(0);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.nestingLevel).toBe(1);
+    });
+
+    it('should cycle bullet style when indenting', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+      manager.indentParagraph(0);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.bulletStyle).toBe('circle');
+    });
+
+    it('should cycle bullet styles: disc -> circle -> square -> disc', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+
+      manager.indentParagraph(0);
+      expect(manager.getFormattingForParagraph(0).listFormatting?.bulletStyle).toBe('circle');
+
+      manager.indentParagraph(0);
+      expect(manager.getFormattingForParagraph(0).listFormatting?.bulletStyle).toBe('square');
+
+      manager.indentParagraph(0);
+      expect(manager.getFormattingForParagraph(0).listFormatting?.bulletStyle).toBe('disc');
+    });
+
+    it('should cycle number styles: decimal -> lower-alpha -> lower-roman -> decimal', () => {
+      manager.setListFormatting(0, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+
+      manager.indentParagraph(0);
+      expect(manager.getFormattingForParagraph(0).listFormatting?.numberStyle).toBe('lower-alpha');
+
+      manager.indentParagraph(0);
+      expect(manager.getFormattingForParagraph(0).listFormatting?.numberStyle).toBe('lower-roman');
+
+      manager.indentParagraph(0);
+      expect(manager.getFormattingForParagraph(0).listFormatting?.numberStyle).toBe('decimal');
+    });
+
+    it('should respect maximum nesting level of 8', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 8 });
+      manager.indentParagraph(0);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.nestingLevel).toBe(8);
+    });
+
+    it('should convert non-list paragraph to bullet list when indenting', () => {
+      // No list formatting set
+      manager.indentParagraph(0);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.listType).toBe('bullet');
+      expect(formatting.listFormatting?.nestingLevel).toBe(0);
+    });
+
+    it('should emit paragraph-formatting-changed event', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+
+      const handler = vi.fn();
+      manager.on('paragraph-formatting-changed', handler);
+
+      manager.indentParagraph(0);
+
+      expect(handler).toHaveBeenCalled();
+    });
+  });
+
+  describe('outdentParagraph()', () => {
+    it('should decrease nesting level for list paragraph', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'circle', nestingLevel: 2 });
+      manager.outdentParagraph(0);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.nestingLevel).toBe(1);
+    });
+
+    it('should cycle bullet style when outdenting', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'circle', nestingLevel: 1 });
+      manager.outdentParagraph(0);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting?.bulletStyle).toBe('disc');
+    });
+
+    it('should remove list formatting when outdenting at level 0', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+      manager.outdentParagraph(0);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting).toBeUndefined();
+    });
+
+    it('should do nothing for non-list paragraph', () => {
+      manager.setAlignment(0, 'center');
+      manager.outdentParagraph(0);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.listFormatting).toBeUndefined();
+      expect(formatting.alignment).toBe('center');
+    });
+
+    it('should emit paragraph-formatting-changed event', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 1 });
+
+      const handler = vi.fn();
+      manager.on('paragraph-formatting-changed', handler);
+
+      manager.outdentParagraph(0);
+
+      expect(handler).toHaveBeenCalled();
+    });
+  });
+
+  describe('list formatting with shiftParagraphs()', () => {
+    it('should shift list formatting when text inserted', () => {
+      manager.setListFormatting(5, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+
+      // Insert 3 characters at position 2
+      manager.shiftParagraphs(2, 3, 'He123llo World');
+
+      // List formatting should now be at index 8
+      const formatting = manager.getFormattingForParagraph(8);
+      expect(formatting.listFormatting?.listType).toBe('bullet');
+
+      // Old index should not have list formatting
+      expect(manager.getFormattingForParagraph(5).listFormatting).toBeUndefined();
+    });
+
+    it('should inherit list formatting for new paragraphs from newlines', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 1 });
+
+      // Insert a newline, creating a new paragraph
+      const contentAfter = 'Hel\nlo World';
+      manager.shiftParagraphs(3, 1, contentAfter);
+
+      // New paragraph at index 4 should inherit list formatting
+      const formatting = manager.getFormattingForParagraph(4);
+      expect(formatting.listFormatting?.listType).toBe('bullet');
+      expect(formatting.listFormatting?.nestingLevel).toBe(1);
+    });
+  });
+
+  describe('list formatting with handleDeletion()', () => {
+    it('should remove list formatting for deleted paragraphs', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+      manager.setListFormatting(5, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+      manager.setListFormatting(10, { listType: 'bullet', bulletStyle: 'circle', nestingLevel: 1 });
+
+      // Delete range containing paragraph at 5
+      manager.handleDeletion(3, 5);
+
+      // Paragraph 10 should shift to 5
+      const formatting = manager.getFormattingForParagraph(5);
+      expect(formatting.listFormatting?.listType).toBe('bullet');
+      expect(formatting.listFormatting?.bulletStyle).toBe('circle');
+    });
+  });
+
+  describe('list formatting serialization', () => {
+    it('should serialize list formatting in toJSON()', () => {
+      manager.setAlignment(0, 'center');
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 1 });
+
+      const json = manager.toJSON();
+
+      expect(json).toHaveLength(1);
+      expect(json[0].formatting.listFormatting).toEqual({
+        listType: 'bullet',
+        bulletStyle: 'disc',
+        nestingLevel: 1
+      });
+    });
+
+    it('should deserialize list formatting in fromJSON()', () => {
+      const data = [
+        {
+          paragraphStart: 0,
+          formatting: {
+            alignment: 'center' as const,
+            listFormatting: {
+              listType: 'number' as const,
+              numberStyle: 'lower-alpha' as const,
+              nestingLevel: 2,
+              startNumber: 5
+            }
+          }
+        }
+      ];
+
+      manager.fromJSON(data);
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.alignment).toBe('center');
+      expect(formatting.listFormatting?.listType).toBe('number');
+      expect(formatting.listFormatting?.numberStyle).toBe('lower-alpha');
+      expect(formatting.listFormatting?.nestingLevel).toBe(2);
+      expect(formatting.listFormatting?.startNumber).toBe(5);
+    });
+
+    it('should handle round-trip serialization with list formatting', () => {
+      manager.setAlignment(0, 'right');
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'square', nestingLevel: 3 });
+      manager.setListFormatting(10, { listType: 'number', numberStyle: 'upper-roman', nestingLevel: 0 });
+
+      const json = manager.toJSON();
+
+      const newManager = new ParagraphFormattingManager();
+      newManager.fromJSON(json);
+
+      const f0 = newManager.getFormattingForParagraph(0);
+      expect(f0.alignment).toBe('right');
+      expect(f0.listFormatting?.listType).toBe('bullet');
+      expect(f0.listFormatting?.bulletStyle).toBe('square');
+      expect(f0.listFormatting?.nestingLevel).toBe(3);
+
+      const f10 = newManager.getFormattingForParagraph(10);
+      expect(f10.listFormatting?.listType).toBe('number');
+      expect(f10.listFormatting?.numberStyle).toBe('upper-roman');
+    });
+  });
+
+  describe('applyToRange() with list formatting', () => {
+    it('should apply list formatting to range of paragraphs', () => {
+      const content = 'One\nTwo\nThree';
+      const listFormatting: ListFormatting = {
+        listType: 'bullet',
+        bulletStyle: 'disc',
+        nestingLevel: 0
+      };
+
+      manager.applyToRange(0, 12, content, { listFormatting });
+
+      expect(manager.getFormattingForParagraph(0).listFormatting?.listType).toBe('bullet');
+      expect(manager.getFormattingForParagraph(4).listFormatting?.listType).toBe('bullet');
+      expect(manager.getFormattingForParagraph(8).listFormatting?.listType).toBe('bullet');
+    });
+
+    it('should preserve list formatting when applying alignment to range', () => {
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+
+      const content = 'Hello World';
+      manager.applyToRange(0, 10, content, { alignment: 'center' });
+
+      const formatting = manager.getFormattingForParagraph(0);
+      expect(formatting.alignment).toBe('center');
+      expect(formatting.listFormatting?.listType).toBe('bullet');
+    });
+  });
+
+  describe('getListNumber()', () => {
+    it('should return 1 for first numbered paragraph', () => {
+      const content = 'First item';
+      manager.setListFormatting(0, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+
+      expect(manager.getListNumber(0, content)).toBe(1);
+    });
+
+    it('should count consecutive numbered paragraphs at same level', () => {
+      const content = 'First\nSecond\nThird';
+      manager.setListFormatting(0, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+      manager.setListFormatting(6, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+      manager.setListFormatting(13, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+
+      expect(manager.getListNumber(0, content)).toBe(1);
+      expect(manager.getListNumber(6, content)).toBe(2);
+      expect(manager.getListNumber(13, content)).toBe(3);
+    });
+
+    it('should restart numbering after non-list paragraph', () => {
+      const content = 'First\nNormal\nSecond';
+      manager.setListFormatting(0, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+      // No list formatting for paragraph at 6 (Normal)
+      manager.setListFormatting(13, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+
+      expect(manager.getListNumber(0, content)).toBe(1);
+      expect(manager.getListNumber(13, content)).toBe(1); // Restarts after non-list
+    });
+
+    it('should track nested lists independently', () => {
+      const content = 'One\nNested1\nNested2\nTwo';
+      manager.setListFormatting(0, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+      manager.setListFormatting(4, { listType: 'number', numberStyle: 'lower-alpha', nestingLevel: 1 });
+      manager.setListFormatting(12, { listType: 'number', numberStyle: 'lower-alpha', nestingLevel: 1 });
+      manager.setListFormatting(20, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+
+      expect(manager.getListNumber(0, content)).toBe(1);  // Level 0
+      expect(manager.getListNumber(4, content)).toBe(1);  // Level 1 starts at 1
+      expect(manager.getListNumber(12, content)).toBe(2); // Level 1 continues
+      expect(manager.getListNumber(20, content)).toBe(2); // Level 0 continues
+    });
+
+    it('should return undefined for bullet lists', () => {
+      const content = 'Bullet item';
+      manager.setListFormatting(0, { listType: 'bullet', bulletStyle: 'disc', nestingLevel: 0 });
+
+      expect(manager.getListNumber(0, content)).toBeUndefined();
+    });
+
+    it('should return undefined for non-list paragraphs', () => {
+      const content = 'Normal paragraph';
+      expect(manager.getListNumber(0, content)).toBeUndefined();
+    });
+
+    it('should respect startNumber when set', () => {
+      const content = 'First\nSecond';
+      manager.setListFormatting(0, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0, startNumber: 5 });
+      manager.setListFormatting(6, { listType: 'number', numberStyle: 'decimal', nestingLevel: 0 });
+
+      expect(manager.getListNumber(0, content)).toBe(5);
+      expect(manager.getListNumber(6, content)).toBe(6);
     });
   });
 });

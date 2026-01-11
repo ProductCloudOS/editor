@@ -5,15 +5,9 @@
 (none)
 
 ## New Features
-- [ ] FEATURE-0009 Undo/Redo functionality
 - [ ] FEATURE-0011 Additional selection logic such as double-click to select a word, shift and mouse down, select all, Click/drag to select across pages, etc
-- [ ] FEATURE-0013 Need support for nested bullet points in text
-- [ ] FEATURE-0014 Need support for hyperlinks
 - [ ] FEATURE-0015 Additional controls in the editor that are optional components of the library but that work with the editor via the editor API only (no bypass).  Start with x and y rulers that can connect to the editor canvas
 - [ ] FEATURE-0016 Fix the handling of text immediately before and after block objects as they do not justify or page split properly
-- [x] FEATURE-0017 Unit tests at the editor API level to ensure that the editor is operating as expected
-- [x] FEATURE-0018 Low level unit tests to achieve 95% code coverage
-- [ ] FEATURE-0019 Copy/Paste.  Should support proprietary format that covers all editor capability as well as plain text and rich text.  Also need to support paste of a png image
 
 ### Performance & Polish
 - [ ] **Optimize rendering performance**
@@ -55,6 +49,10 @@
 
 ## Completed Recently ✅
 
+- ✅ FEATURE-0013 Nested Bullet Points - Implemented bullet and numbered list support with nesting up to 8 levels. Extended ParagraphFormattingManager with list methods (toggleList, indentParagraph, outdentParagraph). Added ListFormatting types with bullet styles (disc, circle, square) and number styles (decimal, lower-alpha, lower-roman). TextLayout calculates list indentation and generates list markers. FlowingTextRenderer renders bullet/number markers. Tab/Shift+Tab keyboard shortcuts for indent/outdent. Demo has toolbar buttons for lists.
+- ✅ FEATURE-0014 Hyperlinks - Implemented hyperlink support for clickable URLs within text. Created HyperlinkManager class following SubstitutionFieldManager pattern. Hyperlinks store URL, title, and optional formatting (color, underline). FlowingTextRenderer renders hyperlinks with blue underlined text. PCEditor API provides insertHyperlink, removeHyperlink, updateHyperlink, getHyperlinkAt methods. Full serialization support. Demo has Insert/Edit Link button and properties pane.
+- ✅ FEATURE-0019 Copy/Paste - Implemented comprehensive clipboard functionality supporting proprietary format (full fidelity), plain text, HTML (interoperability), and image paste. Created ClipboardManager class with copy/read/extractSelectionContent methods. HtmlConverter handles HTML import/export. Proprietary format uses custom MIME type (application/x-pceditor-content) preserving text, formatting runs, paragraph formatting, substitution fields, embedded objects, and hyperlinks with relative indices. PCEditor provides copy(), cut(), paste() methods and Ctrl+C/X/V keyboard shortcuts. Demo has Cut/Copy/Paste toolbar buttons.
+- ✅ FEATURE-0009 Undo/Redo - Implemented transaction-based undo/redo system that works across all content sources (body, header, footer, table cells, text boxes). Created TransactionManager for undo/redo stacks with coalescing, TextMutationObserver for text mutations, ObjectMutationObserver for object operations (resize, move, table structure, property changes), ContentDiscovery for auto-registration of content sources, FocusTracker for cursor restoration, and MutationUndo for reversal logic. Removed old command-based UndoManager/UndoRecorder system. All text edits, object operations, and table structure changes are now undoable.
 - ✅ FEATURE-0018 Low-Level Unit Tests - Implemented comprehensive unit test suite achieving significant code coverage. Added 1537 tests across 34 test files covering: EventEmitter, TextState, TextFormatting, ParagraphFormatting, EmbeddedObjectManager, SubstitutionFieldManager, TextLayout, TransactionManager, BaseEmbeddedObject, FocusTracker, Page, Document, DataBinder, TextBoxObject, ImageObject, MutationUndo, TextMutationObserver, EmbeddedObjectFactory, HitTestManager, ContentDiscovery, ObjectMutationObserver, TableCell, TableRow, and FlowingTextContent. Many core components at 100% coverage.
 - ✅ FEATURE-0017 Unit Tests at Editor API Level - Implemented comprehensive unit test suite using Vitest with jsdom. Added 300 tests across 10 test files covering: initialization, document management (save/load), text operations, text formatting, substitution fields, embedded objects, table operations, undo/redo, document settings, and events. Includes canvas mocking, test helpers, and document fixtures for testing.
 - ✅ BUG-0025 Table Page Splitting - Fixed page splitting when first row intersects page border. Tables now move entirely to next page if no data rows can fit (headers don't count since they repeat). Added getFirstDataRowHeight() method and updated pagination logic to check if at least one data row fits before splitting.

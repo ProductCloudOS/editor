@@ -5,6 +5,7 @@ import { ParagraphFormattingManager } from './ParagraphFormatting';
 import { SubstitutionFieldManager } from './SubstitutionFieldManager';
 import { EmbeddedObjectManager } from './EmbeddedObjectManager';
 import { RepeatingSectionManager } from './RepeatingSectionManager';
+import { HyperlinkManager, Hyperlink, HyperlinkOptions, HyperlinkUpdate } from './HyperlinkManager';
 import { TextLayout, LayoutContext } from './TextLayout';
 import { TextMeasurer } from './TextMeasurer';
 import {
@@ -50,6 +51,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
   private substitutionFields: SubstitutionFieldManager;
   private embeddedObjects: EmbeddedObjectManager;
   private repeatingSections: RepeatingSectionManager;
+  private hyperlinks: HyperlinkManager;
   private layout: TextLayout;
 
   // Focus state
@@ -67,6 +69,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     this.substitutionFields = new SubstitutionFieldManager();
     this.embeddedObjects = new EmbeddedObjectManager();
     this.repeatingSections = new RepeatingSectionManager();
+    this.hyperlinks = new HyperlinkManager();
     this.layout = new TextLayout();
 
     this.setupEventForwarding();
@@ -103,12 +106,13 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     });
 
     this.textState.on('text-deleted', (data) => {
-      // Handle deletion in formatting, substitution fields, embedded objects, sections, and paragraph formatting
+      // Handle deletion in formatting, substitution fields, embedded objects, sections, paragraph formatting, and hyperlinks
       this.formatting.handleDeletion(data.start, data.length);
       this.substitutionFields.handleDeletion(data.start, data.length);
       this.embeddedObjects.handleDeletion(data.start, data.length);
       this.repeatingSections.handleDeletion(data.start, data.length);
       this.paragraphFormatting.handleDeletion(data.start, data.length);
+      this.hyperlinks.handleDeletion(data.start, data.length);
 
       this.emit('content-changed', {
         text: this.textState.getText(),
@@ -171,6 +175,19 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     this.repeatingSections.on('section-updated', (data) => {
       this.emit('repeating-section-updated', data);
     });
+
+    // Forward hyperlink events
+    this.hyperlinks.on('hyperlink-added', (data) => {
+      this.emit('hyperlink-added', data);
+    });
+
+    this.hyperlinks.on('hyperlink-removed', (data) => {
+      this.emit('hyperlink-removed', data);
+    });
+
+    this.hyperlinks.on('hyperlink-updated', (data) => {
+      this.emit('hyperlink-updated', data);
+    });
   }
 
   // ============================================
@@ -218,11 +235,12 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
       // If empty text, formattingToApply stays null and default formatting is used
     }
 
-    // Shift formatting, fields, objects, and sections after the insertion point
+    // Shift formatting, fields, objects, sections, and hyperlinks after the insertion point
     this.formatting.shiftFormatting(insertAt, text.length);
     this.substitutionFields.shiftFields(insertAt, text.length);
     this.embeddedObjects.shiftObjects(insertAt, text.length);
     this.repeatingSections.shiftSections(insertAt, text.length);
+    this.hyperlinks.shiftHyperlinks(insertAt, text.length);
 
     // Insert the text first so we have the full content
     this.textState.insertText(text, insertAt);
@@ -300,11 +318,12 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
    * This method inserts text without moving the cursor or affecting pending formatting.
    */
   insertTextAt(position: number, text: string): void {
-    // Shift formatting, fields, objects, and sections after the insertion point
+    // Shift formatting, fields, objects, sections, and hyperlinks after the insertion point
     this.formatting.shiftFormatting(position, text.length);
     this.substitutionFields.shiftFields(position, text.length);
     this.embeddedObjects.shiftObjects(position, text.length);
     this.repeatingSections.shiftSections(position, text.length);
+    this.hyperlinks.shiftHyperlinks(position, text.length);
 
     // Insert the text
     const content = this.textState.getText();
@@ -319,12 +338,13 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
    * This method deletes text without moving the cursor.
    */
   deleteTextAt(position: number, length: number): void {
-    // Handle deletion in formatting, substitution fields, embedded objects, sections, and paragraph formatting
+    // Handle deletion in formatting, substitution fields, embedded objects, sections, paragraph formatting, and hyperlinks
     this.formatting.handleDeletion(position, length);
     this.substitutionFields.handleDeletion(position, length);
     this.embeddedObjects.handleDeletion(position, length);
     this.repeatingSections.handleDeletion(position, length);
     this.paragraphFormatting.handleDeletion(position, length);
+    this.hyperlinks.handleDeletion(position, length);
 
     // Delete the text
     const content = this.textState.getText();
@@ -704,6 +724,32 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
   }
 
   /**
+   * Insert a substitution field at a specific text index.
+   * Used for paste operations where the text already contains U+FFFC.
+   */
+  insertSubstitutionFieldAt(
+    fieldName: string,
+    textIndex: number,
+    config?: SubstitutionFieldConfig
+  ): SubstitutionField {
+    // Register the substitution field at the specific position
+    // The text (U+FFFC) should already be inserted
+    const field = this.substitutionFields.insert(fieldName, textIndex, config);
+
+    // Apply formatting to the placeholder if provided
+    if (config?.formatting) {
+      this.formatting.applyFormatting(textIndex, textIndex + 1, config.formatting);
+    }
+
+    this.emit('substitution-field-inserted', {
+      position: textIndex,
+      field
+    });
+
+    return field;
+  }
+
+  /**
    * Remove a substitution field at a specific text index.
    */
   removeSubstitutionField(textIndex: number): boolean {
@@ -742,6 +788,25 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
    */
   getEmbeddedObjects(): Map<number, BaseEmbeddedObject> {
     return this.embeddedObjects.getObjects();
+  }
+
+  /**
+   * Get embedded objects within a text index range.
+   */
+  getEmbeddedObjectsInRange(start: number, end: number): Array<{ textIndex: number; object: BaseEmbeddedObject }> {
+    return this.embeddedObjects.getObjectsInRange(start, end);
+  }
+
+  /**
+   * Get substitution fields within a text index range.
+   */
+  getSubstitutionFieldsInRange(start: number, end: number): Array<{ textIndex: number; field: SubstitutionField } & SubstitutionField> {
+    const entries = this.substitutionFields.getFieldsInRange(start, end);
+    return entries.map(entry => ({
+      ...entry.field,
+      textIndex: entry.textIndex,
+      field: entry.field
+    }));
   }
 
   /**
@@ -916,6 +981,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     this.substitutionFields.clear();
     this.embeddedObjects.clear();
     this.repeatingSections.clear();
+    this.hyperlinks.clear();
   }
 
   // ============================================
@@ -1037,10 +1103,29 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
         }
         return true;
 
-      case 'Tab':
+      case 'Tab': {
         e.preventDefault();
-        this.replaceSelection('\t');
+        // Check if we're in a list item
+        const cursorPos = this.textState.getCursorPosition();
+        const content = this.textState.getText();
+        const paragraphStart = this.paragraphFormatting.getParagraphStart(cursorPos, content);
+        const paragraphFormat = this.paragraphFormatting.getFormattingForParagraph(paragraphStart);
+
+        if (paragraphFormat.listFormatting) {
+          // In a list - indent or outdent
+          if (e.shiftKey) {
+            this.outdentParagraph();
+          } else {
+            this.indentParagraph();
+          }
+        } else if (e.shiftKey) {
+          // Shift+Tab outside list - do nothing
+        } else {
+          // Regular Tab - insert tab character
+          this.replaceSelection('\t');
+        }
         return true;
+      }
 
       default:
         // Handle regular text input
@@ -1206,6 +1291,156 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
    */
   getLayoutEngine(): TextLayout {
     return this.layout;
+  }
+
+  /**
+   * Get the hyperlink manager.
+   */
+  getHyperlinkManager(): HyperlinkManager {
+    return this.hyperlinks;
+  }
+
+  // ============================================
+  // List Operations
+  // ============================================
+
+  /**
+   * Toggle bullet list for the current paragraph (or selection).
+   */
+  toggleBulletList(): void {
+    const cursorPos = this.textState.getCursorPosition();
+    const content = this.textState.getText();
+    const paragraphStart = this.paragraphFormatting.getParagraphStart(cursorPos, content);
+    this.paragraphFormatting.toggleList(paragraphStart, 'bullet');
+    this.emit('content-changed', { text: content, cursorPosition: cursorPos });
+  }
+
+  /**
+   * Toggle numbered list for the current paragraph (or selection).
+   */
+  toggleNumberedList(): void {
+    const cursorPos = this.textState.getCursorPosition();
+    const content = this.textState.getText();
+    const paragraphStart = this.paragraphFormatting.getParagraphStart(cursorPos, content);
+    this.paragraphFormatting.toggleList(paragraphStart, 'number');
+    this.emit('content-changed', { text: content, cursorPosition: cursorPos });
+  }
+
+  /**
+   * Indent the current paragraph (increase list nesting level).
+   */
+  indentParagraph(): void {
+    const cursorPos = this.textState.getCursorPosition();
+    const content = this.textState.getText();
+    const paragraphStart = this.paragraphFormatting.getParagraphStart(cursorPos, content);
+    this.paragraphFormatting.indentParagraph(paragraphStart);
+    this.emit('content-changed', { text: content, cursorPosition: cursorPos });
+  }
+
+  /**
+   * Outdent the current paragraph (decrease list nesting level).
+   */
+  outdentParagraph(): void {
+    const cursorPos = this.textState.getCursorPosition();
+    const content = this.textState.getText();
+    const paragraphStart = this.paragraphFormatting.getParagraphStart(cursorPos, content);
+    this.paragraphFormatting.outdentParagraph(paragraphStart);
+    this.emit('content-changed', { text: content, cursorPosition: cursorPos });
+  }
+
+  /**
+   * Get the list formatting for the current paragraph.
+   */
+  getListFormatting(): import('./types').ListFormatting | undefined {
+    const cursorPos = this.textState.getCursorPosition();
+    const content = this.textState.getText();
+    const paragraphStart = this.paragraphFormatting.getParagraphStart(cursorPos, content);
+    return this.paragraphFormatting.getFormattingForParagraph(paragraphStart).listFormatting;
+  }
+
+  // ============================================
+  // Hyperlink Operations
+  // ============================================
+
+  /**
+   * Insert a hyperlink for the current selection.
+   * The selection range is used to define the hyperlink bounds.
+   * @returns The created hyperlink, or null if no selection
+   */
+  insertHyperlink(url: string, options?: HyperlinkOptions): Hyperlink | null {
+    const selection = this.getSelection();
+    if (!selection || selection.start === selection.end) {
+      return null;
+    }
+
+    const hyperlink = this.hyperlinks.insert(url, selection.start, selection.end, options);
+    this.emit('content-changed', {
+      text: this.textState.getText(),
+      cursorPosition: this.textState.getCursorPosition()
+    });
+    return hyperlink;
+  }
+
+  /**
+   * Insert a hyperlink at a specific range.
+   */
+  insertHyperlinkAt(url: string, startIndex: number, endIndex: number, options?: HyperlinkOptions): Hyperlink {
+    const hyperlink = this.hyperlinks.insert(url, startIndex, endIndex, options);
+    this.emit('content-changed', {
+      text: this.textState.getText(),
+      cursorPosition: this.textState.getCursorPosition()
+    });
+    return hyperlink;
+  }
+
+  /**
+   * Remove a hyperlink by ID.
+   */
+  removeHyperlink(id: string): void {
+    this.hyperlinks.remove(id);
+    this.emit('content-changed', {
+      text: this.textState.getText(),
+      cursorPosition: this.textState.getCursorPosition()
+    });
+  }
+
+  /**
+   * Update a hyperlink's properties.
+   */
+  updateHyperlink(id: string, updates: HyperlinkUpdate): void {
+    this.hyperlinks.update(id, updates);
+    this.emit('content-changed', {
+      text: this.textState.getText(),
+      cursorPosition: this.textState.getCursorPosition()
+    });
+  }
+
+  /**
+   * Get the hyperlink at a specific text index.
+   */
+  getHyperlinkAt(textIndex: number): Hyperlink | undefined {
+    return this.hyperlinks.getHyperlinkAt(textIndex);
+  }
+
+  /**
+   * Get a hyperlink by ID.
+   */
+  getHyperlinkById(id: string): Hyperlink | undefined {
+    return this.hyperlinks.getHyperlinkById(id);
+  }
+
+  /**
+   * Get all hyperlinks overlapping a range.
+   */
+  getHyperlinksInRange(startIndex: number, endIndex: number): Hyperlink[] {
+    return this.hyperlinks.getHyperlinksInRange(startIndex, endIndex);
+  }
+
+  /**
+   * Get all hyperlinks.
+   */
+  getAllHyperlinks(): Hyperlink[] {
+    return this.hyperlinks.getAll();
   }
 
   // ============================================
@@ -1390,13 +1625,17 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
       });
     });
 
+    // Serialize hyperlinks
+    const hyperlinksData = this.hyperlinks.toJSON();
+
     return {
       text,
       formattingRuns: formattingRuns.length > 0 ? formattingRuns : undefined,
       paragraphFormatting: paragraphFormatting.length > 0 ? paragraphFormatting : undefined,
       substitutionFields: substitutionFieldsData.length > 0 ? substitutionFieldsData : undefined,
       repeatingSections: repeatingSectionsData.length > 0 ? repeatingSectionsData : undefined,
-      embeddedObjects: embeddedObjects.length > 0 ? embeddedObjects : undefined
+      embeddedObjects: embeddedObjects.length > 0 ? embeddedObjects : undefined,
+      hyperlinks: hyperlinksData.length > 0 ? hyperlinksData : undefined
     };
   }
 
@@ -1452,6 +1691,11 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
           console.warn(`Failed to create embedded object of type: ${ref.object.objectType}`);
         }
       }
+    }
+
+    // Restore hyperlinks
+    if (data.hyperlinks && data.hyperlinks.length > 0) {
+      content.getHyperlinkManager().fromJSON(data.hyperlinks);
     }
 
     return content;
@@ -1512,6 +1756,11 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
           console.warn(`Failed to create embedded object of type: ${ref.object.objectType}`);
         }
       }
+    }
+
+    // Restore hyperlinks
+    if (data.hyperlinks && data.hyperlinks.length > 0) {
+      this.hyperlinks.fromJSON(data.hyperlinks);
     }
   }
 }

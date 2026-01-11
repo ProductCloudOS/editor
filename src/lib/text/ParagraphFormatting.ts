@@ -1,5 +1,20 @@
 import { EventEmitter } from '../events/EventEmitter';
-import { ParagraphFormatting, TextAlignment, DEFAULT_PARAGRAPH_FORMATTING } from './types';
+import {
+  ParagraphFormatting,
+  TextAlignment,
+  DEFAULT_PARAGRAPH_FORMATTING,
+  ListFormatting,
+  BulletStyle,
+  NumberStyle,
+  DEFAULT_LIST_FORMATTING
+} from './types';
+
+// Bullet style cycle for indentation
+const BULLET_STYLE_CYCLE: BulletStyle[] = ['disc', 'circle', 'square'];
+// Number style cycle for indentation
+const NUMBER_STYLE_CYCLE: NumberStyle[] = ['decimal', 'lower-alpha', 'lower-roman'];
+// Maximum nesting level
+const MAX_NESTING_LEVEL = 8;
 
 /**
  * Manages per-paragraph formatting (alignment, etc.).
@@ -71,6 +86,199 @@ export class ParagraphFormattingManager extends EventEmitter {
     const current = this.formatting.get(paragraphStartIndex) || { ...this._defaultFormatting };
     this.formatting.set(paragraphStartIndex, { ...current, alignment });
     this.emit('paragraph-formatting-changed', { paragraphStart: paragraphStartIndex, alignment });
+  }
+
+  /**
+   * Set list formatting for a paragraph.
+   * Pass undefined to remove list formatting.
+   */
+  setListFormatting(paragraphStartIndex: number, listFormatting: ListFormatting | undefined): void {
+    const current = this.formatting.get(paragraphStartIndex) || { ...this._defaultFormatting };
+    if (listFormatting === undefined) {
+      // Remove list formatting
+      const { listFormatting: _, ...rest } = current;
+      this.formatting.set(paragraphStartIndex, rest as ParagraphFormatting);
+    } else {
+      this.formatting.set(paragraphStartIndex, { ...current, listFormatting });
+    }
+    this.emit('paragraph-formatting-changed', { paragraphStart: paragraphStartIndex, listFormatting });
+  }
+
+  /**
+   * Clear list formatting from a paragraph (preserving other formatting).
+   */
+  clearListFormatting(paragraphStartIndex: number): void {
+    this.setListFormatting(paragraphStartIndex, undefined);
+  }
+
+  /**
+   * Toggle list type for a paragraph.
+   * If paragraph already has the same list type, remove list formatting.
+   * If paragraph has different list type or no list, apply the new type.
+   */
+  toggleList(paragraphStartIndex: number, listType: 'bullet' | 'number'): void {
+    const current = this.formatting.get(paragraphStartIndex);
+    const existingList = current?.listFormatting;
+
+    if (existingList?.listType === listType) {
+      // Same type - toggle off
+      this.clearListFormatting(paragraphStartIndex);
+    } else {
+      // Different type or no list - apply new type
+      const nestingLevel = existingList?.nestingLevel ?? 0;
+      const newListFormatting: ListFormatting = listType === 'bullet'
+        ? {
+            listType: 'bullet',
+            bulletStyle: this.getBulletStyleForLevel(nestingLevel),
+            nestingLevel
+          }
+        : {
+            listType: 'number',
+            numberStyle: this.getNumberStyleForLevel(nestingLevel),
+            nestingLevel
+          };
+      this.setListFormatting(paragraphStartIndex, newListFormatting);
+    }
+  }
+
+  /**
+   * Increase the nesting level of a list paragraph.
+   * If paragraph is not a list, convert it to a bullet list at level 0.
+   */
+  indentParagraph(paragraphStartIndex: number): void {
+    const current = this.formatting.get(paragraphStartIndex);
+    const existingList = current?.listFormatting;
+
+    if (!existingList) {
+      // Not a list - convert to bullet list at level 0
+      this.setListFormatting(paragraphStartIndex, { ...DEFAULT_LIST_FORMATTING });
+      return;
+    }
+
+    // Already at max level - don't increase
+    if (existingList.nestingLevel >= MAX_NESTING_LEVEL) {
+      return;
+    }
+
+    const newLevel = existingList.nestingLevel + 1;
+    const newListFormatting: ListFormatting = existingList.listType === 'bullet'
+      ? {
+          ...existingList,
+          nestingLevel: newLevel,
+          bulletStyle: this.getBulletStyleForLevel(newLevel)
+        }
+      : {
+          ...existingList,
+          nestingLevel: newLevel,
+          numberStyle: this.getNumberStyleForLevel(newLevel)
+        };
+    this.setListFormatting(paragraphStartIndex, newListFormatting);
+  }
+
+  /**
+   * Decrease the nesting level of a list paragraph.
+   * If at level 0, remove list formatting entirely.
+   */
+  outdentParagraph(paragraphStartIndex: number): void {
+    const current = this.formatting.get(paragraphStartIndex);
+    const existingList = current?.listFormatting;
+
+    if (!existingList) {
+      // Not a list - nothing to do
+      return;
+    }
+
+    if (existingList.nestingLevel === 0) {
+      // At level 0 - remove list formatting
+      this.clearListFormatting(paragraphStartIndex);
+      return;
+    }
+
+    const newLevel = existingList.nestingLevel - 1;
+    const newListFormatting: ListFormatting = existingList.listType === 'bullet'
+      ? {
+          ...existingList,
+          nestingLevel: newLevel,
+          bulletStyle: this.getBulletStyleForLevel(newLevel)
+        }
+      : {
+          ...existingList,
+          nestingLevel: newLevel,
+          numberStyle: this.getNumberStyleForLevel(newLevel)
+        };
+    this.setListFormatting(paragraphStartIndex, newListFormatting);
+  }
+
+  /**
+   * Get the bullet style for a given nesting level.
+   */
+  private getBulletStyleForLevel(level: number): BulletStyle {
+    return BULLET_STYLE_CYCLE[level % BULLET_STYLE_CYCLE.length];
+  }
+
+  /**
+   * Get the number style for a given nesting level.
+   */
+  private getNumberStyleForLevel(level: number): NumberStyle {
+    return NUMBER_STYLE_CYCLE[level % NUMBER_STYLE_CYCLE.length];
+  }
+
+  /**
+   * Get the list number for a numbered paragraph.
+   * Returns undefined for bullet lists or non-list paragraphs.
+   * Counts consecutive numbered paragraphs at the same nesting level.
+   * Nested items (higher nesting level) don't break the sequence.
+   */
+  getListNumber(paragraphStartIndex: number, content: string): number | undefined {
+    const formatting = this.getFormattingForParagraph(paragraphStartIndex);
+    const listFormatting = formatting.listFormatting;
+
+    if (!listFormatting || listFormatting.listType !== 'number') {
+      return undefined;
+    }
+
+    const targetLevel = listFormatting.nestingLevel;
+
+    // Find all paragraph starts
+    const paragraphStarts: number[] = [0];
+    for (let i = 0; i < content.length; i++) {
+      if (content[i] === '\n') {
+        paragraphStarts.push(i + 1);
+      }
+    }
+
+    // Find this paragraph's position in the list
+    const thisParaIdx = paragraphStarts.indexOf(paragraphStartIndex);
+    if (thisParaIdx === -1) {
+      return listFormatting.startNumber ?? 1;
+    }
+
+    // Count backwards to find the start of this numbered sequence
+    let count = 0;
+    let startNumber = 1;
+    for (let i = thisParaIdx; i >= 0; i--) {
+      const paraStart = paragraphStarts[i];
+      const paraFormatting = this.getFormattingForParagraph(paraStart);
+      const paraList = paraFormatting.listFormatting;
+
+      // Skip nested items (higher nesting level)
+      if (paraList && paraList.nestingLevel > targetLevel) {
+        continue;
+      }
+
+      // Sequence broken if: no list, not a number list, or different nesting level
+      if (!paraList || paraList.listType !== 'number' || paraList.nestingLevel !== targetLevel) {
+        break;
+      }
+
+      count++;
+      if (paraList.startNumber !== undefined) {
+        startNumber = paraList.startNumber;
+        break;
+      }
+    }
+
+    return startNumber + count - 1;
   }
 
   /**

@@ -8,7 +8,9 @@ import {
   DEFAULT_FORMATTING,
   TextPositionCalculator,
   EditableTextRegion,
-  FlowingTextContent
+  FlowingTextContent,
+  ListMarker,
+  Hyperlink
 } from '../text';
 import { Document } from '../core/Document';
 import { Page } from '../core/Page';
@@ -34,6 +36,9 @@ const LOOP_INDICATOR_COLOR = '#6B46C1'; // Purple
 const LOOP_LABEL_PADDING = 4;
 const LOOP_LABEL_RADIUS = 4;
 const LOOP_LINE_DASH = [4, 4];
+
+// Hyperlink styling
+const DEFAULT_HYPERLINK_COLOR = '#0066CC'; // Blue
 
 // Table continuation tracking for multi-page tables
 interface TableContinuation {
@@ -173,6 +178,8 @@ export class FlowingTextRenderer extends EventEmitter {
       const maxWidth = contentBounds.size.width;
       const alignmentOffset = TextPositionCalculator.getAlignmentOffset(location.line, maxWidth);
       const xOffset = TextPositionCalculator.getXPositionForTextIndex(location.line, textIndex, ctx);
+      // Account for list indentation
+      const listIndent = location.line.listMarker?.indent ?? 0;
 
       // Calculate Y position relative to the current page's content bounds
       // Each page has its own canvas, so Y is relative to that page only
@@ -188,7 +195,7 @@ export class FlowingTextRenderer extends EventEmitter {
       }
 
       return {
-        x: contentBounds.position.x + alignmentOffset + xOffset,
+        x: contentBounds.position.x + alignmentOffset + listIndent + xOffset,
         y,
         height: location.line.height,
         pageIndex: location.pageIndex
@@ -205,6 +212,8 @@ export class FlowingTextRenderer extends EventEmitter {
       const maxWidth = bounds.size.width;
       const alignmentOffset = TextPositionCalculator.getAlignmentOffset(location.line, maxWidth);
       const xOffset = TextPositionCalculator.getXPositionForTextIndex(location.line, textIndex, ctx);
+      // Account for list indentation
+      const listIndent = location.line.listMarker?.indent ?? 0;
 
       // Calculate Y position
       let y = bounds.position.y;
@@ -213,7 +222,7 @@ export class FlowingTextRenderer extends EventEmitter {
       }
 
       return {
-        x: bounds.position.x + alignmentOffset + xOffset,
+        x: bounds.position.x + alignmentOffset + listIndent + xOffset,
         y,
         height: location.line.height,
         pageIndex: 0
@@ -697,6 +706,9 @@ export class FlowingTextRenderer extends EventEmitter {
     const firstPage = this.document.pages[0];
     const pageCount = firstPage ? (this.flowedPages.get(firstPage.id)?.length || 1) : 1;
 
+    // Get hyperlinks for rendering
+    const hyperlinks = flowingContent.getAllHyperlinks();
+
     // Render each line
     let y = bounds.y;
     for (let lineIndex = 0; lineIndex < flowedLines.length; lineIndex++) {
@@ -711,7 +723,7 @@ export class FlowingTextRenderer extends EventEmitter {
         break;
       }
 
-      this.renderFlowedLine(line, ctx, { x: bounds.x, y }, maxWidth, pageIndex, cursorTextIndex, pageCount);
+      this.renderFlowedLine(line, ctx, { x: bounds.x, y }, maxWidth, pageIndex, cursorTextIndex, pageCount, hyperlinks);
       y += line.height;
     }
 
@@ -749,8 +761,10 @@ export class FlowingTextRenderer extends EventEmitter {
         const lineSelEnd = Math.min(selEnd, line.endIndex);
 
         const alignmentOffset = TextPositionCalculator.getAlignmentOffset(line, maxWidth);
-        const startX = bounds.x + alignmentOffset + TextPositionCalculator.getXPositionForTextIndex(line, lineSelStart, ctx);
-        const endX = bounds.x + alignmentOffset + TextPositionCalculator.getXPositionForTextIndex(line, lineSelEnd, ctx);
+        // Account for list indentation
+        const listIndent = line.listMarker?.indent ?? 0;
+        const startX = bounds.x + alignmentOffset + listIndent + TextPositionCalculator.getXPositionForTextIndex(line, lineSelStart, ctx);
+        const endX = bounds.x + alignmentOffset + listIndent + TextPositionCalculator.getXPositionForTextIndex(line, lineSelEnd, ctx);
 
         ctx.fillRect(startX, y, endX - startX, line.height);
       }
@@ -775,7 +789,9 @@ export class FlowingTextRenderer extends EventEmitter {
     for (const line of flowedLines) {
       if (cursorTextIndex >= line.startIndex && cursorTextIndex <= line.endIndex) {
         const alignmentOffset = TextPositionCalculator.getAlignmentOffset(line, maxWidth);
-        const cursorX = bounds.x + alignmentOffset + TextPositionCalculator.getXPositionForTextIndex(line, cursorTextIndex, ctx);
+        // Account for list indentation
+        const listIndent = line.listMarker?.indent ?? 0;
+        const cursorX = bounds.x + alignmentOffset + listIndent + TextPositionCalculator.getXPositionForTextIndex(line, cursorTextIndex, ctx);
 
         ctx.save();
         ctx.strokeStyle = '#000000';
@@ -794,7 +810,9 @@ export class FlowingTextRenderer extends EventEmitter {
     if (flowedLines.length > 0) {
       const lastLine = flowedLines[flowedLines.length - 1];
       const alignmentOffset = TextPositionCalculator.getAlignmentOffset(lastLine, maxWidth);
-      const cursorX = bounds.x + alignmentOffset + TextPositionCalculator.getXPositionForTextIndex(lastLine, cursorTextIndex, ctx);
+      // Account for list indentation
+      const listIndent = lastLine.listMarker?.indent ?? 0;
+      const cursorX = bounds.x + alignmentOffset + listIndent + TextPositionCalculator.getXPositionForTextIndex(lastLine, cursorTextIndex, ctx);
 
       // Calculate Y for last line
       y = bounds.y;
@@ -862,6 +880,9 @@ export class FlowingTextRenderer extends EventEmitter {
     const firstPage = this.document.pages[0];
     const pageCount = firstPage ? (this.flowedPages.get(firstPage.id)?.length || 1) : 1;
 
+    // Get hyperlinks for rendering
+    const hyperlinks = contentForCursor ? contentForCursor.getAllHyperlinks() : [];
+
     // Track relative objects to render after all lines (so they appear on top)
     const relativeObjects: Array<{
       object: BaseEmbeddedObject;
@@ -885,7 +906,7 @@ export class FlowingTextRenderer extends EventEmitter {
         }
       }
 
-      this.renderFlowedLine(line, ctx, { x: bounds.x, y }, bounds.width, pageIndex, cursorTextIndex, pageCount);
+      this.renderFlowedLine(line, ctx, { x: bounds.x, y }, bounds.width, pageIndex, cursorTextIndex, pageCount, hyperlinks);
 
       y += line.height;
     }
@@ -951,14 +972,25 @@ export class FlowingTextRenderer extends EventEmitter {
     maxWidth: number,
     pageIndex: number,
     cursorTextIndex?: number,
-    pageCount?: number
+    pageCount?: number,
+    hyperlinks?: Hyperlink[]
   ): void {
-    // Calculate alignment offset
-    const alignmentOffset = this.getAlignmentOffset(line, maxWidth);
-    let x = position.x + alignmentOffset;
+    // Apply list indent if present
+    const listIndent = line.listMarker?.indent || 0;
+    const effectiveMaxWidth = maxWidth - listIndent;
+    const baseX = position.x + listIndent;
+
+    // Calculate alignment offset based on effective width
+    const alignmentOffset = this.getAlignmentOffset(line, effectiveMaxWidth);
+    let x = baseX + alignmentOffset;
 
     ctx.save();
     ctx.textBaseline = 'alphabetic';
+
+    // Render list marker if this is the first line of a list item
+    if (line.listMarker?.isFirstLineOfListItem && line.listMarker.text) {
+      this.renderListMarker(line.listMarker, ctx, position, line.baseline, line.runs[0]?.formatting);
+    }
 
     // Create maps for quick lookup by text index
     const substitutionFieldMap = new Map<number, FlowedSubstitutionField>();
@@ -1009,6 +1041,17 @@ export class FlowingTextRenderer extends EventEmitter {
           const charWidth = char === '\t'
             ? ctx.measureText('    ').width
             : ctx.measureText(char).width;
+
+          // Check if this character is within a hyperlink
+          let hyperlink: Hyperlink | undefined;
+          if (hyperlinks) {
+            for (const h of hyperlinks) {
+              if (charIndex >= h.startIndex && charIndex < h.endIndex) {
+                hyperlink = h;
+                break;
+              }
+            }
+          }
 
           if (run.formatting.backgroundColor) {
             // Calculate background position based on this character's font size
@@ -1064,7 +1107,28 @@ export class FlowingTextRenderer extends EventEmitter {
             continue;
           }
 
-          ctx.fillText(char, x, position.y + line.baseline);
+          // Apply hyperlink styling if within a hyperlink
+          if (hyperlink) {
+            const hyperlinkColor = hyperlink.formatting?.color || DEFAULT_HYPERLINK_COLOR;
+            ctx.fillStyle = hyperlinkColor;
+            ctx.fillText(char, x, position.y + line.baseline);
+
+            // Draw underline unless explicitly disabled
+            if (hyperlink.formatting?.underline !== false) {
+              const underlineY = position.y + line.baseline + 2;
+              ctx.beginPath();
+              ctx.strokeStyle = hyperlinkColor;
+              ctx.lineWidth = 1;
+              ctx.moveTo(x, underlineY);
+              ctx.lineTo(x + charWidth, underlineY);
+              ctx.stroke();
+            }
+
+            // Restore original color for next character
+            ctx.fillStyle = run.formatting.color;
+          } else {
+            ctx.fillText(char, x, position.y + line.baseline);
+          }
           x += charWidth;
 
           // Add extra word spacing for justify mode after whitespace
@@ -1087,6 +1151,33 @@ export class FlowingTextRenderer extends EventEmitter {
       this.renderPageBreakIndicator(ctx, position, line, maxWidth);
     }
 
+    ctx.restore();
+  }
+
+  /**
+   * Render a list marker (bullet or number) for a list item.
+   */
+  private renderListMarker(
+    marker: ListMarker,
+    ctx: CanvasRenderingContext2D,
+    position: Point,
+    baseline: number,
+    formatting?: TextFormattingStyle
+  ): void {
+    const format = formatting || DEFAULT_FORMATTING;
+
+    ctx.save();
+    ctx.font = this.getFontString(format);
+    ctx.fillStyle = format.color;
+    ctx.textBaseline = 'alphabetic';
+
+    // Position the marker: right-aligned within the indent area
+    // Leave a small gap between marker and text
+    const markerWidth = ctx.measureText(marker.text).width;
+    const markerX = position.x + marker.indent - markerWidth - 6;  // 6px gap before text
+    const markerY = position.y + baseline;
+
+    ctx.fillText(marker.text, markerX, markerY);
     ctx.restore();
   }
 
@@ -2357,8 +2448,10 @@ export class FlowingTextRenderer extends EventEmitter {
         const selectionBounds = this.getSelectionBoundsInLine(line, this.selectedText);
         // Add alignment offset to position the selection correctly
         const alignmentOffset = this.getAlignmentOffset(line, bounds.width);
+        // Account for list indentation
+        const listIndent = line.listMarker?.indent ?? 0;
         ctx.fillRect(
-          bounds.x + alignmentOffset + selectionBounds.x,
+          bounds.x + alignmentOffset + listIndent + selectionBounds.x,
           y,
           selectionBounds.width,
           line.height

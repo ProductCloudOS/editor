@@ -45,11 +45,52 @@ export interface Focusable {
 export type TextAlignment = 'left' | 'center' | 'right' | 'justify';
 
 /**
+ * Bullet point styles for unordered lists.
+ */
+export type BulletStyle = 'disc' | 'circle' | 'square' | 'dash' | 'none';
+
+/**
+ * Numbering styles for ordered lists.
+ */
+export type NumberStyle = 'decimal' | 'lower-alpha' | 'upper-alpha' | 'lower-roman' | 'upper-roman';
+
+/**
+ * Type of list (bullet, numbered, or none).
+ */
+export type ListType = 'bullet' | 'number' | 'none';
+
+/**
+ * List formatting properties for a paragraph.
+ */
+export interface ListFormatting {
+  listType: ListType;
+  bulletStyle?: BulletStyle;      // For bullet lists
+  numberStyle?: NumberStyle;      // For numbered lists
+  nestingLevel: number;           // 0 = top level, 1+ = nested
+  startNumber?: number;           // For numbered lists, starting number
+}
+
+/**
+ * Default list formatting values.
+ */
+export const DEFAULT_LIST_FORMATTING: ListFormatting = {
+  listType: 'bullet',
+  bulletStyle: 'disc',
+  nestingLevel: 0
+};
+
+/**
+ * Indent per nesting level in pixels.
+ */
+export const LIST_INDENT_PER_LEVEL = 24;
+
+/**
  * Paragraph formatting properties.
  * Applied at paragraph level (delimited by \n characters).
  */
 export interface ParagraphFormatting {
   alignment: TextAlignment;
+  listFormatting?: ListFormatting;  // Optional - undefined means not a list
 }
 
 /**
@@ -129,6 +170,16 @@ export interface FlowedSubstitutionField {
 }
 
 /**
+ * List marker information for a line.
+ */
+export interface ListMarker {
+  text: string;           // The marker to render (bullet char or "1.", "a.", etc.)
+  width: number;          // Width of marker area
+  indent: number;         // Total left indent for this line
+  isFirstLineOfListItem: boolean;  // Only first line shows marker
+}
+
+/**
  * A single line of flowed text with its measurements and content.
  */
 export interface FlowedLine {
@@ -146,6 +197,7 @@ export interface FlowedLine {
   alignment: TextAlignment;
   extraWordSpacing?: number;  // For justify mode - extra space per word gap
   isBlockObjectLine?: boolean;  // True if line contains only a block-positioned object
+  listMarker?: ListMarker;  // List formatting info for this line
 }
 
 /**

@@ -12,7 +12,11 @@ import {
   FlowedEmbeddedObject,
   TextAlignment,
   OBJECT_REPLACEMENT_CHAR,
-  PAGE_BREAK_CHAR
+  PAGE_BREAK_CHAR,
+  ListFormatting,
+  LIST_INDENT_PER_LEVEL,
+  BulletStyle,
+  NumberStyle
 } from './types';
 
 /**
@@ -79,9 +83,15 @@ export class TextLayout {
       // Account for delimiter character at the end (except for last line which has 'end' delimiter)
       const lineEndIndex = globalIndex + text.length;
 
-      // Get paragraph alignment for this logical line
+      // Get paragraph alignment and list formatting for this logical line
       const paragraphFormatting = context.paragraphFormatting.getFormattingForParagraph(globalIndex);
       const alignment = paragraphFormatting.alignment;
+      const listFormatting = paragraphFormatting.listFormatting;
+
+      // Get list number if this is a numbered list
+      const listNumber = listFormatting
+        ? context.paragraphFormatting.getListNumber(globalIndex, context.content)
+        : undefined;
 
       // Wrap this logical line into one or more visual lines
       const wrappedLines = this.wrapLogicalLine(
@@ -89,7 +99,9 @@ export class TextLayout {
         globalIndex,
         context,
         alignment,
-        delimiter === 'end'
+        delimiter === 'end',
+        listFormatting,
+        listNumber
       );
 
       // Mark the last visual line based on the delimiter type
@@ -149,14 +161,43 @@ export class TextLayout {
     startIndex: number,
     context: LayoutContext,
     alignment: TextAlignment,
-    _isLastParagraph: boolean
+    _isLastParagraph: boolean,
+    listFormatting?: ListFormatting,
+    listNumber?: number
   ): FlowedLine[] {
-    const { availableWidth, formatting } = context;
+    const { availableWidth, formatting, measurer } = context;
     const lines: FlowedLine[] = [];
+
+    // Calculate list indent if this is a list item
+    const listIndent = listFormatting
+      ? this.calculateListIndent(listFormatting.nestingLevel)
+      : 0;
+
+    // Get marker text and width for list items
+    let markerText = '';
+    let markerWidth = 0;
+    if (listFormatting) {
+      markerText = this.getListMarkerText(listFormatting, listNumber);
+      const defaultFormat = formatting.getFormattingAt(startIndex);
+      markerWidth = measurer.measureText(markerText, defaultFormat);
+    }
+
+    // Effective width for text (reduced by indent)
+    const effectiveWidth = availableWidth - listIndent;
 
     // Handle empty lines (just newlines)
     if (lineText.length === 0) {
-      lines.push(this.createEmptyLine(startIndex, formatting, alignment));
+      const emptyLine = this.createEmptyLine(startIndex, formatting, alignment);
+      // Add list marker to empty line if it's a list item
+      if (listFormatting) {
+        emptyLine.listMarker = {
+          text: markerText,
+          width: markerWidth,
+          indent: listIndent,
+          isFirstLineOfListItem: true
+        };
+      }
+      lines.push(emptyLine);
       return lines;
     }
 
@@ -165,6 +206,19 @@ export class TextLayout {
 
     let currentLine = this.createLineBuilder(startIndex, formatting);
     let currentX = 0;
+
+    // Helper to add list marker to a line and push it
+    const pushLineWithMarker = (line: FlowedLine, isFirstLine: boolean) => {
+      if (listFormatting) {
+        line.listMarker = {
+          text: isFirstLine ? markerText : '',
+          width: markerWidth,
+          indent: listIndent,
+          isFirstLineOfListItem: isFirstLine
+        };
+      }
+      lines.push(line);
+    };
 
     for (let segIdx = 0; segIdx < segments.length; segIdx++) {
       const segment = segments[segIdx];
@@ -175,12 +229,13 @@ export class TextLayout {
       if (blockObject) {
         // Finalize current line if it has content
         if (currentLine.text.length > 0) {
-          lines.push(this.finalizeLineBuilder(currentLine, alignment, false, availableWidth));
+          const line = this.finalizeLineBuilder(currentLine, alignment, false, effectiveWidth);
+          pushLineWithMarker(line, lines.length === 0);
         }
 
         // Create a dedicated line for the block object
         const blockLine = this.createBlockObjectLine(blockObject, segment, alignment);
-        lines.push(blockLine);
+        pushLineWithMarker(blockLine, lines.length === 0);
 
         // Start a new line for subsequent content
         currentLine = this.createLineBuilder(segment.startIndex + 1, formatting);
@@ -188,8 +243,8 @@ export class TextLayout {
         continue;
       }
 
-      // Check if segment fits on current line
-      if (currentLine.width + segment.width > availableWidth && currentLine.text.length > 0) {
+      // Check if segment fits on current line (use effectiveWidth for list indentation)
+      if (currentLine.width + segment.width > effectiveWidth && currentLine.text.length > 0) {
         if (isWhitespace) {
           // Whitespace that overflows: add it to current line anyway (trailing whitespace)
           // It will visually overflow but text remains logically on this line
@@ -199,7 +254,8 @@ export class TextLayout {
           // If there's a next segment (a word), start a new line for it
           if (segIdx + 1 < segments.length) {
             // This is not the last line of the paragraph
-            lines.push(this.finalizeLineBuilder(currentLine, alignment, false, availableWidth));
+            const line = this.finalizeLineBuilder(currentLine, alignment, false, effectiveWidth);
+            pushLineWithMarker(line, lines.length === 0);
             const nextSegment = segments[segIdx + 1];
             currentLine = this.createLineBuilder(nextSegment.startIndex, formatting);
             currentX = 0;
@@ -208,7 +264,8 @@ export class TextLayout {
         } else {
           // Non-whitespace segment doesn't fit, start a new line
           // This is not the last line of the paragraph
-          lines.push(this.finalizeLineBuilder(currentLine, alignment, false, availableWidth));
+          const line = this.finalizeLineBuilder(currentLine, alignment, false, effectiveWidth);
+          pushLineWithMarker(line, lines.length === 0);
           currentLine = this.createLineBuilder(segment.startIndex, formatting);
           currentX = 0;
         }
@@ -221,7 +278,8 @@ export class TextLayout {
 
     // Finalize the last line (this IS the last line of the paragraph)
     if (currentLine.text.length > 0 || lines.length === 0) {
-      lines.push(this.finalizeLineBuilder(currentLine, alignment, true, availableWidth));
+      const line = this.finalizeLineBuilder(currentLine, alignment, true, effectiveWidth);
+      pushLineWithMarker(line, lines.length === 0);
     }
 
     return lines;
@@ -884,5 +942,93 @@ export class TextLayout {
     }
 
     return boundaries;
+  }
+
+  // ============================================================
+  // List formatting helper methods
+  // ============================================================
+
+  /**
+   * Calculate total indent for a list nesting level.
+   */
+  private calculateListIndent(nestingLevel: number): number {
+    return LIST_INDENT_PER_LEVEL * (nestingLevel + 1);
+  }
+
+  /**
+   * Get the marker text for a list item.
+   */
+  private getListMarkerText(listFormatting: ListFormatting, listNumber?: number): string {
+    if (listFormatting.listType === 'bullet') {
+      return this.getBulletCharacter(listFormatting.bulletStyle, listFormatting.nestingLevel) + ' ';
+    } else if (listFormatting.listType === 'number' && listNumber !== undefined) {
+      return this.formatNumber(listNumber, listFormatting.numberStyle) + ' ';
+    }
+    return '';
+  }
+
+  /**
+   * Get bullet character based on style and nesting level.
+   */
+  private getBulletCharacter(style?: BulletStyle, nestingLevel?: number): string {
+    // Default progression: disc -> circle -> square
+    const defaultProgression: BulletStyle[] = ['disc', 'circle', 'square'];
+    const effectiveStyle = style || defaultProgression[(nestingLevel || 0) % 3];
+
+    switch (effectiveStyle) {
+      case 'disc': return '\u2022';    // •
+      case 'circle': return '\u25E6';  // ◦
+      case 'square': return '\u25AA';  // ▪
+      case 'dash': return '\u2013';    // –
+      case 'none': return '';
+      default: return '\u2022';
+    }
+  }
+
+  /**
+   * Format a number according to the numbering style.
+   */
+  private formatNumber(n: number, style?: NumberStyle): string {
+    switch (style) {
+      case 'lower-alpha': return this.toAlpha(n, false) + '.';
+      case 'upper-alpha': return this.toAlpha(n, true) + '.';
+      case 'lower-roman': return this.toRoman(n, false) + '.';
+      case 'upper-roman': return this.toRoman(n, true) + '.';
+      case 'decimal':
+      default: return n + '.';
+    }
+  }
+
+  /**
+   * Convert a number to alphabetic representation (1=a, 2=b, ... 26=z, 27=aa, ...)
+   */
+  private toAlpha(n: number, uppercase: boolean): string {
+    let result = '';
+    while (n > 0) {
+      n--;
+      result = String.fromCharCode((n % 26) + (uppercase ? 65 : 97)) + result;
+      n = Math.floor(n / 26);
+    }
+    return result;
+  }
+
+  /**
+   * Convert a number to Roman numerals.
+   */
+  private toRoman(n: number, uppercase: boolean): string {
+    const romanNumerals: [number, string][] = [
+      [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'],
+      [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'],
+      [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']
+    ];
+
+    let result = '';
+    for (const [value, numeral] of romanNumerals) {
+      while (n >= value) {
+        result += numeral;
+        n -= value;
+      }
+    }
+    return uppercase ? result : result.toLowerCase();
   }
 }

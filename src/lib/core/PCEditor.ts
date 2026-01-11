@@ -14,7 +14,7 @@ import { CanvasManager } from '../rendering/CanvasManager';
 import { DataBinder } from '../data/DataBinder';
 import { PDFGenerator } from '../rendering/PDFGenerator';
 import { LayoutEngine } from '../layout/LayoutEngine';
-import { BaseEmbeddedObject, ObjectPosition, TextBoxObject, TableObject, ImageObject, TableRowConfig } from '../objects';
+import { BaseEmbeddedObject, ObjectPosition, TextBoxObject, TableObject, ImageObject, TableRowConfig, EmbeddedObjectFactory, EmbeddedObjectData } from '../objects';
 import { SubstitutionFieldConfig, TextFormattingStyle, SubstitutionField, RepeatingSection, FlowingTextContent, TextAlignment, Focusable } from '../text';
 import {
   TransactionManager,
@@ -26,6 +26,7 @@ import {
   ContentSourceId,
   ObjectSourceId
 } from '../undo';
+import { ClipboardManager, type PCEditorClipboardData, type ClipboardContent } from '../clipboard';
 
 export class PCEditor extends EventEmitter {
   private container: HTMLElement;
@@ -47,6 +48,7 @@ export class PCEditor extends EventEmitter {
   private _activeEditingSection: EditingSection = 'body';
   private _wasTextEditing: boolean = false;
   private _textEditingSource: 'body' | 'textbox' | 'tablecell' | null = null;
+  private clipboardManager: ClipboardManager;
 
   constructor(container: HTMLElement, options?: EditorOptions) {
     super();
@@ -68,6 +70,7 @@ export class PCEditor extends EventEmitter {
 
     this.dataBinder = new DataBinder();
     this.pdfGenerator = new PDFGenerator();
+    this.clipboardManager = new ClipboardManager();
 
     this.initialize();
   }
@@ -507,6 +510,19 @@ export class PCEditor extends EventEmitter {
    */
   getSelection(): EditorSelection {
     return this.currentSelection;
+  }
+
+  /**
+   * Get the text selection directly from the active FlowingTextContent.
+   * This is a more direct query than getSelection() which relies on event tracking.
+   * Returns null if no text is selected.
+   */
+  getTextSelection(): { start: number; end: number } | null {
+    const flowingContent = this.getEditingFlowingContent() || this.getActiveFlowingContent();
+    if (flowingContent) {
+      return flowingContent.getSelection();
+    }
+    return null;
   }
 
   /**
@@ -1016,6 +1032,23 @@ export class PCEditor extends EventEmitter {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) {
       e.preventDefault();
       this.redo();
+      return;
+    }
+
+    // Handle copy/cut/paste shortcuts
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+      e.preventDefault();
+      this.copy();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'x') {
+      e.preventDefault();
+      this.cut();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+      e.preventDefault();
+      this.paste();
       return;
     }
 
@@ -1776,6 +1809,31 @@ export class PCEditor extends EventEmitter {
       };
       this.emitSelectionChange();
     }
+  }
+
+  /**
+   * Get the current cursor position in the active flowing content.
+   * Returns the position for cursor selections, start position for text selections,
+   * or 0 if no text content is selected.
+   */
+  getCursorPosition(): number {
+    const selection = this.currentSelection;
+
+    if (selection.type === 'cursor') {
+      return selection.position;
+    }
+
+    if (selection.type === 'text') {
+      return selection.start;
+    }
+
+    // For non-text selections, try to get from the active content
+    const flowingContent = this.getEditingFlowingContent() || this.getActiveFlowingContent();
+    if (flowingContent) {
+      return flowingContent.getCursorPosition();
+    }
+
+    return 0;
   }
 
   /**
@@ -2738,6 +2796,196 @@ export class PCEditor extends EventEmitter {
     return flowingContent.getAlignmentAt(position);
   }
 
+  // ============================================
+  // List Operations
+  // ============================================
+
+  /**
+   * Toggle bullet list for the current paragraph.
+   */
+  toggleBulletList(): void {
+    if (!this._isReady) return;
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return;
+
+    flowingContent.toggleBulletList();
+    this.canvasManager.render();
+    this.emit('list-changed', { type: 'bullet', section: this._activeEditingSection });
+  }
+
+  /**
+   * Toggle numbered list for the current paragraph.
+   */
+  toggleNumberedList(): void {
+    if (!this._isReady) return;
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return;
+
+    flowingContent.toggleNumberedList();
+    this.canvasManager.render();
+    this.emit('list-changed', { type: 'number', section: this._activeEditingSection });
+  }
+
+  /**
+   * Indent the current paragraph (increase list nesting level).
+   */
+  indentParagraph(): void {
+    if (!this._isReady) return;
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return;
+
+    flowingContent.indentParagraph();
+    this.canvasManager.render();
+    this.emit('indent-changed', { section: this._activeEditingSection });
+  }
+
+  /**
+   * Outdent the current paragraph (decrease list nesting level).
+   */
+  outdentParagraph(): void {
+    if (!this._isReady) return;
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return;
+
+    flowingContent.outdentParagraph();
+    this.canvasManager.render();
+    this.emit('indent-changed', { section: this._activeEditingSection });
+  }
+
+  /**
+   * Get list formatting for the current paragraph.
+   */
+  getListFormatting(): import('../text').ListFormatting | undefined {
+    if (!this._isReady) return undefined;
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return undefined;
+
+    return flowingContent.getListFormatting();
+  }
+
+  // ============================================
+  // Hyperlink API
+  // ============================================
+
+  /**
+   * Insert a hyperlink for the current selection.
+   * @returns The created hyperlink, or null if no selection
+   */
+  insertHyperlink(url: string, options?: import('../text').HyperlinkOptions): import('../text').Hyperlink | null {
+    if (!this._isReady) return null;
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return null;
+
+    const hyperlink = flowingContent.insertHyperlink(url, options);
+    if (hyperlink) {
+      this.canvasManager.render();
+      this.emit('hyperlink-inserted', { hyperlink });
+    }
+    return hyperlink;
+  }
+
+  /**
+   * Insert a hyperlink at a specific range.
+   */
+  insertHyperlinkAt(
+    url: string,
+    startIndex: number,
+    endIndex: number,
+    options?: import('../text').HyperlinkOptions
+  ): import('../text').Hyperlink | null {
+    if (!this._isReady) return null;
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return null;
+
+    const hyperlink = flowingContent.insertHyperlinkAt(url, startIndex, endIndex, options);
+    this.canvasManager.render();
+    this.emit('hyperlink-inserted', { hyperlink });
+    return hyperlink;
+  }
+
+  /**
+   * Remove a hyperlink by ID.
+   */
+  removeHyperlink(id: string): void {
+    if (!this._isReady) return;
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return;
+
+    flowingContent.removeHyperlink(id);
+    this.canvasManager.render();
+    this.emit('hyperlink-removed', { id });
+  }
+
+  /**
+   * Update a hyperlink's properties.
+   */
+  updateHyperlink(id: string, updates: import('../text').HyperlinkUpdate): void {
+    if (!this._isReady) return;
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return;
+
+    flowingContent.updateHyperlink(id, updates);
+    this.canvasManager.render();
+    this.emit('hyperlink-updated', { id, updates });
+  }
+
+  /**
+   * Get the hyperlink at a specific text index.
+   */
+  getHyperlinkAt(textIndex: number): import('../text').Hyperlink | undefined {
+    if (!this._isReady) return undefined;
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return undefined;
+
+    return flowingContent.getHyperlinkAt(textIndex);
+  }
+
+  /**
+   * Get a hyperlink by ID.
+   */
+  getHyperlinkById(id: string): import('../text').Hyperlink | undefined {
+    if (!this._isReady) return undefined;
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return undefined;
+
+    return flowingContent.getHyperlinkById(id);
+  }
+
+  /**
+   * Get all hyperlinks overlapping a range.
+   */
+  getHyperlinksInRange(startIndex: number, endIndex: number): import('../text').Hyperlink[] {
+    if (!this._isReady) return [];
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return [];
+
+    return flowingContent.getHyperlinksInRange(startIndex, endIndex);
+  }
+
+  /**
+   * Get all hyperlinks.
+   */
+  getAllHyperlinks(): import('../text').Hyperlink[] {
+    if (!this._isReady) return [];
+
+    const flowingContent = this.getActiveFlowingContent();
+    if (!flowingContent) return [];
+
+    return flowingContent.getAllHyperlinks();
+  }
+
   updateDocumentSettings(settings: Partial<any>): void {
     if (!this._isReady) {
       throw new Error('Editor is not ready');
@@ -3045,6 +3293,247 @@ export class PCEditor extends EventEmitter {
 
     this.canvasManager.render();
     this.emit('embedded-object-added', { object, position, section: 'footer' });
+  }
+
+  // ============================================
+  // Clipboard Operations
+  // ============================================
+
+  /**
+   * Copy the current selection to the clipboard.
+   * Returns true if content was copied.
+   */
+  async copy(): Promise<boolean> {
+    const flowingContent = this.getEditingFlowingContent() || this.getActiveFlowingContent();
+    if (!flowingContent) {
+      return false;
+    }
+
+    const success = await this.clipboardManager.copy(flowingContent);
+    if (success) {
+      this.emit('copy', { success: true });
+    }
+    return success;
+  }
+
+  /**
+   * Cut the current selection to the clipboard (copy + delete).
+   * Returns true if content was cut.
+   */
+  async cut(): Promise<boolean> {
+    const flowingContent = this.getEditingFlowingContent() || this.getActiveFlowingContent();
+    if (!flowingContent) {
+      return false;
+    }
+
+    const selection = flowingContent.getSelection();
+    if (!selection || selection.start === selection.end) {
+      return false;
+    }
+
+    // Copy first
+    const copySuccess = await this.clipboardManager.copy(flowingContent);
+    if (!copySuccess) {
+      return false;
+    }
+
+    // Then delete selection (wrapped in transaction)
+    this.transactionManager.beginCompoundOperation('Cut');
+    try {
+      flowingContent.deleteSelection();
+      this.transactionManager.endCompoundOperation();
+      this.canvasManager.render();
+      this.emit('cut', { success: true });
+      return true;
+    } catch (error) {
+      // Undo any partial changes by ending the compound operation
+      // The transaction will be empty if nothing was recorded
+      this.transactionManager.endCompoundOperation();
+      console.error('Cut failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Paste content from the clipboard at the current cursor position.
+   * Returns true if content was pasted.
+   */
+  async paste(): Promise<boolean> {
+    const flowingContent = this.getEditingFlowingContent() || this.getActiveFlowingContent();
+    if (!flowingContent) {
+      return false;
+    }
+
+    const result = await this.clipboardManager.read();
+
+    if (result.type === 'empty' || result.data === null) {
+      return false;
+    }
+
+    this.transactionManager.beginCompoundOperation('Paste');
+    try {
+      // Delete any current selection first
+      if (flowingContent.hasSelection()) {
+        flowingContent.deleteSelection();
+      }
+
+      let pasted = false;
+
+      if (result.type === 'pceditor') {
+        // Paste proprietary format with full fidelity
+        pasted = await this.pasteProprietaryContent(flowingContent, result.data as PCEditorClipboardData);
+      } else if (result.type === 'html') {
+        // Parse HTML and paste
+        const content = this.clipboardManager.parseHtml(result.data as string);
+        pasted = this.pasteClipboardContent(flowingContent, content);
+      } else if (result.type === 'text') {
+        // Paste plain text
+        const text = result.data as string;
+        flowingContent.insertText(text);
+        pasted = true;
+      } else if (result.type === 'image') {
+        // Create and insert image object
+        pasted = await this.pasteImage(flowingContent, result.data as Blob);
+      }
+
+      this.transactionManager.endCompoundOperation();
+      if (pasted) {
+        this.canvasManager.render();
+        this.emit('paste', { success: true, type: result.type });
+        return true;
+      } else {
+        return false;
+      }
+    } catch (error) {
+      this.transactionManager.endCompoundOperation();
+      console.error('Paste failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Paste proprietary clipboard content.
+   */
+  private async pasteProprietaryContent(
+    flowingContent: FlowingTextContent,
+    data: PCEditorClipboardData
+  ): Promise<boolean> {
+    // Generate new IDs for all items to avoid conflicts
+    const content = this.clipboardManager.generateNewIds(data.content);
+    return this.pasteClipboardContent(flowingContent, content);
+  }
+
+  /**
+   * Paste clipboard content into FlowingTextContent.
+   */
+  private pasteClipboardContent(
+    flowingContent: FlowingTextContent,
+    content: ClipboardContent
+  ): boolean {
+    const insertPosition = flowingContent.getCursorPosition();
+    const { text, formattingRuns, substitutionFields, embeddedObjects, hyperlinks } = content;
+
+    // Insert the text
+    flowingContent.insertText(text);
+
+    // Apply formatting runs
+    if (formattingRuns && formattingRuns.length > 0) {
+      const formattingManager = flowingContent.getFormattingManager();
+      for (let i = 0; i < formattingRuns.length; i++) {
+        const run = formattingRuns[i];
+        const nextRun = formattingRuns[i + 1];
+        const startIndex = insertPosition + run.index;
+        const endIndex = nextRun
+          ? insertPosition + nextRun.index
+          : insertPosition + text.length;
+
+        formattingManager.applyFormatting(startIndex, endIndex, {
+          fontFamily: run.formatting.fontFamily,
+          fontSize: run.formatting.fontSize,
+          fontWeight: run.formatting.fontWeight,
+          fontStyle: run.formatting.fontStyle,
+          color: run.formatting.color,
+          backgroundColor: run.formatting.backgroundColor
+        });
+      }
+    }
+
+    // Insert substitution fields (they're already positioned in text as U+FFFC)
+    if (substitutionFields && substitutionFields.length > 0) {
+      for (const field of substitutionFields) {
+        const fieldPosition = insertPosition + field.textIndex;
+        flowingContent.insertSubstitutionFieldAt(field.fieldName, fieldPosition, {
+          fieldType: field.fieldType,
+          displayFormat: field.displayFormat,
+          defaultValue: field.defaultValue,
+          formatting: field.formatting
+        });
+      }
+    }
+
+    // Insert embedded objects (they're already positioned in text as U+FFFC)
+    if (embeddedObjects && embeddedObjects.length > 0) {
+      for (const ref of embeddedObjects) {
+        const objPosition = insertPosition + ref.textIndex;
+        const object = this.createEmbeddedObjectFromData(ref.object);
+        if (object) {
+          flowingContent.insertEmbeddedObjectAt(object, objPosition, object.position);
+          this.observeEmbeddedObject(object);
+        }
+      }
+    }
+
+    // Insert hyperlinks
+    if (hyperlinks && hyperlinks.length > 0) {
+      for (const link of hyperlinks) {
+        const startIndex = insertPosition + link.startIndex;
+        const endIndex = insertPosition + link.endIndex;
+        flowingContent.insertHyperlinkAt(link.url, startIndex, endIndex, {
+          title: link.title,
+          formatting: link.formatting
+        });
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Create an embedded object from serialized data.
+   */
+  private createEmbeddedObjectFromData(data: EmbeddedObjectData): BaseEmbeddedObject | null {
+    const object = EmbeddedObjectFactory.tryCreate(data);
+    if (!object) {
+      console.warn('Unknown object type:', data.objectType);
+    }
+    return object;
+  }
+
+  /**
+   * Paste an image blob as an embedded ImageObject.
+   */
+  private async pasteImage(flowingContent: FlowingTextContent, blob: Blob): Promise<boolean> {
+    try {
+      const { dataUrl, width, height } = await this.clipboardManager.createImageFromBlob(blob);
+
+      // Create image object with reasonable default size
+      const maxWidth = 400;
+      const scale = width > maxWidth ? maxWidth / width : 1;
+      const imageObject = new ImageObject({
+        id: `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        textIndex: flowingContent.getCursorPosition(),
+        size: { width: width * scale, height: height * scale },
+        src: dataUrl,
+        alt: 'Pasted image'
+      });
+
+      flowingContent.insertEmbeddedObject(imageObject, 'inline');
+      this.observeEmbeddedObject(imageObject);
+      return true;
+    } catch (error) {
+      console.error('Failed to paste image:', error);
+      return false;
+    }
   }
 
   destroy(): void {

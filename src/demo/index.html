@@ -21,6 +21,9 @@
                     <label>Edit:</label>
                     <button id="undo-btn" title="Ctrl+Z" disabled>Undo</button>
                     <button id="redo-btn" title="Ctrl+Y" disabled>Redo</button>
+                    <button id="cut-btn" title="Ctrl+X">Cut</button>
+                    <button id="copy-btn" title="Ctrl+C">Copy</button>
+                    <button id="paste-btn" title="Ctrl+V">Paste</button>
                 </div>
                 <div class="toolbar-group">
                     <label>View:</label>
@@ -191,6 +194,24 @@
                         </div>
 
                         <div class="setting-group">
+                            <label>Lists:</label>
+                            <div class="format-buttons">
+                                <button id="toggle-bullet-list" class="format-btn" title="Bullet List">•</button>
+                                <button id="toggle-number-list" class="format-btn" title="Numbered List">1.</button>
+                                <button id="indent-list" class="format-btn" title="Increase Indent">→</button>
+                                <button id="outdent-list" class="format-btn" title="Decrease Indent">←</button>
+                            </div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Link:</label>
+                            <div class="format-buttons">
+                                <button id="insert-hyperlink" class="format-btn" title="Insert/Edit Link (Ctrl+K)">🔗</button>
+                                <button id="remove-hyperlink" class="format-btn" title="Remove Link">✂</button>
+                            </div>
+                        </div>
+
+                        <div class="setting-group">
                             <label>Font:</label>
                             <select id="format-font-family">
                                 <option value="Arial">Arial</option>
@@ -231,6 +252,26 @@
                         </div>
 
                         <p class="format-hint">Select text first, then apply formatting</p>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="hyperlink-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="hyperlink-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Hyperlink</span>
+                    </button>
+                    <div class="collapsible-content" id="hyperlink-properties">
+                        <div class="setting-group">
+                            <label>URL:</label>
+                            <input type="text" id="hyperlink-url-input" placeholder="https://example.com">
+                        </div>
+                        <div class="setting-group">
+                            <label>Title:</label>
+                            <input type="text" id="hyperlink-title-input" placeholder="Link title (optional)">
+                        </div>
+                        <button id="apply-hyperlink-changes">Apply Changes</button>
+                        <button id="remove-hyperlink-btn" class="danger-button" style="margin-top: 0.5rem;">Remove Link</button>
+                        <p class="field-hint" id="hyperlink-range-hint"></p>
                     </div>
                 </div>
 

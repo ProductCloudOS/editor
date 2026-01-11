@@ -1,6 +1,6 @@
 # FEATURE-0014: Hyperlink Support - Implementation Plan
 
-## Status: NOT STARTED
+## Status: COMPLETE
 
 ## Overview
 

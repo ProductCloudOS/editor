@@ -13,7 +13,12 @@ export type {
   RepeatingSectionVisualState,
   ObjectPosition,
   TextAlignment,
-  ParagraphFormatting
+  ParagraphFormatting,
+  ListFormatting,
+  ListMarker,
+  BulletStyle,
+  NumberStyle,
+  ListType
 } from './types';
 
 export { DEFAULT_FORMATTING, OBJECT_REPLACEMENT_CHAR } from './types';
@@ -36,6 +41,8 @@ export type { LineAtYResult } from './TextPositionCalculator';
 export { BaseTextRegion } from './EditableTextRegion';
 export type { EditableTextRegion, RegionType } from './EditableTextRegion';
 export { RegionManager } from './RegionManager';
+export { HyperlinkManager } from './HyperlinkManager';
+export type { Hyperlink, HyperlinkData, HyperlinkFormatting, HyperlinkOptions, HyperlinkUpdate } from './HyperlinkManager';
 
 // Region implementations
 export { BodyTextRegion, HeaderTextRegion, FooterTextRegion } from './regions';

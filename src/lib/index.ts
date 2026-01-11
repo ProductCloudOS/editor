@@ -75,3 +75,18 @@ export type {
   Rect,
   ImageFitMode
 } from './objects';
+
+// Clipboard module exports
+export {
+  ClipboardManager,
+  HtmlConverter
+} from './clipboard';
+
+export type {
+  ClipboardContent,
+  ClipboardReadResult,
+  PCEditorClipboardData,
+  ClipboardContentType,
+  CopyOptions,
+  PasteOptions
+} from './clipboard';

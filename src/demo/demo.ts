@@ -275,6 +275,20 @@ function setupEventHandlers(): void {
   undoBtn?.addEventListener('click', () => editor?.undo());
   redoBtn?.addEventListener('click', () => editor?.redo());
 
+  // Clipboard controls
+  document.getElementById('cut-btn')?.addEventListener('click', async () => {
+    const result = await editor?.cut();
+    updateStatus(result ? 'Cut to clipboard' : 'Nothing to cut');
+  });
+  document.getElementById('copy-btn')?.addEventListener('click', async () => {
+    const result = await editor?.copy();
+    updateStatus(result ? 'Copied to clipboard' : 'Nothing to copy');
+  });
+  document.getElementById('paste-btn')?.addEventListener('click', async () => {
+    const result = await editor?.paste();
+    updateStatus(result ? 'Pasted from clipboard' : 'Nothing to paste');
+  });
+
   // View controls (toolbar)
   document.getElementById('zoom-in')?.addEventListener('click', () => editor?.zoomIn());
   document.getElementById('zoom-out')?.addEventListener('click', () => editor?.zoomOut());
@@ -359,6 +373,26 @@ function setupEventHandlers(): void {
   document.getElementById('align-right')?.addEventListener('click', () => setAlignment('right'));
   document.getElementById('align-justify')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('align-justify')?.addEventListener('click', () => setAlignment('justify'));
+
+  // List controls
+  document.getElementById('toggle-bullet-list')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('toggle-bullet-list')?.addEventListener('click', toggleBulletList);
+  document.getElementById('toggle-number-list')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('toggle-number-list')?.addEventListener('click', toggleNumberedList);
+  document.getElementById('indent-list')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('indent-list')?.addEventListener('click', indentParagraph);
+  document.getElementById('outdent-list')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('outdent-list')?.addEventListener('click', outdentParagraph);
+
+  // Hyperlink controls
+  document.getElementById('insert-hyperlink')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('insert-hyperlink')?.addEventListener('click', insertOrEditHyperlink);
+  document.getElementById('remove-hyperlink')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('remove-hyperlink')?.addEventListener('click', removeHyperlink);
+  document.getElementById('apply-hyperlink-changes')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('apply-hyperlink-changes')?.addEventListener('click', applyHyperlinkChanges);
+  document.getElementById('remove-hyperlink-btn')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('remove-hyperlink-btn')?.addEventListener('click', removeHyperlink);
 
   // Field controls
   document.getElementById('apply-field-changes')?.addEventListener('mousedown', preventFocusSteal);
@@ -1768,6 +1802,12 @@ function updateFormattingPane(): void {
   // Update Alignment buttons
   const alignment = editor.getUnifiedAlignmentAtCursor();
   updateAlignmentButtons(alignment);
+
+  // Update List buttons
+  updateListButtons();
+
+  // Update Hyperlink pane
+  updateHyperlinkPane();
 }
 
 function getSelection(): { start: number; end: number } | null {
@@ -1900,6 +1940,252 @@ function updateAlignmentButtons(alignment: TextAlignment): void {
         btn.classList.remove('active');
       }
     }
+  }
+}
+
+// ============================================
+// List Functions
+// ============================================
+
+/**
+ * Toggle bullet list for the current paragraph.
+ */
+function toggleBulletList(): void {
+  if (!editor) return;
+  try {
+    editor.toggleBulletList();
+    updateListButtons();
+    updateStatus('Toggled bullet list');
+  } catch (error) {
+    updateStatus('Failed to toggle bullet list', 'error');
+    console.error('Bullet list error:', error);
+  }
+}
+
+/**
+ * Toggle numbered list for the current paragraph.
+ */
+function toggleNumberedList(): void {
+  if (!editor) return;
+  try {
+    editor.toggleNumberedList();
+    updateListButtons();
+    updateStatus('Toggled numbered list');
+  } catch (error) {
+    updateStatus('Failed to toggle numbered list', 'error');
+    console.error('Numbered list error:', error);
+  }
+}
+
+/**
+ * Indent the current paragraph.
+ */
+function indentParagraph(): void {
+  if (!editor) return;
+  try {
+    editor.indentParagraph();
+    updateListButtons();
+    updateStatus('Increased indent');
+  } catch (error) {
+    updateStatus('Failed to indent', 'error');
+    console.error('Indent error:', error);
+  }
+}
+
+/**
+ * Outdent the current paragraph.
+ */
+function outdentParagraph(): void {
+  if (!editor) return;
+  try {
+    editor.outdentParagraph();
+    updateListButtons();
+    updateStatus('Decreased indent');
+  } catch (error) {
+    updateStatus('Failed to outdent', 'error');
+    console.error('Outdent error:', error);
+  }
+}
+
+/**
+ * Update the list buttons to show active state.
+ */
+function updateListButtons(): void {
+  if (!editor) return;
+
+  const listFormatting = editor.getListFormatting();
+  const bulletBtn = document.getElementById('toggle-bullet-list');
+  const numberBtn = document.getElementById('toggle-number-list');
+
+  if (bulletBtn) {
+    bulletBtn.classList.toggle('active', listFormatting?.listType === 'bullet');
+  }
+  if (numberBtn) {
+    numberBtn.classList.toggle('active', listFormatting?.listType === 'number');
+  }
+}
+
+// ============================================
+// Hyperlink Functions
+// ============================================
+
+// Track the currently selected hyperlink for the properties pane
+let currentSelectedHyperlink: { id: string; url: string; title?: string; startIndex: number; endIndex: number } | null = null;
+
+/**
+ * Insert a new hyperlink or edit an existing one at the cursor.
+ */
+function insertOrEditHyperlink(): void {
+  if (!editor) return;
+
+  try {
+    // Check if we're at an existing hyperlink
+    const cursorPos = editor.getCursorPosition();
+    const existingLink = editor.getHyperlinkAt(cursorPos);
+
+    console.log('[insertOrEditHyperlink] cursorPos:', cursorPos, 'existingLink:', existingLink);
+
+    if (existingLink) {
+      // Edit existing hyperlink - show properties pane
+      showHyperlinkPane(existingLink);
+      updateStatus('Editing hyperlink');
+    } else {
+      // Insert new hyperlink - requires text selection
+      // First try the event-tracked selection, then fall back to direct query
+      const selection = editor.getSelection();
+      const textSelection = editor.getTextSelection();
+      console.log('[insertOrEditHyperlink] selection:', selection, 'textSelection:', textSelection);
+
+      // Check if there's a valid text selection
+      const hasTextSelection = (selection?.type === 'text' && selection.start !== selection.end) ||
+                               (textSelection !== null && textSelection.start !== textSelection.end);
+
+      if (!hasTextSelection) {
+        updateStatus('Select text first to insert a hyperlink', 'error');
+        return;
+      }
+
+      // Prompt for URL
+      const url = prompt('Enter URL:', 'https://');
+      if (!url) return;
+
+      const hyperlink = editor.insertHyperlink(url);
+      if (hyperlink) {
+        showHyperlinkPane(hyperlink);
+        updateStatus('Hyperlink inserted');
+      }
+    }
+  } catch (error) {
+    updateStatus('Failed to insert hyperlink', 'error');
+    console.error('Hyperlink error:', error);
+  }
+}
+
+/**
+ * Remove the hyperlink at the cursor.
+ */
+function removeHyperlink(): void {
+  if (!editor) return;
+
+  try {
+    // Check for hyperlink at cursor or from current selection
+    const cursorPos = editor.getCursorPosition();
+    const hyperlink = currentSelectedHyperlink || editor.getHyperlinkAt(cursorPos);
+
+    if (hyperlink) {
+      editor.removeHyperlink(hyperlink.id);
+      currentSelectedHyperlink = null;
+      hideHyperlinkPane();
+      updateStatus('Hyperlink removed');
+    } else {
+      updateStatus('No hyperlink at cursor', 'error');
+    }
+  } catch (error) {
+    updateStatus('Failed to remove hyperlink', 'error');
+    console.error('Remove hyperlink error:', error);
+  }
+}
+
+/**
+ * Apply changes from the hyperlink properties pane.
+ */
+function applyHyperlinkChanges(): void {
+  if (!editor || !currentSelectedHyperlink) return;
+
+  try {
+    const urlInput = document.getElementById('hyperlink-url-input') as HTMLInputElement;
+    const titleInput = document.getElementById('hyperlink-title-input') as HTMLInputElement;
+
+    if (!urlInput) return;
+
+    const url = urlInput.value.trim();
+    const title = titleInput?.value.trim() || undefined;
+
+    if (!url) {
+      updateStatus('URL is required', 'error');
+      return;
+    }
+
+    editor.updateHyperlink(currentSelectedHyperlink.id, { url, title });
+    currentSelectedHyperlink.url = url;
+    currentSelectedHyperlink.title = title;
+
+    updateStatus('Hyperlink updated');
+  } catch (error) {
+    updateStatus('Failed to update hyperlink', 'error');
+    console.error('Update hyperlink error:', error);
+  }
+}
+
+/**
+ * Show the hyperlink properties pane.
+ */
+function showHyperlinkPane(hyperlink: { id: string; url: string; title?: string; startIndex: number; endIndex: number }): void {
+  const section = document.getElementById('hyperlink-section');
+  const urlInput = document.getElementById('hyperlink-url-input') as HTMLInputElement;
+  const titleInput = document.getElementById('hyperlink-title-input') as HTMLInputElement;
+  const rangeHint = document.getElementById('hyperlink-range-hint');
+
+  if (!section) return;
+
+  currentSelectedHyperlink = hyperlink;
+  section.style.display = 'block';
+
+  if (urlInput) {
+    urlInput.value = hyperlink.url;
+  }
+  if (titleInput) {
+    titleInput.value = hyperlink.title || '';
+  }
+  if (rangeHint) {
+    rangeHint.textContent = `Link spans characters ${hyperlink.startIndex} to ${hyperlink.endIndex}`;
+  }
+}
+
+/**
+ * Hide the hyperlink properties pane.
+ */
+function hideHyperlinkPane(): void {
+  const section = document.getElementById('hyperlink-section');
+  if (section) {
+    section.style.display = 'none';
+  }
+  currentSelectedHyperlink = null;
+}
+
+/**
+ * Update hyperlink pane based on cursor position.
+ */
+function updateHyperlinkPane(): void {
+  if (!editor) return;
+
+  const cursorPos = editor.getCursorPosition();
+  const hyperlink = editor.getHyperlinkAt(cursorPos);
+
+  if (hyperlink) {
+    showHyperlinkPane(hyperlink);
+  } else {
+    hideHyperlinkPane();
   }
 }
 

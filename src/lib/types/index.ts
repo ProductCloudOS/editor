@@ -56,6 +56,7 @@ export interface FlowingTextContentData {
   substitutionFields?: SubstitutionFieldData[];
   repeatingSections?: RepeatingSectionData[];
   embeddedObjects?: EmbeddedObjectReference[];
+  hyperlinks?: HyperlinkSerializedData[];
 }
 
 export interface DocumentData {
@@ -187,4 +188,19 @@ export interface RepeatingSectionData {
 export interface EmbeddedObjectReference {
   textIndex: number;
   object: import('../objects').EmbeddedObjectData;
+}
+
+/**
+ * Serialized hyperlink.
+ */
+export interface HyperlinkSerializedData {
+  id: string;
+  url: string;
+  startIndex: number;
+  endIndex: number;
+  title?: string;
+  formatting?: {
+    color?: string;
+    underline?: boolean;
+  };
 }
