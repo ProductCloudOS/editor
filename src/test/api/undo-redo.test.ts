@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PCEditor } from '../../lib/core/PCEditor';
 import { createEditor, cleanupEditor, nextTick, waitForEvent } from '../helpers/createEditor';
+import { TextBoxObject, ImageObject } from '../../lib/objects';
 
 describe('PCEditor Undo/Redo', () => {
   let editor: PCEditor;
@@ -290,6 +291,141 @@ describe('PCEditor Undo/Redo', () => {
       await nextTick();
 
       // After undo, alignment may be reverted
+    });
+  });
+
+  describe('undo with embedded objects', () => {
+    it('should insert text box without error', async () => {
+      const textBox = new TextBoxObject({
+        id: 'textbox-undo-test',
+        size: { width: 100, height: 50 }
+      });
+
+      // This should not throw
+      expect(() => editor.insertEmbeddedObject(textBox)).not.toThrow();
+      await nextTick();
+
+      // Verify text box was inserted
+      const text = editor.getFlowingText();
+      expect(text).toContain('\uFFFC');
+    });
+
+    it('should insert text box after setting text', async () => {
+      editor.setFlowingText('Hello World');
+      editor.setCursorPosition(5);
+      await nextTick();
+
+      const textBox = new TextBoxObject({
+        id: 'textbox-after-text',
+        size: { width: 100, height: 50 }
+      });
+
+      editor.insertEmbeddedObject(textBox);
+      await nextTick();
+
+      const text = editor.getFlowingText();
+      expect(text).toContain('\uFFFC');
+      // Text box should be inserted at cursor position (5)
+      expect(text.indexOf('\uFFFC')).toBe(5);
+    });
+
+    it('should undo text box insertion', async () => {
+      editor.setFlowingText('Hello');
+      await nextTick();
+
+      const textBox = new TextBoxObject({
+        id: 'textbox-undo',
+        size: { width: 100, height: 50 }
+      });
+
+      editor.insertEmbeddedObject(textBox);
+      await nextTick();
+
+      const textBefore = editor.getFlowingText();
+      expect(textBefore).toContain('\uFFFC');
+
+      editor.undo();
+      await nextTick();
+
+      // After undo, text box should be removed
+      const textAfter = editor.getFlowingText();
+      expect(textAfter).not.toContain('\uFFFC');
+      expect(textAfter).toBe('Hello');
+    });
+
+    it('should redo text box insertion after undo', async () => {
+      editor.setFlowingText('');
+      await nextTick();
+
+      const textBox = new TextBoxObject({
+        id: 'textbox-redo',
+        size: { width: 100, height: 50 }
+      });
+
+      editor.insertEmbeddedObject(textBox);
+      await nextTick();
+
+      editor.undo();
+      await nextTick();
+      expect(editor.getFlowingText()).not.toContain('\uFFFC');
+
+      editor.redo();
+      await nextTick();
+
+      // After redo, text box should be back
+      expect(editor.getFlowingText()).toContain('\uFFFC');
+    });
+
+    it('should insert image without error', async () => {
+      const image = new ImageObject({
+        id: 'image-undo-test',
+        size: { width: 100, height: 100 },
+        src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+      });
+
+      expect(() => editor.insertEmbeddedObject(image)).not.toThrow();
+      await nextTick();
+
+      const text = editor.getFlowingText();
+      expect(text).toContain('\uFFFC');
+    });
+
+    it('should handle multiple embedded objects with undo', async () => {
+      editor.setFlowingText('');
+      await nextTick();
+
+      const textBox1 = new TextBoxObject({
+        id: 'textbox-multi-1',
+        size: { width: 100, height: 50 }
+      });
+
+      const textBox2 = new TextBoxObject({
+        id: 'textbox-multi-2',
+        size: { width: 100, height: 50 }
+      });
+
+      editor.insertEmbeddedObject(textBox1);
+      await nextTick();
+
+      editor.insertEmbeddedObject(textBox2);
+      await nextTick();
+
+      const textWith2 = editor.getFlowingText();
+      expect(textWith2.match(/\uFFFC/g)?.length).toBe(2);
+
+      // Undo second text box
+      editor.undo();
+      await nextTick();
+
+      const textWith1 = editor.getFlowingText();
+      expect(textWith1.match(/\uFFFC/g)?.length).toBe(1);
+
+      // Undo first text box
+      editor.undo();
+      await nextTick();
+
+      const textWith0 = editor.getFlowingText();
+      expect(textWith0).not.toContain('\uFFFC');
     });
   });
 });

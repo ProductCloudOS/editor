@@ -17,8 +17,11 @@ import {
   FormatMutationData,
   AlignmentMutationData,
   FieldInsertMutationData,
+  ObjectMutationData,
   generateId
 } from './types';
+import { BaseEmbeddedObject } from '../../objects';
+import { ObjectPosition } from '../../objects/types';
 
 /**
  * Stores original methods for a FlowingTextContent instance.
@@ -33,6 +36,7 @@ interface OriginalMethods {
   setAlignmentForRange: FlowingTextContent['setAlignmentForRange'];
   insertSubstitutionField: FlowingTextContent['insertSubstitutionField'];
   removeSubstitutionField: FlowingTextContent['removeSubstitutionField'];
+  insertEmbeddedObject: FlowingTextContent['insertEmbeddedObject'];
 }
 
 /**
@@ -72,7 +76,8 @@ export class TextMutationObserver {
       setAlignment: content.setAlignment.bind(content),
       setAlignmentForRange: content.setAlignmentForRange.bind(content),
       insertSubstitutionField: content.insertSubstitutionField.bind(content),
-      removeSubstitutionField: content.removeSubstitutionField.bind(content)
+      removeSubstitutionField: content.removeSubstitutionField.bind(content),
+      insertEmbeddedObject: content.insertEmbeddedObject.bind(content)
     };
 
     this.observedContents.set(content, { sourceId, originalMethods });
@@ -296,6 +301,36 @@ export class TextMutationObserver {
 
       return result;
     };
+
+    // Wrap insertEmbeddedObject
+    content.insertEmbeddedObject = (object: BaseEmbeddedObject, position: ObjectPosition = 'inline') => {
+      if (this.manager.isUndoRedoInProgress) {
+        return originalMethods.insertEmbeddedObject(object, position);
+      }
+
+      const beforeState = this.captureState(content);
+      const insertPos = content.getCursorPosition();
+
+      originalMethods.insertEmbeddedObject(object, position);
+
+      const afterState = this.captureState(content);
+
+      // Serialize the object for later restoration
+      const objectData = object.toData();
+
+      this.recordMutation(content, {
+        id: generateId(),
+        sourceId: this.getSourceId(content),
+        type: 'object-insert',
+        timestamp: Date.now(),
+        beforeState,
+        afterState,
+        data: {
+          position: insertPos,
+          objectData
+        } as ObjectMutationData
+      });
+    };
   }
 
   /**
@@ -317,6 +352,7 @@ export class TextMutationObserver {
     content.setAlignmentForRange = originalMethods.setAlignmentForRange;
     content.insertSubstitutionField = originalMethods.insertSubstitutionField;
     content.removeSubstitutionField = originalMethods.removeSubstitutionField;
+    content.insertEmbeddedObject = originalMethods.insertEmbeddedObject;
 
     this.observedContents.delete(content);
   }

@@ -18,9 +18,11 @@ import {
   ResizeMutationData,
   MoveMutationData,
   PropertyMutationData,
-  TableStructureMutationData
+  TableStructureMutationData,
+  ObjectMutationData
 } from './types';
-import { BaseEmbeddedObject, TableObject } from '../../objects';
+import { BaseEmbeddedObject, TableObject, EmbeddedObjectFactory } from '../../objects';
+import { EmbeddedObjectData } from '../../objects/types';
 
 /**
  * Callback to get a FlowingTextContent by source ID.
@@ -67,6 +69,12 @@ export class MutationUndo {
       case 'field-update':
         this.undoFieldUpdate(mutation);
         break;
+      case 'object-insert':
+        this.undoObjectInsert(mutation);
+        break;
+      case 'object-delete':
+        this.undoObjectDelete(mutation);
+        break;
       case 'object-resize':
         this.undoResize(mutation);
         break;
@@ -111,6 +119,12 @@ export class MutationUndo {
         break;
       case 'field-update':
         this.redoFieldUpdate(mutation);
+        break;
+      case 'object-insert':
+        this.redoObjectInsert(mutation);
+        break;
+      case 'object-delete':
+        this.redoObjectDelete(mutation);
         break;
       case 'object-resize':
         this.redoResize(mutation);
@@ -281,6 +295,54 @@ export class MutationUndo {
     const data = mutation.data as FieldUpdateMutationData;
     const fieldManager = content.getSubstitutionFieldManager();
     fieldManager.updateFieldConfig(data.textIndex, data.newData);
+  }
+
+  // --- Embedded Object Insert/Delete ---
+
+  private undoObjectInsert(mutation: MutationRecord): void {
+    const content = this.getContent(mutation.sourceId as ContentSourceId);
+    if (!content) return;
+
+    const data = mutation.data as ObjectMutationData;
+    // Delete the placeholder character and the object will be removed automatically
+    content.deleteTextAt(data.position, 1);
+  }
+
+  private redoObjectInsert(mutation: MutationRecord): void {
+    const content = this.getContent(mutation.sourceId as ContentSourceId);
+    if (!content) return;
+
+    const data = mutation.data as ObjectMutationData;
+    const objectData = data.objectData as EmbeddedObjectData;
+
+    // Recreate the object from saved data
+    const object = EmbeddedObjectFactory.create(objectData);
+
+    // Insert at the specific position (doesn't emit embedded-object-inserted event)
+    content.insertEmbeddedObjectAt(object, data.position, object.position);
+  }
+
+  private undoObjectDelete(mutation: MutationRecord): void {
+    const content = this.getContent(mutation.sourceId as ContentSourceId);
+    if (!content) return;
+
+    const data = mutation.data as ObjectMutationData;
+    const objectData = data.objectData as EmbeddedObjectData;
+
+    // Recreate the object from saved data
+    const object = EmbeddedObjectFactory.create(objectData);
+
+    // Re-insert at the original position
+    content.insertEmbeddedObjectAt(object, data.position, object.position);
+  }
+
+  private redoObjectDelete(mutation: MutationRecord): void {
+    const content = this.getContent(mutation.sourceId as ContentSourceId);
+    if (!content) return;
+
+    const data = mutation.data as ObjectMutationData;
+    // Delete the placeholder character again
+    content.deleteTextAt(data.position, 1);
   }
 
   // --- Object Mutations ---
