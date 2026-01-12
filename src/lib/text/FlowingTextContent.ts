@@ -1609,6 +1609,17 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
         fontStyle: field.formatting.fontStyle,
         color: field.formatting.color,
         backgroundColor: field.formatting.backgroundColor
+      } : undefined,
+      formatConfig: field.formatConfig ? {
+        valueType: field.formatConfig.valueType,
+        numberFormat: field.formatConfig.numberFormat,
+        decimalPlaces: field.formatConfig.decimalPlaces,
+        useGrouping: field.formatConfig.useGrouping,
+        currencyFormat: field.formatConfig.currencyFormat,
+        currencySymbol: field.formatConfig.currencySymbol,
+        currencyPosition: field.formatConfig.currencyPosition,
+        dateFormat: field.formatConfig.dateFormat,
+        locale: field.formatConfig.locale
       } : undefined
     }));
 

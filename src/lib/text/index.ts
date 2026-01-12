@@ -18,7 +18,12 @@ export type {
   ListMarker,
   BulletStyle,
   NumberStyle,
-  ListType
+  ListType,
+  FieldValueType,
+  FieldFormatConfig,
+  NumberFormatPreset,
+  CurrencyFormatPreset,
+  DateFormatPreset
 } from './types';
 
 export { DEFAULT_FORMATTING, OBJECT_REPLACEMENT_CHAR } from './types';
@@ -47,3 +52,10 @@ export type { Hyperlink, HyperlinkData, HyperlinkFormatting, HyperlinkOptions, H
 // Region implementations
 export { BodyTextRegion, HeaderTextRegion, FooterTextRegion } from './regions';
 export type { PageBoundsProvider, HeaderBoundsProvider, FooterBoundsProvider } from './regions';
+
+// Field formatting
+export { formatFieldValue, isMarkdownFormat, getFormatDisplayName } from './FieldFormatter';
+
+// Markdown parsing
+export { parseMarkdown, applyMarkdownFormatting, containsMarkdown, stripMarkdown } from './MarkdownParser';
+export type { MarkdownSegment, MarkdownSegmentType, ParsedMarkdown } from './MarkdownParser';

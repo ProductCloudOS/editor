@@ -16,6 +16,7 @@ import { PDFGenerator } from '../rendering/PDFGenerator';
 import { LayoutEngine } from '../layout/LayoutEngine';
 import { BaseEmbeddedObject, ObjectPosition, TextBoxObject, TableObject, ImageObject, TableRowConfig, EmbeddedObjectFactory, EmbeddedObjectData } from '../objects';
 import { SubstitutionFieldConfig, TextFormattingStyle, SubstitutionField, RepeatingSection, FlowingTextContent, TextAlignment, Focusable } from '../text';
+import { formatFieldValue } from '../text/FieldFormatter';
 import {
   TransactionManager,
   TextMutationObserver,
@@ -115,8 +116,9 @@ export class PCEditor extends EventEmitter {
 
   private setupContainer(): void {
     this.container.style.position = 'relative';
-    this.container.style.overflow = 'auto';
-    
+    // Note: Don't set overflow here - let the parent container handle scrolling
+    // so that external controls (rulers) can sync with the scroll position
+
     if (this.options.theme === 'dark') {
       this.container.classList.add('pc-editor-dark');
     } else {
@@ -141,6 +143,8 @@ export class PCEditor extends EventEmitter {
           this.canvasManager.checkForEmptyPages();
         }, 50);
       }
+      // Forward to external controls (rulers)
+      this.emit('settings-changed');
     });
 
     this.canvasManager.on('selection-change', (_data: any) => {
@@ -278,6 +282,25 @@ export class PCEditor extends EventEmitter {
     });
     this.canvasManager.on('textbox-editing-ended', () => {
       this.checkAndEmitTextEditingEvents();
+    });
+
+    // Forward zoom changes for external controls
+    this.canvasManager.on('zoom-change', (data: { zoom: number }) => {
+      this.emit('zoom-changed', data);
+    });
+
+    // Forward scroll changes for external controls
+    this.canvasManager.on('scroll', (data: { x: number; y: number }) => {
+      this.emit('scroll', data);
+    });
+
+    // Forward mouse position for external controls (rulers)
+    this.canvasManager.on('mouse-move', (data: { x: number; y: number }) => {
+      this.emit('mouse-move', data);
+    });
+
+    this.canvasManager.on('mouse-leave', () => {
+      this.emit('mouse-leave');
     });
   }
 
@@ -928,6 +951,38 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.setZoom(level);
   }
 
+  /**
+   * Get the current zoom level.
+   */
+  getZoomLevel(): number {
+    if (!this._isReady) return 1;
+    return this.canvasManager.getZoom();
+  }
+
+  /**
+   * Get the container element for the editor.
+   */
+  getContainer(): HTMLElement {
+    return this.container;
+  }
+
+  /**
+   * Get the current scroll position of the editor viewport.
+   */
+  getScrollPosition(): { x: number; y: number } {
+    if (!this._isReady) return { x: 0, y: 0 };
+    return this.canvasManager.getScrollPosition();
+  }
+
+  /**
+   * Get the offset of the document content within the viewport.
+   * This is where the first page starts relative to the scroll viewport origin.
+   */
+  getContentOffset(): { x: number; y: number } {
+    if (!this._isReady) return { x: 0, y: 0 };
+    return this.canvasManager.getContentOffset();
+  }
+
   fitToWidth(): void {
     if (!this._isReady) return;
     this.canvasManager.fitToWidth();
@@ -968,11 +1023,45 @@ export class PCEditor extends EventEmitter {
     this.layoutEngine.setSnapToGrid(enabled, this.options.gridSize);
   }
 
-  getDocumentMetrics(): any {
+  getDocumentMetrics(): {
+    pageWidth: number;
+    pageHeight: number;
+    margins: { top: number; right: number; bottom: number; left: number };
+    totalPages: number;
+  } | null {
     if (!this._isReady) {
-      throw new Error('Editor is not ready');
+      return null;
     }
-    return this.layoutEngine.getDocumentMetrics();
+
+    // Get document settings which contain page size and margins
+    const settings = this.document.settings;
+
+    // Calculate page dimensions in mm based on page size
+    const pageSizes: Record<string, { width: number; height: number }> = {
+      A4: { width: 210, height: 297 },
+      Letter: { width: 215.9, height: 279.4 },
+      Legal: { width: 215.9, height: 355.6 },
+      A3: { width: 297, height: 420 }
+    };
+
+    let dimensions = pageSizes[settings.pageSize] || pageSizes.A4;
+
+    // Handle custom page size
+    if (settings.pageSize === 'Custom' && settings.customPageSize) {
+      dimensions = { width: settings.customPageSize.width, height: settings.customPageSize.height };
+    }
+
+    // Handle landscape orientation
+    if (settings.pageOrientation === 'landscape') {
+      dimensions = { width: dimensions.height, height: dimensions.width };
+    }
+
+    return {
+      pageWidth: dimensions.width,
+      pageHeight: dimensions.height,
+      margins: settings.margins,
+      totalPages: this.document.pages.length
+    };
   }
 
   addPage(): void {
@@ -2202,7 +2291,7 @@ export class PCEditor extends EventEmitter {
    * @param updates The properties to update
    * @returns true if the field was updated, false if not found
    */
-  updateField(textIndex: number, updates: { fieldName?: string; defaultValue?: string; displayFormat?: string }): boolean {
+  updateField(textIndex: number, updates: { fieldName?: string; defaultValue?: string; displayFormat?: string; formatConfig?: import('../text/types').FieldFormatConfig }): boolean {
     if (!this._isReady) {
       return false;
     }
@@ -2299,7 +2388,14 @@ export class PCEditor extends EventEmitter {
     // Replace each field with its value
     for (const field of fields) {
       const value = this.resolveFieldPath(field.fieldName, data);
-      const replacement = value !== undefined ? String(value) : (field.defaultValue || `{{${field.fieldName}}}`);
+
+      // Format the value using the field's format config, or fall back to default
+      let replacement: string;
+      if (value !== undefined) {
+        replacement = formatFieldValue(value, field.formatConfig);
+      } else {
+        replacement = field.defaultValue || `{{${field.fieldName}}}`;
+      }
 
       // Store the field's formatting before we delete it
       const fieldFormatting = field.formatting;

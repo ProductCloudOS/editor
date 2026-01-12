@@ -124,6 +124,79 @@ export interface TextRun {
 export type SubstitutionFieldType = 'data' | 'pageNumber' | 'pageCount';
 
 /**
+ * Type of value expected for formatting purposes.
+ */
+export type FieldValueType = 'string' | 'number' | 'currency' | 'date' | 'markdown';
+
+/**
+ * Predefined format patterns for numbers.
+ */
+export type NumberFormatPreset =
+  | 'integer'           // 1234
+  | 'decimal'           // 1234.56
+  | 'decimal-1'         // 1234.5
+  | 'decimal-3'         // 1234.567
+  | 'thousands'         // 1,234
+  | 'percent'           // 12.34%
+  | 'scientific';       // 1.23e+3
+
+/**
+ * Predefined format patterns for currency.
+ */
+export type CurrencyFormatPreset =
+  | 'USD'               // $1,234.56
+  | 'EUR'               // €1.234,56
+  | 'GBP'               // £1,234.56
+  | 'JPY'               // ¥1,234
+  | 'custom';           // Custom via currencySymbol
+
+/**
+ * Predefined format patterns for dates.
+ */
+export type DateFormatPreset =
+  | 'short'             // 1/15/24
+  | 'medium'            // Jan 15, 2024
+  | 'long'              // January 15, 2024
+  | 'full'              // Monday, January 15, 2024
+  | 'iso'               // 2024-01-15
+  | 'time-short'        // 3:30 PM
+  | 'time-long'         // 3:30:45 PM
+  | 'datetime-short'    // 1/15/24, 3:30 PM
+  | 'datetime-long';    // January 15, 2024 at 3:30 PM
+
+/**
+ * Configuration for field value formatting.
+ */
+export interface FieldFormatConfig {
+  /** Type of value for formatting purposes */
+  valueType?: FieldValueType;
+
+  // Number formatting options
+  /** Preset or custom format pattern for numbers */
+  numberFormat?: NumberFormatPreset | string;
+  /** Number of decimal places */
+  decimalPlaces?: number;
+  /** Use thousands separator grouping */
+  useGrouping?: boolean;
+
+  // Currency formatting options
+  /** Currency format preset */
+  currencyFormat?: CurrencyFormatPreset;
+  /** Custom currency symbol (when currencyFormat is 'custom') */
+  currencySymbol?: string;
+  /** Position of currency symbol */
+  currencyPosition?: 'before' | 'after';
+
+  // Date formatting options
+  /** Date format preset or custom pattern */
+  dateFormat?: DateFormatPreset | string;
+
+  // Locale settings
+  /** Locale for formatting (e.g., 'en-US', 'de-DE') */
+  locale?: string;
+}
+
+/**
  * Configuration for a substitution field.
  */
 export interface SubstitutionFieldConfig {
@@ -131,6 +204,8 @@ export interface SubstitutionFieldConfig {
   defaultValue?: string;
   fieldType?: SubstitutionFieldType;
   formatting?: TextFormattingStyle;
+  /** Format configuration for value transformation */
+  formatConfig?: FieldFormatConfig;
 }
 
 /**
@@ -146,6 +221,8 @@ export interface SubstitutionField {
   displayFormat?: string;
   defaultValue?: string;
   formatting?: TextFormattingStyle;
+  /** Format configuration for value transformation during merge */
+  formatConfig?: FieldFormatConfig;
 }
 
 /**

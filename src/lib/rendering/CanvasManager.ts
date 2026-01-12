@@ -106,6 +106,7 @@ export class CanvasManager extends EventEmitter {
   async initialize(): Promise<void> {
     this.createCanvases();
     this.setupEventListeners();
+    this.setupScrollListener();
 
     // Set initial focus on the body flowing content
     this.setFocus(this.document.bodyFlowingContent);
@@ -604,6 +605,10 @@ export class CanvasManager extends EventEmitter {
   private handleMouseMove(e: MouseEvent, pageId: string): void {
     const point = this.getMousePosition(e);
 
+    // Emit mouse position for external controls (rulers)
+    const viewportPos = this.getViewportMousePosition(e);
+    this.emit('mouse-move', { x: viewportPos.x, y: viewportPos.y });
+
     // Handle relative object dragging
     if (this.relativeObjectDragPending && this.relativeObjectDragStart && this.relativeObjectBeingDragged) {
       // Check if we've moved enough to start dragging
@@ -871,6 +876,9 @@ export class CanvasManager extends EventEmitter {
   }
 
   private handleMouseLeave(_e: MouseEvent, _pageId: string): void {
+    // Emit mouse leave for external controls (rulers)
+    this.emit('mouse-leave');
+
     // End any active dragging operations when mouse leaves the canvas
     // Finalize text selection in text box if active
     if (this.isSelectingTextInTextBox) {
@@ -1176,6 +1184,22 @@ export class CanvasManager extends EventEmitter {
     return {
       x: (e.clientX - rect.left) / this.zoomLevel,
       y: (e.clientY - rect.top) / this.zoomLevel
+    };
+  }
+
+  /**
+   * Get mouse position relative to the scroll container viewport.
+   * Used for ruler mouse tracking.
+   */
+  private getViewportMousePosition(e: MouseEvent): Point {
+    const scrollContainer = this.findScrollContainer();
+    if (!scrollContainer) {
+      return { x: e.clientX, y: e.clientY };
+    }
+    const scrollRect = scrollContainer.getBoundingClientRect();
+    return {
+      x: e.clientX - scrollRect.left,
+      y: e.clientY - scrollRect.top
     };
   }
 
@@ -1604,6 +1628,81 @@ export class CanvasManager extends EventEmitter {
     }
 
     return null;
+  }
+
+  /**
+   * Get the current zoom level.
+   */
+  getZoom(): number {
+    return this.zoomLevel;
+  }
+
+  /**
+   * Get the current scroll position of the editor viewport.
+   */
+  getScrollPosition(): { x: number; y: number } {
+    // Find the scrollable container (parent with overflow:auto/scroll)
+    const scrollContainer = this.findScrollContainer();
+    if (scrollContainer) {
+      return {
+        x: scrollContainer.scrollLeft,
+        y: scrollContainer.scrollTop
+      };
+    }
+    return { x: 0, y: 0 };
+  }
+
+  /**
+   * Get the offset of the document content within the viewport.
+   * This is where the first page starts relative to the scroll viewport.
+   */
+  getContentOffset(): { x: number; y: number } {
+    const scrollContainer = this.findScrollContainer();
+    const firstCanvas = this.canvases.values().next().value as HTMLCanvasElement | undefined;
+
+    if (!scrollContainer || !firstCanvas) {
+      return { x: 0, y: 0 };
+    }
+
+    const scrollRect = scrollContainer.getBoundingClientRect();
+    const canvasRect = firstCanvas.getBoundingClientRect();
+
+    return {
+      x: canvasRect.left - scrollRect.left + scrollContainer.scrollLeft,
+      y: canvasRect.top - scrollRect.top + scrollContainer.scrollTop
+    };
+  }
+
+  /**
+   * Find the scrollable container element.
+   */
+  private findScrollContainer(): HTMLElement | null {
+    // Walk up the DOM to find a scrollable container
+    let element: HTMLElement | null = this.container;
+    while (element) {
+      const style = getComputedStyle(element);
+      const overflowY = style.overflowY;
+      const overflowX = style.overflowX;
+      if (overflowY === 'auto' || overflowY === 'scroll' ||
+          overflowX === 'auto' || overflowX === 'scroll') {
+        return element;
+      }
+      element = element.parentElement;
+    }
+    return this.container.parentElement || this.container;
+  }
+
+  /**
+   * Set up scroll event forwarding.
+   */
+  setupScrollListener(): void {
+    const scrollContainer = this.findScrollContainer();
+    if (scrollContainer) {
+      scrollContainer.addEventListener('scroll', () => {
+        const pos = this.getScrollPosition();
+        this.emit('scroll', pos);
+      });
+    }
   }
 
   zoomIn(): void {

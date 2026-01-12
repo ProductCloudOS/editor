@@ -1,6 +1,6 @@
 # FEATURE-0015: Optional Editor Controls (Rulers)
 
-## Status: NOT STARTED
+## Status: COMPLETE
 
 ## Overview
 

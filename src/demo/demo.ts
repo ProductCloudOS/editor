@@ -1,4 +1,4 @@
-import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, SubstitutionField, RepeatingSection, EditingSection, TextAlignment } from '../lib';
+import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, SubstitutionField, RepeatingSection, EditingSection, TextAlignment, HorizontalRuler, VerticalRuler } from '../lib';
 
 let editor: PCEditor;
 let currentSelectedField: SubstitutionField | null = null;
@@ -7,6 +7,8 @@ let currentSelectedTextBox: TextBoxObject | null = null;
 let currentSelectedTable: TableObject | null = null;
 let currentSelectedImage: ImageObject | null = null;
 let currentSelectedRowLoop: { table: TableObject; loopId: string } | null = null;
+let horizontalRuler: HorizontalRuler | null = null;
+let verticalRuler: VerticalRuler | null = null;
 
 function initializeEditor(): void {
   const container = document.getElementById('editor');
@@ -31,6 +33,7 @@ function initializeEditor(): void {
     // Add some initial flowing text to demonstrate the feature
     editor.setFlowingText('Welcome to PC Editor!\n\nThis is a document layout engine with flowing text support. Click in the text to position your cursor, then use the toolbar buttons to insert embedded content.\n\nTry inserting an image, text box, or substitution field at the cursor position. You can also use Float Left/Right to position images alongside text.\n\nThe text will automatically reflow around embedded content and across multiple pages as needed.');
     loadDocumentSettings();
+    initializeRulers();
     updateStatus('Editor initialized');
   });
 }
@@ -299,6 +302,7 @@ function setupEventHandlers(): void {
   document.getElementById('toggle-control-chars-btn')?.addEventListener('click', toggleControlCharacters);
   document.getElementById('toggle-margin-lines-btn')?.addEventListener('click', toggleMarginLines);
   document.getElementById('toggle-grid-btn')?.addEventListener('click', toggleGrid);
+  document.getElementById('toggle-rulers-btn')?.addEventListener('click', toggleRulers);
 
   // Prevent buttons from stealing focus - define early so it's available for all sections
   const preventFocusSteal = (e: MouseEvent) => e.preventDefault();
@@ -397,6 +401,7 @@ function setupEventHandlers(): void {
   // Field controls
   document.getElementById('apply-field-changes')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('apply-field-changes')?.addEventListener('click', applyFieldChanges);
+  document.getElementById('field-value-type')?.addEventListener('change', updateFieldFormatGroups);
 
   // Loop controls
   document.getElementById('create-loop')?.addEventListener('mousedown', preventFocusSteal);
@@ -1356,6 +1361,76 @@ function toggleGrid(): void {
   updateStatus(`Grid ${!currentState ? 'shown' : 'hidden'}`);
 }
 
+function initializeRulers(): void {
+  if (!editor) return;
+
+  const horizontalContainer = document.getElementById('horizontal-ruler');
+  const verticalContainer = document.getElementById('vertical-ruler');
+
+  if (horizontalContainer) {
+    horizontalRuler = new HorizontalRuler({ units: 'mm' });
+    horizontalRuler.attach({
+      editor,
+      container: horizontalContainer
+    });
+  }
+
+  if (verticalContainer) {
+    verticalRuler = new VerticalRuler({ units: 'mm' });
+    verticalRuler.attach({
+      editor,
+      container: verticalContainer
+    });
+  }
+
+  // Set initial button state to active since rulers are shown by default
+  const button = document.getElementById('toggle-rulers-btn');
+  if (button) {
+    button.classList.add('active');
+  }
+
+  // Force update after layout is complete
+  requestAnimationFrame(() => {
+    horizontalRuler?.update();
+    verticalRuler?.update();
+  });
+}
+
+function toggleRulers(): void {
+  const rulersVisible = horizontalRuler?.isVisible ?? false;
+
+  if (rulersVisible) {
+    horizontalRuler?.hide();
+    verticalRuler?.hide();
+  } else {
+    horizontalRuler?.show();
+    verticalRuler?.show();
+  }
+
+  // Update button state
+  const button = document.getElementById('toggle-rulers-btn');
+  if (button) {
+    button.classList.toggle('active', !rulersVisible);
+  }
+
+  // Also hide/show ruler containers and corner
+  const horizontalContainer = document.getElementById('horizontal-ruler');
+  const verticalContainer = document.getElementById('vertical-ruler');
+  const corner = document.querySelector('.ruler-corner') as HTMLElement;
+
+  if (horizontalContainer) {
+    horizontalContainer.style.display = rulersVisible ? 'none' : 'block';
+  }
+  if (verticalContainer) {
+    verticalContainer.style.display = rulersVisible ? 'none' : 'block';
+  }
+  if (corner) {
+    corner.style.display = rulersVisible ? 'none' : 'block';
+  }
+
+  updateStatus(`Rulers ${!rulersVisible ? 'shown' : 'hidden'}`);
+}
+
 function updateDocumentInfo(): void {
   if (!editor) return;
 
@@ -2201,6 +2276,10 @@ function updateFieldPane(field: SubstitutionField | null): void {
   const fieldNameInput = document.getElementById('field-name-input') as HTMLInputElement;
   const fieldDefaultInput = document.getElementById('field-default-input') as HTMLInputElement;
   const fieldPositionHint = document.getElementById('field-position-hint');
+  const fieldValueType = document.getElementById('field-value-type') as HTMLSelectElement;
+  const fieldNumberFormat = document.getElementById('field-number-format') as HTMLSelectElement;
+  const fieldCurrencyFormat = document.getElementById('field-currency-format') as HTMLSelectElement;
+  const fieldDateFormat = document.getElementById('field-date-format') as HTMLSelectElement;
 
   if (!fieldSection) return;
 
@@ -2219,12 +2298,43 @@ function updateFieldPane(field: SubstitutionField | null): void {
       fieldPositionHint.textContent = `Field at position ${field.textIndex}`;
     }
 
+    // Populate format options
+    if (fieldValueType) {
+      fieldValueType.value = field.formatConfig?.valueType || '';
+    }
+    if (fieldNumberFormat && field.formatConfig?.numberFormat) {
+      fieldNumberFormat.value = field.formatConfig.numberFormat as string;
+    }
+    if (fieldCurrencyFormat && field.formatConfig?.currencyFormat) {
+      fieldCurrencyFormat.value = field.formatConfig.currencyFormat;
+    }
+    if (fieldDateFormat && field.formatConfig?.dateFormat) {
+      fieldDateFormat.value = field.formatConfig.dateFormat as string;
+    }
+
+    // Update visibility of format groups
+    updateFieldFormatGroups();
+
     console.log(`[Field Pane] Showing field: ${field.fieldName} at position ${field.textIndex}`);
   } else {
     // Hide the field pane
     fieldSection.style.display = 'none';
     currentSelectedField = null;
   }
+}
+
+/**
+ * Update visibility of format-specific option groups based on value type.
+ */
+function updateFieldFormatGroups(): void {
+  const valueType = (document.getElementById('field-value-type') as HTMLSelectElement)?.value;
+  const numberGroup = document.getElementById('number-format-group');
+  const currencyGroup = document.getElementById('currency-format-group');
+  const dateGroup = document.getElementById('date-format-group');
+
+  if (numberGroup) numberGroup.style.display = valueType === 'number' ? 'block' : 'none';
+  if (currencyGroup) currencyGroup.style.display = valueType === 'currency' ? 'block' : 'none';
+  if (dateGroup) dateGroup.style.display = valueType === 'date' ? 'block' : 'none';
 }
 
 /**
@@ -2238,6 +2348,10 @@ function applyFieldChanges(): void {
 
   const fieldNameInput = document.getElementById('field-name-input') as HTMLInputElement;
   const fieldDefaultInput = document.getElementById('field-default-input') as HTMLInputElement;
+  const fieldValueType = document.getElementById('field-value-type') as HTMLSelectElement;
+  const fieldNumberFormat = document.getElementById('field-number-format') as HTMLSelectElement;
+  const fieldCurrencyFormat = document.getElementById('field-currency-format') as HTMLSelectElement;
+  const fieldDateFormat = document.getElementById('field-date-format') as HTMLSelectElement;
 
   if (!fieldNameInput) return;
 
@@ -2247,7 +2361,16 @@ function applyFieldChanges(): void {
     return;
   }
 
-  const updates: { fieldName?: string; defaultValue?: string } = {};
+  const updates: {
+    fieldName?: string;
+    defaultValue?: string;
+    formatConfig?: {
+      valueType?: 'string' | 'number' | 'currency' | 'date' | 'markdown';
+      numberFormat?: string;
+      currencyFormat?: 'USD' | 'EUR' | 'GBP' | 'JPY' | 'custom';
+      dateFormat?: string;
+    };
+  } = {};
 
   if (newFieldName !== currentSelectedField.fieldName) {
     updates.fieldName = newFieldName;
@@ -2256,6 +2379,27 @@ function applyFieldChanges(): void {
   const newDefaultValue = fieldDefaultInput?.value || undefined;
   if (newDefaultValue !== currentSelectedField.defaultValue) {
     updates.defaultValue = newDefaultValue;
+  }
+
+  // Build format config based on value type
+  const valueType = fieldValueType?.value as 'number' | 'currency' | 'date' | '';
+  if (valueType) {
+    const formatConfig: NonNullable<typeof updates.formatConfig> = {
+      valueType: valueType as 'number' | 'currency' | 'date'
+    };
+
+    if (valueType === 'number' && fieldNumberFormat?.value) {
+      formatConfig.numberFormat = fieldNumberFormat.value;
+    } else if (valueType === 'currency' && fieldCurrencyFormat?.value) {
+      formatConfig.currencyFormat = fieldCurrencyFormat.value as 'USD' | 'EUR' | 'GBP' | 'JPY';
+    } else if (valueType === 'date' && fieldDateFormat?.value) {
+      formatConfig.dateFormat = fieldDateFormat.value;
+    }
+
+    updates.formatConfig = formatConfig;
+  } else if (currentSelectedField.formatConfig) {
+    // Clear format config if value type was cleared
+    updates.formatConfig = undefined;
   }
 
   if (Object.keys(updates).length === 0) {

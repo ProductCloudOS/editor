@@ -90,3 +90,21 @@ export type {
   CopyOptions,
   PasteOptions
 } from './clipboard';
+
+// Controls module exports (optional components)
+export {
+  BaseControl,
+  HorizontalRuler,
+  VerticalRuler,
+  RulerControl
+} from './controls';
+
+export type {
+  EditorControl,
+  ControlAttachOptions,
+  ControlOptions,
+  Units,
+  RulerOptions,
+  RulerOrientation,
+  TickMark
+} from './controls';

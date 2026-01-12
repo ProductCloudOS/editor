@@ -280,6 +280,9 @@ export class SubstitutionFieldManager extends EventEmitter {
     if (config.defaultValue !== undefined) {
       field.defaultValue = config.defaultValue;
     }
+    if (config.formatConfig !== undefined) {
+      field.formatConfig = config.formatConfig ? { ...config.formatConfig } : undefined;
+    }
 
     this.emit('field-updated', { field });
     return true;
@@ -399,7 +402,8 @@ export class SubstitutionFieldManager extends EventEmitter {
         fieldType: fieldData.fieldType,
         displayFormat: fieldData.displayFormat,
         defaultValue: fieldData.defaultValue,
-        formatting: fieldData.formatting ? { ...fieldData.formatting } : undefined
+        formatting: fieldData.formatting ? { ...fieldData.formatting } : undefined,
+        formatConfig: fieldData.formatConfig ? { ...fieldData.formatConfig } : undefined
       };
 
       this.fields.set(field.textIndex, field);

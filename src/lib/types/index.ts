@@ -160,6 +160,21 @@ export interface ParagraphFormattingData {
 }
 
 /**
+ * Serialized field format configuration.
+ */
+export interface FieldFormatConfigData {
+  valueType?: 'string' | 'number' | 'currency' | 'date' | 'markdown';
+  numberFormat?: string;
+  decimalPlaces?: number;
+  useGrouping?: boolean;
+  currencyFormat?: 'USD' | 'EUR' | 'GBP' | 'JPY' | 'custom';
+  currencySymbol?: string;
+  currencyPosition?: 'before' | 'after';
+  dateFormat?: string;
+  locale?: string;
+}
+
+/**
  * Serialized substitution field.
  */
 export interface SubstitutionFieldData {
@@ -170,6 +185,7 @@ export interface SubstitutionFieldData {
   displayFormat?: string;
   defaultValue?: string;
   formatting?: TextFormattingRunData['formatting'];
+  formatConfig?: FieldFormatConfigData;
 }
 
 /**

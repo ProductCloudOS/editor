@@ -72,6 +72,10 @@
                     </button>
                     <div class="collapsible-content" id="view-settings">
                         <div class="view-toggles">
+                            <button id="toggle-rulers-btn" class="toggle-btn active" title="Show/hide rulers">
+                                <span class="toggle-icon">📏</span>
+                                <span class="toggle-label">Rulers</span>
+                            </button>
                             <button id="toggle-control-chars-btn" class="toggle-btn" title="Show/hide control characters">
                                 <span class="toggle-icon">¶</span>
                                 <span class="toggle-label">Control Characters</span>
@@ -288,6 +292,44 @@
                         <div class="setting-group">
                             <label>Default Value:</label>
                             <input type="text" id="field-default-input" placeholder="Default value (optional)">
+                        </div>
+                        <div class="setting-group">
+                            <label>Value Type:</label>
+                            <select id="field-value-type">
+                                <option value="">Plain Text</option>
+                                <option value="number">Number</option>
+                                <option value="currency">Currency</option>
+                                <option value="date">Date</option>
+                            </select>
+                        </div>
+                        <div class="setting-group" id="number-format-group" style="display: none;">
+                            <label>Number Format:</label>
+                            <select id="field-number-format">
+                                <option value="integer">Integer (1234)</option>
+                                <option value="decimal">Decimal (1234.56)</option>
+                                <option value="decimal-1">1 Decimal (1234.5)</option>
+                                <option value="decimal-3">3 Decimals (1234.567)</option>
+                                <option value="thousands">Thousands (1,234)</option>
+                                <option value="percent">Percent (12.34%)</option>
+                            </select>
+                        </div>
+                        <div class="setting-group" id="currency-format-group" style="display: none;">
+                            <label>Currency:</label>
+                            <select id="field-currency-format">
+                                <option value="USD">USD ($1,234.56)</option>
+                                <option value="EUR">EUR (€1.234,56)</option>
+                                <option value="GBP">GBP (£1,234.56)</option>
+                                <option value="JPY">JPY (¥1,234)</option>
+                            </select>
+                        </div>
+                        <div class="setting-group" id="date-format-group" style="display: none;">
+                            <label>Date Format:</label>
+                            <select id="field-date-format">
+                                <option value="short">Short (1/15/24)</option>
+                                <option value="medium">Medium (Jan 15, 2024)</option>
+                                <option value="long">Long (January 15, 2024)</option>
+                                <option value="iso">ISO (2024-01-15)</option>
+                            </select>
                         </div>
                         <button id="apply-field-changes">Apply Changes</button>
                         <p class="field-hint" id="field-position-hint"></p>
@@ -582,8 +624,13 @@
                 </div>
             </aside>
 
-            <main class="editor-container">
-                <div id="editor"></div>
+            <main class="editor-area">
+                <div class="ruler-corner"></div>
+                <div id="horizontal-ruler" class="ruler-container horizontal"></div>
+                <div id="vertical-ruler" class="ruler-container vertical"></div>
+                <div class="editor-container" id="editor-container">
+                    <div id="editor"></div>
+                </div>
             </main>
 
         </div>
