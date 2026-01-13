@@ -37,6 +37,7 @@ interface OriginalMethods {
   insertSubstitutionField: FlowingTextContent['insertSubstitutionField'];
   removeSubstitutionField: FlowingTextContent['removeSubstitutionField'];
   insertEmbeddedObject: FlowingTextContent['insertEmbeddedObject'];
+  removeEmbeddedObject: FlowingTextContent['removeEmbeddedObject'];
 }
 
 /**
@@ -77,7 +78,8 @@ export class TextMutationObserver {
       setAlignmentForRange: content.setAlignmentForRange.bind(content),
       insertSubstitutionField: content.insertSubstitutionField.bind(content),
       removeSubstitutionField: content.removeSubstitutionField.bind(content),
-      insertEmbeddedObject: content.insertEmbeddedObject.bind(content)
+      insertEmbeddedObject: content.insertEmbeddedObject.bind(content),
+      removeEmbeddedObject: content.removeEmbeddedObject.bind(content)
     };
 
     this.observedContents.set(content, { sourceId, originalMethods });
@@ -331,6 +333,43 @@ export class TextMutationObserver {
         } as ObjectMutationData
       });
     };
+
+    // Wrap removeEmbeddedObject
+    content.removeEmbeddedObject = (textIndex: number): boolean => {
+      if (this.manager.isUndoRedoInProgress) {
+        return originalMethods.removeEmbeddedObject(textIndex);
+      }
+
+      // Get the object BEFORE removal to capture its data
+      const object = content.getEmbeddedObjectAt(textIndex);
+      if (!object) {
+        return originalMethods.removeEmbeddedObject(textIndex);
+      }
+
+      const beforeState = this.captureState(content);
+      const objectData = object.toData();
+
+      this.manager.createBoundary();
+
+      const result = originalMethods.removeEmbeddedObject(textIndex);
+
+      const afterState = this.captureState(content);
+
+      this.recordMutation(content, {
+        id: generateId(),
+        sourceId: this.getSourceId(content),
+        type: 'object-delete',
+        timestamp: Date.now(),
+        beforeState,
+        afterState,
+        data: {
+          position: textIndex,
+          objectData
+        } as ObjectMutationData
+      });
+
+      return result;
+    };
   }
 
   /**
@@ -353,6 +392,7 @@ export class TextMutationObserver {
     content.insertSubstitutionField = originalMethods.insertSubstitutionField;
     content.removeSubstitutionField = originalMethods.removeSubstitutionField;
     content.insertEmbeddedObject = originalMethods.insertEmbeddedObject;
+    content.removeEmbeddedObject = originalMethods.removeEmbeddedObject;
 
     this.observedContents.delete(content);
   }

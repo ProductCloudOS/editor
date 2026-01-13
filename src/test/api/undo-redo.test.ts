@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PCEditor } from '../../lib/core/PCEditor';
 import { createEditor, cleanupEditor, nextTick, waitForEvent } from '../helpers/createEditor';
-import { TextBoxObject, ImageObject } from '../../lib/objects';
+import { TextBoxObject, ImageObject, TableObject } from '../../lib/objects';
 
 describe('PCEditor Undo/Redo', () => {
   let editor: PCEditor;
@@ -426,6 +426,129 @@ describe('PCEditor Undo/Redo', () => {
 
       const textWith0 = editor.getFlowingText();
       expect(textWith0).not.toContain('\uFFFC');
+    });
+  });
+
+  describe('undo object deletion', () => {
+    it('should undo text box deletion', async () => {
+      editor.setFlowingText('Hello');
+      editor.setCursorPosition(5);
+      await nextTick();
+
+      const textBox = new TextBoxObject({
+        id: 'textbox-delete-undo',
+        size: { width: 100, height: 50 }
+      });
+
+      editor.insertEmbeddedObject(textBox);
+      await nextTick();
+
+      const textBefore = editor.getFlowingText();
+      expect(textBefore).toContain('\uFFFC');
+
+      // Delete the text box
+      editor.removeEmbeddedObject('textbox-delete-undo');
+      await nextTick();
+
+      const textAfterDelete = editor.getFlowingText();
+      expect(textAfterDelete).not.toContain('\uFFFC');
+      expect(textAfterDelete).toBe('Hello');
+
+      // Undo the deletion - text box should be restored
+      editor.undo();
+      await nextTick();
+
+      const textAfterUndo = editor.getFlowingText();
+      expect(textAfterUndo).toContain('\uFFFC');
+    });
+
+    it('should undo table deletion', async () => {
+      editor.setFlowingText('');
+      await nextTick();
+
+      const table = new TableObject({
+        id: 'table-delete-undo',
+        rows: 2,
+        columns: 2,
+        size: { width: 200, height: 100 }
+      });
+
+      editor.insertEmbeddedObject(table, 'block');
+      await nextTick();
+
+      const textBefore = editor.getFlowingText();
+      expect(textBefore).toContain('\uFFFC');
+
+      // Delete the table
+      editor.removeEmbeddedObject('table-delete-undo');
+      await nextTick();
+
+      const textAfterDelete = editor.getFlowingText();
+      expect(textAfterDelete).not.toContain('\uFFFC');
+
+      // Undo the deletion - table should be restored
+      editor.undo();
+      await nextTick();
+
+      const textAfterUndo = editor.getFlowingText();
+      expect(textAfterUndo).toContain('\uFFFC');
+    });
+
+    it('should redo object deletion after undo', async () => {
+      editor.setFlowingText('');
+      await nextTick();
+
+      const textBox = new TextBoxObject({
+        id: 'textbox-delete-redo',
+        size: { width: 100, height: 50 }
+      });
+
+      editor.insertEmbeddedObject(textBox);
+      await nextTick();
+
+      // Delete and undo
+      editor.removeEmbeddedObject('textbox-delete-redo');
+      await nextTick();
+      editor.undo();
+      await nextTick();
+
+      // Redo - should delete again
+      editor.redo();
+      await nextTick();
+
+      const textAfterRedo = editor.getFlowingText();
+      expect(textAfterRedo).not.toContain('\uFFFC');
+    });
+
+    it('should undo image deletion', async () => {
+      editor.setFlowingText('');
+      await nextTick();
+
+      const image = new ImageObject({
+        id: 'image-delete-undo',
+        size: { width: 100, height: 100 },
+        src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+      });
+
+      editor.insertEmbeddedObject(image);
+      await nextTick();
+
+      const textBefore = editor.getFlowingText();
+      expect(textBefore).toContain('\uFFFC');
+
+      // Delete the image
+      editor.removeEmbeddedObject('image-delete-undo');
+      await nextTick();
+
+      const textAfterDelete = editor.getFlowingText();
+      expect(textAfterDelete).not.toContain('\uFFFC');
+
+      // Undo the deletion - image should be restored
+      editor.undo();
+      await nextTick();
+
+      const textAfterUndo = editor.getFlowingText();
+      expect(textAfterUndo).toContain('\uFFFC');
     });
   });
 });
