@@ -175,8 +175,8 @@ export class TextMeasurer {
       return '00';
     }
 
-    // Regular data field
-    return `{{${field.fieldName}}}`;
+    // Regular data field - matches rendering format in FlowingTextRenderer
+    return `{{field: ${field.fieldName}}}`;
   }
 
   /**

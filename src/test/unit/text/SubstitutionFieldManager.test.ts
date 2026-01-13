@@ -569,10 +569,10 @@ describe('SubstitutionFieldManager', () => {
   });
 
   describe('getDisplayText()', () => {
-    it('should return {{fieldName}} for data fields', () => {
+    it('should return {{field: fieldName}} for data fields', () => {
       const field = manager.insert('username', 5);
 
-      expect(manager.getDisplayText(field)).toBe('{{username}}');
+      expect(manager.getDisplayText(field)).toBe('{{field: username}}');
     });
 
     it('should return page number when provided', () => {
@@ -622,7 +622,7 @@ describe('SubstitutionFieldManager', () => {
     it('should return display text for field', () => {
       manager.insert('test', 5);
 
-      expect(manager.getDisplayTextAt(5)).toBe('{{test}}');
+      expect(manager.getDisplayTextAt(5)).toBe('{{field: test}}');
     });
 
     it('should return undefined for no field', () => {

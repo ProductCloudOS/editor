@@ -107,6 +107,7 @@ export class CanvasManager extends EventEmitter {
     this.createCanvases();
     this.setupEventListeners();
     this.setupScrollListener();
+    this.updateCanvasScale(); // Apply current zoom to newly created canvases
 
     // Set initial focus on the body flowing content
     this.setFocus(this.document.bodyFlowingContent);
@@ -145,6 +146,7 @@ export class CanvasManager extends EventEmitter {
     this.initializeRegions();
     this.createCanvases();
     this.setupEventListeners();
+    this.updateCanvasScale(); // Apply current zoom to newly created canvases
 
     // Reset editing state
     this._activeSection = 'body';
@@ -1032,8 +1034,19 @@ export class CanvasManager extends EventEmitter {
     // Get the page for later use
     const page = this.document.getPage(pageId);
 
+    // Check if there's an active text selection FIRST - if so, don't process click
+    // (this happens after drag-selecting text, prevents accidentally clearing selection
+    // even if the mouse ends up over an embedded object)
+    const selectionFlowingContent = this.getFlowingContentForActiveSection();
+    if (selectionFlowingContent) {
+      const selection = selectionFlowingContent.getSelection();
+      if (selection && selection.start !== selection.end) {
+        // There's an active selection, don't reset cursor or select objects
+        return;
+      }
+    }
+
     // Check if we clicked on an embedded object using HitTestManager
-    // This must be checked BEFORE the text selection early return
     const clickedPageIndex = this.document.pages.findIndex(p => p.id === pageId);
     const hitTestManager = this.flowingTextRenderer.hitTestManager;
     const embeddedObjectHit = hitTestManager.queryByType(clickedPageIndex, point, 'embedded-object');
@@ -1047,17 +1060,6 @@ export class CanvasManager extends EventEmitter {
       this.clearSelection();
       this.selectInlineElement(embeddedObjectHit.data.object);
       return;
-    }
-
-    // Check if there's an active text selection - if so, don't process click
-    // (this happens after drag-selecting text, prevents accidentally clearing selection)
-    const selectionFlowingContent = this.getFlowingContentForActiveSection();
-    if (selectionFlowingContent) {
-      const selection = selectionFlowingContent.getSelection();
-      if (selection && selection.start !== selection.end) {
-        // There's an active selection, don't reset cursor
-        return;
-      }
     }
 
     // First check if we clicked on a repeating section indicator
@@ -1720,9 +1722,15 @@ export class CanvasManager extends EventEmitter {
   }
 
   private updateCanvasScale(): void {
+    const baseMargin = 20; // Base margin in pixels (matches createCanvases)
     this.canvases.forEach(canvas => {
       canvas.style.transform = `scale(${this.zoomLevel})`;
       canvas.style.transformOrigin = 'top center';
+      // Compensate for the visual height change caused by scale transform.
+      // The scaled canvas visually extends beyond its layout box by height * (zoomLevel - 1).
+      // Add this to margin-bottom so the next canvas starts after the visual bottom.
+      const extraHeight = canvas.height * (this.zoomLevel - 1);
+      canvas.style.marginBottom = `${baseMargin + extraHeight}px`;
     });
   }
 
@@ -1782,25 +1790,24 @@ export class CanvasManager extends EventEmitter {
     });
     
     this.flowingTextRenderer.on('inline-element-clicked', (data) => {
-      console.log('[inline-element-clicked] Event received. Element:', data.element?.constructor?.name);
-      console.log('[inline-element-clicked] _focusedControl:', this._focusedControl?.constructor?.name);
-      console.log('[inline-element-clicked] _focusedControl === data.element:', this._focusedControl === data.element);
+      // Ignore inline element clicks during text selection drag
+      // (the event is emitted from handleRegionClick which is also used during mouse move for selection)
+      if (this.isSelectingText || this.isSelectingTextInTextBox || this.isSelectingTextInTableCell) {
+        return;
+      }
 
       // If we're editing a table and the clicked element is the same table, ignore this event
       // (the click is for cell navigation within the table, not for selecting the table)
       if (this._focusedControl instanceof TableObject && this._focusedControl === data.element) {
-        console.log('[inline-element-clicked] Ignoring - same table is focused');
         return;
       }
 
       // If we're editing a text box and the clicked element is the same text box, ignore this event
       if (this.editingTextBox === data.element) {
-        console.log('[inline-element-clicked] Ignoring - same text box is being edited');
         return;
       }
 
       // Select the inline element
-      console.log('[inline-element-clicked] Selecting inline element and clearing selection');
       this.clearSelection();
       this.selectInlineElement(data.element);
     });
@@ -1844,13 +1851,14 @@ export class CanvasManager extends EventEmitter {
       this.clearCanvases();
       this.createCanvases();
       this.setupEventListeners();
-      
+      this.updateCanvasScale(); // Apply current zoom to newly created canvases
+
       // Defer the render to break the synchronous call chain
       setTimeout(() => {
         this.isHandlingOverflow = false;
         this.render();
       }, 0);
-      
+
       this.emit('pages-added', { newPageCount: this.document.pages.length - existingPages });
     } catch (error) {
       this.isHandlingOverflow = false;
@@ -1993,12 +2001,13 @@ export class CanvasManager extends EventEmitter {
       this.clearCanvases();
       this.createCanvases();
       this.setupEventListeners();
-      
+      this.updateCanvasScale(); // Apply current zoom to newly created canvases
+
       // Defer render to avoid conflicts
       setTimeout(() => {
         this.render();
       }, 0);
-      
+
       this.emit('pages-removed', { removedCount: currentPages - neededPages });
     }
   }

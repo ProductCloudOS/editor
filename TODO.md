@@ -2,10 +2,7 @@
 
 ## Defects
 
-- [ ] BUG-0026 Control characters don't show in text boxes or table cells
-- [ ] BUG-0027 When selecting a range of content by click dragging, moving the mouse over an object selects the object and interrupts the selection
-- [ ] BUG-0028 When selecting a text range that includes a substitution field or when line wrap is calculated for a line containing a substitution field it looks like the field width is being calculated without including the 'field: ' prefix
-- [ ] BUG-0029 When the editor is zoomed in or out the gap between the pages changes.  It should remain constant
+(none)
 
 ## New Features
 - [ ] FEATURE-0011 Additional selection logic such as double-click to select a word, shift and mouse down, select all, Click/drag to select across pages, etc
@@ -52,6 +49,10 @@
 
 ## Completed Recently ✅
 
+- ✅ BUG-0029 Page Gap Changes with Zoom - Fixed by dynamically adjusting margin-bottom to compensate for CSS scale transform in updateCanvasScale()
+- ✅ BUG-0028 Field Width Missing Prefix - Fixed by updating TextMeasurer and SubstitutionFieldManager to use consistent `{{field: name}}` format matching FlowingTextRenderer
+- ✅ BUG-0027 Mouse Over Object Interrupts Drag Selection - Fixed by checking for active text selection before processing object clicks in CanvasManager handleClick()
+- ✅ BUG-0026 Control Characters in Text Boxes/Table Cells - Fixed paragraph mark clipping by clamping position within bounds in FlowingTextRenderer
 - ✅ FEATURE-0020 Support Format Types for Substitution Fields - Extended substitution field system to support formatted output for numbers, currencies, dates, and markdown. Added FieldFormatConfig with valueType, numberFormat (integer, decimal, thousands, percent), currencyFormat (USD, EUR, GBP, JPY), and dateFormat (short, medium, long, iso) options. Created FieldFormatter.ts using Intl.NumberFormat and Intl.DateTimeFormat. Created MarkdownParser.ts for bold, italic, and link parsing. Updated PCEditor.substituteFieldsInContent() to apply formatting during merge. Full serialization support. Demo has Value Type dropdown and format-specific options in field properties pane.
 - ✅ FEATURE-0015 Optional Editor Controls (Rulers) - Implemented optional control components that work with PCEditor via public API only. Created controls module with BaseControl abstract class, RulerControl base for rulers, HorizontalRuler and VerticalRuler implementations. Rulers display tick marks in mm/in/pt/px, show margin indicators, track mouse position with cursor indicator, respond to zoom changes. Added getZoomLevel() and getContainer() to PCEditor, zoom-changed event forwarding. Demo has toggle button for rulers with CSS grid layout. Unit tests for all control classes.
 - ✅ FEATURE-0013 Nested Bullet Points - Implemented bullet and numbered list support with nesting up to 8 levels. Extended ParagraphFormattingManager with list methods (toggleList, indentParagraph, outdentParagraph). Added ListFormatting types with bullet styles (disc, circle, square) and number styles (decimal, lower-alpha, lower-roman). TextLayout calculates list indentation and generates list markers. FlowingTextRenderer renders bullet/number markers. Tab/Shift+Tab keyboard shortcuts for indent/outdent. Demo has toolbar buttons for lists.

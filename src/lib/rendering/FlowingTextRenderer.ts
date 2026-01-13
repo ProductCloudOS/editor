@@ -1142,8 +1142,13 @@ export class FlowingTextRenderer extends EventEmitter {
     // Draw paragraph mark at end of line if it ends with a newline and control chars are enabled
     if (this.showControlCharacters && line.endsWithNewline) {
       ctx.fillStyle = CONTROL_CHAR_COLOR;
-      ctx.font = this.getFontString(line.runs[line.runs.length - 1]?.formatting || DEFAULT_FORMATTING);
-      ctx.fillText(PARAGRAPH_MARK, x, position.y + line.baseline);
+      const formatting = line.runs[line.runs.length - 1]?.formatting || DEFAULT_FORMATTING;
+      ctx.font = this.getFontString(formatting);
+      const markWidth = ctx.measureText(PARAGRAPH_MARK).width;
+      // Ensure paragraph mark stays within the line bounds (for clipped regions like text boxes)
+      const maxX = position.x + maxWidth - markWidth;
+      const markX = Math.min(x, maxX);
+      ctx.fillText(PARAGRAPH_MARK, markX, position.y + line.baseline);
     }
 
     // Draw page break indicator at end of line if it ends with a page break

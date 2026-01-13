@@ -341,8 +341,8 @@ export class SubstitutionFieldManager extends EventEmitter {
       return '{{pages}}';
     }
 
-    // Regular data field
-    return `{{${field.fieldName}}}`;
+    // Regular data field - matches rendering format
+    return `{{field: ${field.fieldName}}}`;
   }
 
   /**
