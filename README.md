@@ -6,6 +6,8 @@ A powerful browser-based WYSIWYG document editor library for creating pixel-perf
 [![CI](https://github.com/ProductCloudOS/editor/workflows/CI/badge.svg)](https://github.com/ProductCloudOS/editor/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+**[Live Demo](https://productcloudos.github.io/editor/)**
+
 ## Features
 
 - **Canvas-based rendering** for pixel-perfect positioning

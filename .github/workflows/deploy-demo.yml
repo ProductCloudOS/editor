@@ -1,0 +1,34 @@
+name: Deploy Demo to GitHub Pages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Build demo for GitHub Pages
+        run: npx vite build src/demo --outDir ../../dev-dist --base=/editor/
+
+      - name: Deploy to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dev-dist
+          publish_branch: gh-pages
+          commit_message: 'Deploy demo for ${{ github.event.release.tag_name || github.sha }}'
