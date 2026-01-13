@@ -5,8 +5,7 @@
 (none)
 
 ## New Features
-- [ ] FEATURE-0011 Additional selection logic such as double-click to select a word, shift and mouse down, select all, Click/drag to select across pages, etc
-- [ ] FEATURE-0016 Fix the handling of text immediately before and after block objects as they do not justify or page split properly
+- [ ] FEATURE-0011 Additional selection logic such as double-click to select a word, shift and mouse down, select all, Click/drag to select across pages, etc.  Selection should generally operate like a modern word processor
 - [ ] FEATURE-0021 Prepare the editor to be a best practice open source library including GitHub workflows to publish to npm, full README documentation, MIT license file, separation of the library and the example application, full documentation of how to use the library
 
 ### Performance & Polish
@@ -49,6 +48,7 @@
 
 ## Completed Recently ✅
 
+- ✅ FEATURE-0016 Block Object Text Handling - Fixed text justification before block objects by treating preceding lines as paragraph terminators. Added `allowPageBreakBefore` flag to FlowedLine type for block objects. Lines before block objects no longer get incorrect justify spacing.
 - ✅ BUG-0029 Page Gap Changes with Zoom - Fixed by dynamically adjusting margin-bottom to compensate for CSS scale transform in updateCanvasScale()
 - ✅ BUG-0028 Field Width Missing Prefix - Fixed by updating TextMeasurer and SubstitutionFieldManager to use consistent `{{field: name}}` format matching FlowingTextRenderer
 - ✅ BUG-0027 Mouse Over Object Interrupts Drag Selection - Fixed by checking for active text selection before processing object clicks in CanvasManager handleClick()

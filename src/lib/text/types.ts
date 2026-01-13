@@ -274,6 +274,7 @@ export interface FlowedLine {
   alignment: TextAlignment;
   extraWordSpacing?: number;  // For justify mode - extra space per word gap
   isBlockObjectLine?: boolean;  // True if line contains only a block-positioned object
+  allowPageBreakBefore?: boolean;  // True if page can break before this line (e.g., block objects)
   listMarker?: ListMarker;  // List formatting info for this line
 }
 

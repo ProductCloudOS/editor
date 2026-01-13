@@ -228,8 +228,10 @@ export class TextLayout {
       const blockObject = segment.embeddedObjects.find(obj => obj.isBlock);
       if (blockObject) {
         // Finalize current line if it has content
+        // Block objects act as paragraph terminators, so treat preceding line as last line
+        // (no justify spacing applied - text before block shouldn't stretch to fill width)
         if (currentLine.text.length > 0) {
-          const line = this.finalizeLineBuilder(currentLine, alignment, false, effectiveWidth);
+          const line = this.finalizeLineBuilder(currentLine, alignment, true, effectiveWidth);
           pushLineWithMarker(line, lines.length === 0);
         }
 
@@ -305,7 +307,8 @@ export class TextLayout {
       startIndex: segment.startIndex,
       endIndex: segment.startIndex + segment.text.length,
       alignment,
-      isBlockObjectLine: true
+      isBlockObjectLine: true,
+      allowPageBreakBefore: true  // Block objects can always have page breaks before them
     };
   }
 

@@ -9,7 +9,8 @@ import { ParagraphFormattingManager } from '../../../lib/text/ParagraphFormattin
 import { SubstitutionFieldManager } from '../../../lib/text/SubstitutionFieldManager';
 import { EmbeddedObjectManager } from '../../../lib/text/EmbeddedObjectManager';
 import { createMockContext } from '../../helpers/mocks';
-import { DEFAULT_FORMATTING, PAGE_BREAK_CHAR } from '../../../lib/text/types';
+import { DEFAULT_FORMATTING, PAGE_BREAK_CHAR, OBJECT_REPLACEMENT_CHAR } from '../../../lib/text/types';
+import { TextBoxObject } from '../../../lib/objects';
 
 describe('TextLayout', () => {
   let layout: TextLayout;
@@ -450,6 +451,162 @@ describe('TextLayout', () => {
 
       // Should match original (without trailing newline artifacts)
       expect(reconstructed.replace(/\n+$/, '')).toBe(text);
+    });
+  });
+
+  describe('block object text handling', () => {
+    it('should not justify line before block object', () => {
+      // Set justify alignment
+      context.paragraphFormatting.setAlignment(0, 'justify');
+      context.availableWidth = 200;
+
+      // Create a block-positioned text box
+      const textBox = new TextBoxObject({
+        id: 'block-obj-1',
+        textIndex: 10,
+        position: 'block',
+        size: { width: 100, height: 50 }
+      });
+
+      // Insert at index 10 (after "Short text")
+      context.embeddedObjects.insert(textBox, 10);
+
+      // Text: "Short text" + OBJECT_REPLACEMENT_CHAR + "more"
+      // The line "Short text" should NOT be justified (no extraWordSpacing)
+      const text = `Short text${OBJECT_REPLACEMENT_CHAR}more`;
+      context.content = text;
+
+      const pages = layout.flowText(text, context);
+
+      // Find the line containing "Short text" (line before block object)
+      const lineBeforeBlock = pages[0].lines.find(line => line.text.includes('Short'));
+
+      expect(lineBeforeBlock).toBeDefined();
+      // Line before block object should NOT have extraWordSpacing
+      // (it's treated as last line of paragraph)
+      expect(lineBeforeBlock!.extraWordSpacing).toBeUndefined();
+    });
+
+    it('should mark block object line with isBlockObjectLine', () => {
+      const textBox = new TextBoxObject({
+        id: 'block-obj-2',
+        textIndex: 5,
+        position: 'block',
+        size: { width: 100, height: 50 }
+      });
+
+      context.embeddedObjects.insert(textBox, 5);
+
+      const text = `Hello${OBJECT_REPLACEMENT_CHAR}World`;
+      context.content = text;
+
+      const pages = layout.flowText(text, context);
+
+      // Find the block object line
+      const blockLine = pages[0].lines.find(line => line.isBlockObjectLine);
+
+      expect(blockLine).toBeDefined();
+      expect(blockLine!.isBlockObjectLine).toBe(true);
+    });
+
+    it('should mark block object line with allowPageBreakBefore', () => {
+      const textBox = new TextBoxObject({
+        id: 'block-obj-3',
+        textIndex: 5,
+        position: 'block',
+        size: { width: 100, height: 50 }
+      });
+
+      context.embeddedObjects.insert(textBox, 5);
+
+      const text = `Hello${OBJECT_REPLACEMENT_CHAR}World`;
+      context.content = text;
+
+      const pages = layout.flowText(text, context);
+
+      // Find the block object line
+      const blockLine = pages[0].lines.find(line => line.isBlockObjectLine);
+
+      expect(blockLine).toBeDefined();
+      expect(blockLine!.allowPageBreakBefore).toBe(true);
+    });
+
+    it('should create separate lines for text before and after block object', () => {
+      const textBox = new TextBoxObject({
+        id: 'block-obj-4',
+        textIndex: 6,
+        position: 'block',
+        size: { width: 100, height: 50 }
+      });
+
+      context.embeddedObjects.insert(textBox, 6);
+
+      const text = `Before${OBJECT_REPLACEMENT_CHAR}After`;
+      context.content = text;
+
+      const pages = layout.flowText(text, context);
+
+      // Should have 3 lines: "Before", block object, "After"
+      expect(pages[0].lines.length).toBe(3);
+      expect(pages[0].lines[0].text).toBe('Before');
+      expect(pages[0].lines[1].isBlockObjectLine).toBe(true);
+      expect(pages[0].lines[2].text).toBe('After');
+    });
+
+    it('should handle multiple block objects in sequence', () => {
+      const textBox1 = new TextBoxObject({
+        id: 'block-obj-5',
+        textIndex: 4,
+        position: 'block',
+        size: { width: 100, height: 50 }
+      });
+
+      const textBox2 = new TextBoxObject({
+        id: 'block-obj-6',
+        textIndex: 5,
+        position: 'block',
+        size: { width: 100, height: 50 }
+      });
+
+      context.embeddedObjects.insert(textBox1, 4);
+      context.embeddedObjects.insert(textBox2, 5);
+
+      // "Text" + block + block + "End"
+      const text = `Text${OBJECT_REPLACEMENT_CHAR}${OBJECT_REPLACEMENT_CHAR}End`;
+      context.content = text;
+
+      const pages = layout.flowText(text, context);
+
+      // Should have 4 lines: "Text", block1, block2, "End"
+      expect(pages[0].lines.length).toBe(4);
+      expect(pages[0].lines[0].text).toBe('Text');
+      expect(pages[0].lines[1].isBlockObjectLine).toBe(true);
+      expect(pages[0].lines[2].isBlockObjectLine).toBe(true);
+      expect(pages[0].lines[3].text).toBe('End');
+    });
+
+    it('should not apply justify spacing to block object lines', () => {
+      context.paragraphFormatting.setAlignment(0, 'justify');
+
+      const textBox = new TextBoxObject({
+        id: 'block-obj-7',
+        textIndex: 5,
+        position: 'block',
+        size: { width: 100, height: 50 }
+      });
+
+      context.embeddedObjects.insert(textBox, 5);
+
+      const text = `Hello${OBJECT_REPLACEMENT_CHAR}World`;
+      context.content = text;
+
+      const pages = layout.flowText(text, context);
+
+      const blockLine = pages[0].lines.find(line => line.isBlockObjectLine);
+
+      expect(blockLine).toBeDefined();
+      // Block object lines should never have extraWordSpacing
+      expect(blockLine!.extraWordSpacing).toBeUndefined();
     });
   });
 });
