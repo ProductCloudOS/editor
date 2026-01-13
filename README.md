@@ -2,7 +2,7 @@
 
 A powerful browser-based WYSIWYG document editor library for creating pixel-perfect documents with data binding and PDF export capabilities.
 
-[![npm version](https://img.shields.io/npm/v/pc-editor.svg)](https://www.npmjs.com/package/pc-editor)
+[![npm version](https://img.shields.io/npm/v/@productcloudos/editor.svg)](https://www.npmjs.com/package/@productcloudos/editor)
 [![CI](https://github.com/ProductCloudOS/editor/workflows/CI/badge.svg)](https://github.com/ProductCloudOS/editor/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -29,13 +29,13 @@ A powerful browser-based WYSIWYG document editor library for creating pixel-perf
 ## Installation
 
 ```bash
-npm install pc-editor
+npm install @productcloudos/editor
 ```
 
 ## Quick Start
 
 ```typescript
-import { PCEditor } from 'pc-editor';
+import { PCEditor } from '@productcloudos/editor';
 
 // Create editor instance
 const container = document.getElementById('editor-container');
@@ -111,7 +111,7 @@ editor.outdentParagraph();
 ### Inserting Objects
 
 ```typescript
-import { ImageObject, TextBoxObject, TableObject } from 'pc-editor';
+import { ImageObject, TextBoxObject, TableObject } from '@productcloudos/editor';
 
 // Insert image
 const image = new ImageObject({
@@ -315,7 +315,7 @@ import {
   ImageObject,
   TableObject,
   TextBoxObject
-} from 'pc-editor';
+} from '@productcloudos/editor';
 ```
 
 ## Documentation

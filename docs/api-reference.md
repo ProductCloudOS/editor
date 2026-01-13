@@ -274,7 +274,7 @@ editor.insertEmbeddedObject(
 
 **Example:**
 ```typescript
-import { ImageObject } from 'pc-editor';
+import { ImageObject } from '@productcloudos/editor';
 
 const image = new ImageObject({
   id: 'img-1',

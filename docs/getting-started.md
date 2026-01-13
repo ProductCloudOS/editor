@@ -7,13 +7,13 @@ This guide will help you set up PC Editor in your project and create your first 
 Install PC Editor via npm:
 
 ```bash
-npm install pc-editor
+npm install @productcloudos/editor
 ```
 
 Or with yarn:
 
 ```bash
-yarn add pc-editor
+yarn add @productcloudos/editor
 ```
 
 ## Basic Setup
@@ -29,7 +29,7 @@ PC Editor needs an HTML container element to render into:
 ### 2. Initialize the Editor
 
 ```typescript
-import { PCEditor } from 'pc-editor';
+import { PCEditor } from '@productcloudos/editor';
 
 const container = document.getElementById('editor-container');
 const editor = new PCEditor(container, {
@@ -124,7 +124,7 @@ editor.outdentParagraph();
 ### Images
 
 ```typescript
-import { ImageObject } from 'pc-editor';
+import { ImageObject } from '@productcloudos/editor';
 
 const image = new ImageObject({
   id: 'img-1',
@@ -140,7 +140,7 @@ editor.insertEmbeddedObject(image, 'block');
 ### Tables
 
 ```typescript
-import { TableObject } from 'pc-editor';
+import { TableObject } from '@productcloudos/editor';
 
 const table = new TableObject({
   id: 'table-1',

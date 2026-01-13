@@ -1,6 +1,6 @@
 {
-  "name": "pc-editor",
-  "version": "1.0.0",
+  "name": "@productcloudos/editor",
+  "version": "1.0.1",
   "description": "Browser-based WYSIWYG document editor library for creating pixel-perfect documents with data binding and PDF export capabilities",
   "author": "",
   "license": "MIT",
