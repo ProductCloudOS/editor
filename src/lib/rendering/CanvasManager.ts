@@ -43,6 +43,7 @@ export class CanvasManager extends EventEmitter {
   private _activeSection: EditingSection = 'body';
   private lastClickTime: number = 0;
   private lastClickPosition: Point | null = null;
+  private clickCount: number = 0;
   private editingTextBox: TextBoxObject | null = null;
   private _editingTextBoxPageId: string | null = null;
   private _focusedControl: Focusable | null = null;
@@ -471,12 +472,20 @@ export class CanvasManager extends EventEmitter {
             if (cell && ctx && pageIndex >= 0) {
               const flowingContent = cell.flowingContent;
 
-              // Clear any existing selection
-              flowingContent.clearSelection();
-
-              // Position cursor using unified region click handler
-              this.flowingTextRenderer.handleRegionClick(cell, point, pageIndex, ctx);
-              flowingContent.setSelectionAnchor();
+              if (e.shiftKey) {
+                // Shift+click: Extend selection from current cursor position
+                // Set anchor at current cursor BEFORE moving cursor to click point
+                if (!flowingContent.hasSelectionAnchor()) {
+                  flowingContent.setSelectionAnchor(); // Anchor at current cursor position
+                }
+                // Now position cursor at click point to create/extend selection
+                this.flowingTextRenderer.handleRegionClick(cell, point, pageIndex, ctx);
+              } else {
+                // Normal click: Clear selection and start new
+                flowingContent.clearSelection();
+                this.flowingTextRenderer.handleRegionClick(cell, point, pageIndex, ctx);
+                flowingContent.setSelectionAnchor();
+              }
 
               // Start text selection mode in table cell
               this.isSelectingTextInTableCell = true;
@@ -531,12 +540,20 @@ export class CanvasManager extends EventEmitter {
       if (ctx && pageIndex >= 0 && textBox.containsPointInRegion(point, pageIndex)) {
         const flowingContent = textBox.flowingContent;
 
-        // Clear any existing selection
-        flowingContent.clearSelection();
-
-        // Position cursor using unified region click handler
-        this.flowingTextRenderer.handleRegionClick(textBox, point, pageIndex, ctx);
-        flowingContent.setSelectionAnchor();
+        if (e.shiftKey) {
+          // Shift+click: Extend selection from current cursor position
+          // Set anchor at current cursor BEFORE moving cursor to click point
+          if (!flowingContent.hasSelectionAnchor()) {
+            flowingContent.setSelectionAnchor(); // Anchor at current cursor position
+          }
+          // Now position cursor at click point to create/extend selection
+          this.flowingTextRenderer.handleRegionClick(textBox, point, pageIndex, ctx);
+        } else {
+          // Normal click: Clear selection and start new
+          flowingContent.clearSelection();
+          this.flowingTextRenderer.handleRegionClick(textBox, point, pageIndex, ctx);
+          flowingContent.setSelectionAnchor();
+        }
 
         // Start text selection mode in text box
         this.isSelectingTextInTextBox = true;
@@ -580,22 +597,45 @@ export class CanvasManager extends EventEmitter {
       const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
 
       if (region && ctx && pageIndex >= 0) {
-        const result = this.flowingTextRenderer.handleRegionClick(region, point, pageIndex, ctx);
-        if (result) {
-          // Clear any existing selection and element selection
-          this.clearSelection();
-          flowingContentForSection.clearSelection();
+        if (e.shiftKey) {
+          // Shift+click: Extend selection from current cursor position
+          // Set anchor at current cursor BEFORE moving cursor to click point
+          if (!flowingContentForSection.hasSelectionAnchor()) {
+            flowingContentForSection.setSelectionAnchor(); // Anchor at current cursor position
+          }
+          // Now move cursor to click point to create/extend selection
+          const result = this.flowingTextRenderer.handleRegionClick(region, point, pageIndex, ctx);
+          if (result) {
+            this.clearSelection();
+            // Emit selection changed event
+            this.emit('text-selection-changed', {
+              selection: flowingContentForSection.getSelection(),
+              section: this._activeSection
+            });
+            this.isSelectingText = true;
+            this.textSelectionStartPageId = pageId;
+            this.render();
+            e.preventDefault();
+            return;
+          }
+        } else {
+          // Normal click: position cursor first
+          const result = this.flowingTextRenderer.handleRegionClick(region, point, pageIndex, ctx);
+          if (result) {
+            // Clear element selection and text selection
+            this.clearSelection();
+            flowingContentForSection.clearSelection();
+            // Set anchor for potential drag selection
+            flowingContentForSection.setSelectionAnchor(result.textIndex);
 
-          // Set selection anchor for drag selection
-          flowingContentForSection.setSelectionAnchor(result.textIndex);
+            // Start text selection mode
+            this.isSelectingText = true;
+            this.textSelectionStartPageId = pageId;
 
-          // Start text selection mode
-          this.isSelectingText = true;
-          this.textSelectionStartPageId = pageId;
-
-          this.render();
-          e.preventDefault();
-          return;
+            this.render();
+            e.preventDefault();
+            return;
+          }
         }
       }
     }
@@ -949,7 +989,8 @@ export class CanvasManager extends EventEmitter {
     const point = this.getMousePosition(e);
     const now = Date.now();
 
-    // Check for double-click
+    // Check for multi-click sequence (double-click, triple-click)
+    let newClickCount = 1;
     if (this.lastClickPosition) {
       const timeDiff = now - this.lastClickTime;
       const distance = Math.sqrt(
@@ -958,17 +999,23 @@ export class CanvasManager extends EventEmitter {
       );
 
       if (timeDiff < DOUBLE_CLICK_THRESHOLD && distance < DOUBLE_CLICK_DISTANCE) {
-        // This is a double-click
-        this.handleDoubleClick(point, pageId);
-        this.lastClickTime = 0;
-        this.lastClickPosition = null;
-        return;
+        // Continue the click sequence (cycles: 1 -> 2 -> 3 -> 1)
+        newClickCount = (this.clickCount % 3) + 1;
       }
     }
 
-    // Store click info for double-click detection
+    this.clickCount = newClickCount;
     this.lastClickTime = now;
     this.lastClickPosition = { ...point };
+
+    // Handle multi-click actions
+    if (newClickCount === 2) {
+      this.handleDoubleClick(point, pageId);
+      return;
+    } else if (newClickCount === 3) {
+      this.handleTripleClick(point, pageId);
+      return;
+    }
 
     // Handle focused table - clicks inside are handled by mousedown
     if (this._focusedControl instanceof TableObject) {
@@ -2110,13 +2157,46 @@ export class CanvasManager extends EventEmitter {
   }
 
   /**
-   * Handle double-click to switch between sections or enter text box editing.
+   * Handle double-click to select word or enter text box/table editing.
    */
   private handleDoubleClick(point: Point, pageId: string): void {
     const page = this.document.getPage(pageId);
     if (!page) return;
 
-    // Check if we double-clicked on a text box (embedded object)
+    // If already editing a text box, select word at click position
+    if (this.editingTextBox) {
+      const textBox = this.editingTextBox;
+      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const ctx = this.contexts.get(pageId);
+
+      if (textBox.containsPointInRegion(point, pageIndex) && ctx && pageIndex >= 0) {
+        // Position cursor first, then select word
+        this.flowingTextRenderer.handleRegionClick(textBox, point, pageIndex, ctx);
+        textBox.flowingContent.selectWord();
+        this.render();
+        return;
+      }
+    }
+
+    // If focused on a table cell, select word at click position
+    if (this._focusedControl instanceof TableObject) {
+      const table = this._focusedControl;
+      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const ctx = this.contexts.get(pageId);
+
+      if (table.focusedCell && ctx && pageIndex >= 0) {
+        const cell = table.getCell(table.focusedCell.row, table.focusedCell.col);
+        if (cell) {
+          // Check if click is still in the focused cell
+          this.flowingTextRenderer.handleRegionClick(cell, point, pageIndex, ctx);
+          cell.flowingContent.selectWord();
+          this.render();
+          return;
+        }
+      }
+    }
+
+    // Check if we double-clicked on a text box (embedded object) - enter editing mode
     const flowingContent = this.getFlowingContentForActiveSection();
 
     if (flowingContent) {
@@ -2230,6 +2310,63 @@ export class CanvasManager extends EventEmitter {
           this.render();
         }
       }
+    }
+
+    // Double-click word selection in text (when not entering text box/table)
+    const activeFlowingContent = this.getFlowingContentForActiveSection();
+    if (activeFlowingContent) {
+      // Position cursor at click point first
+      const ctx = this.contexts.get(pageId);
+      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const region = this.getRegionForActiveSection();
+
+      if (ctx && pageIndex >= 0 && region) {
+        this.flowingTextRenderer.handleRegionClick(region, point, pageIndex, ctx);
+      }
+
+      // Then select the word at cursor position
+      activeFlowingContent.selectWord();
+      this.emit('text-selection-changed', {
+        selection: activeFlowingContent.getSelection(),
+        section: this._activeSection
+      });
+      this.render();
+    }
+  }
+
+  /**
+   * Handle triple-click to select paragraph.
+   */
+  private handleTripleClick(_point: Point, _pageId: string): void {
+    // Handle text box editing - select paragraph in text box
+    if (this.editingTextBox) {
+      this.editingTextBox.flowingContent.selectParagraph();
+      this.render();
+      return;
+    }
+
+    // Handle focused table - select paragraph in focused cell
+    if (this._focusedControl instanceof TableObject) {
+      const table = this._focusedControl;
+      if (table.focusedCell) {
+        const cell = table.getCell(table.focusedCell.row, table.focusedCell.col);
+        if (cell) {
+          cell.flowingContent.selectParagraph();
+          this.render();
+          return;
+        }
+      }
+    }
+
+    // Handle body/header/footer - select paragraph
+    const flowingContent = this.getFlowingContentForActiveSection();
+    if (flowingContent) {
+      flowingContent.selectParagraph();
+      this.emit('text-selection-changed', {
+        selection: flowingContent.getSelection(),
+        section: this._activeSection
+      });
+      this.render();
     }
   }
 

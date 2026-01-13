@@ -504,6 +504,133 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     this.textState.selectRight();
   }
 
+  /**
+   * Select the word at the current cursor position.
+   */
+  selectWord(): void {
+    this.textState.selectWord();
+  }
+
+  /**
+   * Select the paragraph at the current cursor position.
+   */
+  selectParagraph(): void {
+    this.textState.selectParagraph();
+  }
+
+  /**
+   * Select all text content.
+   */
+  selectAll(): void {
+    this.textState.selectAll();
+  }
+
+  /**
+   * Get word boundaries at a position.
+   */
+  getWordBoundaries(position: number): { start: number; end: number } {
+    return this.textState.getWordBoundaries(position);
+  }
+
+  /**
+   * Get paragraph boundaries at a position.
+   */
+  getParagraphBoundariesAt(position: number): { start: number; end: number } {
+    return this.textState.getParagraphBoundaries(position);
+  }
+
+  // ============================================
+  // Line and Document Navigation
+  // ============================================
+
+  /**
+   * Move cursor to the start of the current line.
+   */
+  moveCursorToLineStart(): void {
+    this.textState.moveCursorToLineStart();
+  }
+
+  /**
+   * Move cursor to the end of the current line.
+   */
+  moveCursorToLineEnd(): void {
+    this.textState.moveCursorToLineEnd();
+  }
+
+  /**
+   * Move cursor to the start of the document.
+   */
+  moveCursorToDocumentStart(): void {
+    this.textState.moveCursorToDocumentStart();
+  }
+
+  /**
+   * Move cursor to the end of the document.
+   */
+  moveCursorToDocumentEnd(): void {
+    this.textState.moveCursorToDocumentEnd();
+  }
+
+  /**
+   * Select from current cursor to line start.
+   */
+  selectToLineStart(): void {
+    this.textState.selectToLineStart();
+  }
+
+  /**
+   * Select from current cursor to line end.
+   */
+  selectToLineEnd(): void {
+    this.textState.selectToLineEnd();
+  }
+
+  /**
+   * Select from current cursor to document start.
+   */
+  selectToDocumentStart(): void {
+    this.textState.selectToDocumentStart();
+  }
+
+  /**
+   * Select from current cursor to document end.
+   */
+  selectToDocumentEnd(): void {
+    this.textState.selectToDocumentEnd();
+  }
+
+  // ============================================
+  // Word-by-Word Navigation
+  // ============================================
+
+  /**
+   * Move cursor to the start of the previous word.
+   */
+  moveCursorWordLeft(): void {
+    this.textState.moveCursorWordLeft();
+  }
+
+  /**
+   * Move cursor to the start of the next word.
+   */
+  moveCursorWordRight(): void {
+    this.textState.moveCursorWordRight();
+  }
+
+  /**
+   * Select word left from current position.
+   */
+  selectWordLeft(): void {
+    this.textState.selectWordLeft();
+  }
+
+  /**
+   * Select word right from current position.
+   */
+  selectWordRight(): void {
+    this.textState.selectWordRight();
+  }
+
   // ============================================
   // Formatting Operations (delegated to TextFormattingManager)
   // ============================================
@@ -1062,7 +1189,15 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
 
       case 'ArrowLeft':
         e.preventDefault();
-        if (e.shiftKey) {
+        if (e.ctrlKey || e.metaKey) {
+          // Word-by-word navigation
+          if (e.shiftKey) {
+            this.selectWordLeft();
+          } else {
+            this.clearSelection();
+            this.moveCursorWordLeft();
+          }
+        } else if (e.shiftKey) {
           this.selectLeft();
         } else {
           this.clearSelection();
@@ -1073,11 +1208,63 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
 
       case 'ArrowRight':
         e.preventDefault();
-        if (e.shiftKey) {
+        if (e.ctrlKey || e.metaKey) {
+          // Word-by-word navigation
+          if (e.shiftKey) {
+            this.selectWordRight();
+          } else {
+            this.clearSelection();
+            this.moveCursorWordRight();
+          }
+        } else if (e.shiftKey) {
           this.selectRight();
         } else {
           this.clearSelection();
           this.moveCursorRight();
+        }
+        this.resetCursorBlink();
+        return true;
+
+      case 'Home':
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+          // Document start
+          if (e.shiftKey) {
+            this.selectToDocumentStart();
+          } else {
+            this.clearSelection();
+            this.moveCursorToDocumentStart();
+          }
+        } else {
+          // Line start
+          if (e.shiftKey) {
+            this.selectToLineStart();
+          } else {
+            this.clearSelection();
+            this.moveCursorToLineStart();
+          }
+        }
+        this.resetCursorBlink();
+        return true;
+
+      case 'End':
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+          // Document end
+          if (e.shiftKey) {
+            this.selectToDocumentEnd();
+          } else {
+            this.clearSelection();
+            this.moveCursorToDocumentEnd();
+          }
+        } else {
+          // Line end
+          if (e.shiftKey) {
+            this.selectToLineEnd();
+          } else {
+            this.clearSelection();
+            this.moveCursorToLineEnd();
+          }
         }
         this.resetCursorBlink();
         return true;

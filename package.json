@@ -1,13 +1,54 @@
 {
   "name": "pc-editor",
   "version": "1.0.0",
-  "description": "Browser based WYSIWYG editor library for PDF generation from data",
+  "description": "Browser-based WYSIWYG document editor library for creating pixel-perfect documents with data binding and PDF export capabilities",
+  "author": "",
+  "license": "MIT",
+  "homepage": "https://github.com/nickmitchko/pc-editor#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nickmitchko/pc-editor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nickmitchko/pc-editor/issues"
+  },
+  "keywords": [
+    "wysiwyg",
+    "editor",
+    "pdf",
+    "canvas",
+    "typescript",
+    "document",
+    "layout",
+    "data-binding",
+    "pdf-generation",
+    "table",
+    "rich-text"
+  ],
   "main": "dist/pc-editor.js",
   "module": "dist/pc-editor.esm.js",
-  "types": "dist/types/index.d.ts",
+  "types": "dist/types/lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/lib/index.d.ts",
+      "import": "./dist/pc-editor.esm.js",
+      "require": "./dist/pc-editor.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "vite serve src/demo",
     "build": "npm run build:lib && npm run build:types",
@@ -17,18 +58,13 @@
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
     "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
     "test": "vitest",
-    "prepublishOnly": "npm run build"
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist dev-dist coverage",
+    "prepublishOnly": "npm run clean && npm run build && npm run test:run"
   },
-  "keywords": [
-    "wysiwyg",
-    "editor",
-    "pdf",
-    "canvas",
-    "typescript"
-  ],
-  "author": "",
-  "license": "ISC",
   "devDependencies": {
     "@rollup/plugin-commonjs": "^25.0.7",
     "@rollup/plugin-node-resolve": "^15.2.3",
@@ -46,6 +82,7 @@
     "vitest": "^1.0.0"
   },
   "dependencies": {
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^3.11.174"
   }
 }

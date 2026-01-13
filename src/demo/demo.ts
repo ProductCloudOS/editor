@@ -343,6 +343,10 @@ function setupEventHandlers(): void {
 
   // Export
   document.getElementById('export-pdf')?.addEventListener('click', exportPDF);
+  document.getElementById('import-pdf')?.addEventListener('click', () => {
+    document.getElementById('pdf-file-input')?.click();
+  });
+  document.getElementById('pdf-file-input')?.addEventListener('change', importPDFHandler);
 
   // Save/Load
   document.getElementById('save-document')?.addEventListener('click', saveDocumentHandler);
@@ -2544,6 +2548,44 @@ async function loadDocumentHandler(event: Event): Promise<void> {
   }
 
   // Reset the input so the same file can be loaded again
+  input.value = '';
+}
+
+/**
+ * Import a PDF file.
+ */
+async function importPDFHandler(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (!file || !editor) {
+    return;
+  }
+
+  try {
+    updateStatus('Importing PDF...');
+    const result = await editor.importPDF(file, {
+      detectTables: true,
+      extractImages: true
+    }, (progress) => {
+      updateStatus(`${progress.message} (${progress.progress}%)`);
+    });
+
+    updateStatus(`PDF imported: ${result.metadata?.pageCount || 0} page(s)`);
+    loadDocumentSettings(); // Refresh settings panel
+
+    // Show warnings if any
+    if (result.warnings.length > 0) {
+      console.warn('PDF import warnings:', result.warnings);
+      alert('PDF imported with warnings:\n\n' + result.warnings.join('\n'));
+    }
+  } catch (error) {
+    console.error('Failed to import PDF:', error);
+    updateStatus('Failed to import PDF: ' + (error as Error).message, 'error');
+    alert('Failed to import PDF: ' + (error as Error).message);
+  }
+
+  // Reset the input so the same file can be imported again
   input.value = '';
 }
 

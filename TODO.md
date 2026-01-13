@@ -5,8 +5,6 @@
 (none)
 
 ## New Features
-- [ ] FEATURE-0011 Additional selection logic such as double-click to select a word, shift and mouse down, select all, Click/drag to select across pages, etc.  Selection should generally operate like a modern word processor
-- [ ] FEATURE-0021 Prepare the editor to be a best practice open source library including GitHub workflows to publish to npm, full README documentation, MIT license file, separation of the library and the example application, full documentation of how to use the library
 
 ### Performance & Polish
 - [ ] **Optimize rendering performance**
@@ -48,6 +46,9 @@
 
 ## Completed Recently ✅
 
+- ✅ FEATURE-0021 Open Source Preparation - Prepared PC Editor as a best practice open source npm library. Updated package.json with correct metadata, exports field, sideEffects, engines, and publishConfig. Created MIT LICENSE file. Created GitHub workflows for CI (lint, type-check, test, build) and npm publishing on release. Rewrote README.md with comprehensive documentation including features, installation, quick start, configuration, and API examples. Created CHANGELOG.md following Keep a Changelog format. Created CONTRIBUTING.md with development setup, coding standards, and contribution guidelines. Created docs/ directory with getting-started.md and api-reference.md.
+- ✅ FEATURE-0022 PDF Import - Implemented PDF import feature using pdfjs-dist library. Created PDFParser for text/image extraction, ContentAnalyzer for paragraph grouping/alignment/table detection, DocumentBuilder for converting to PC Editor format, and PDFImporter orchestrator. PCEditor.importPDF() accepts File, ArrayBuffer, or URL. Extracts text with formatting (font, size, bold, italic), detects paragraphs by vertical spacing, detects alignment (left/center/right/justify), attempts table detection via column boundaries, and extracts embedded images. Demo has Import PDF button. Added 37 unit tests.
+- ✅ FEATURE-0011 Advanced Selection Logic - Implemented modern word processor-style selection behaviors: double-click to select word, triple-click to select paragraph, shift+click to extend selection, Ctrl+A to select all, Home/End keys for line navigation, Ctrl+Home/End for document navigation, Ctrl+Arrow for word-by-word navigation. All selection features work in body, header, footer, text boxes, and table cells. Added 37 unit tests for new TextState methods.
 - ✅ FEATURE-0016 Block Object Text Handling - Fixed text justification before block objects by treating preceding lines as paragraph terminators. Added `allowPageBreakBefore` flag to FlowedLine type for block objects. Lines before block objects no longer get incorrect justify spacing.
 - ✅ BUG-0029 Page Gap Changes with Zoom - Fixed by dynamically adjusting margin-bottom to compensate for CSS scale transform in updateCanvasScale()
 - ✅ BUG-0028 Field Width Missing Prefix - Fixed by updating TextMeasurer and SubstitutionFieldManager to use consistent `{{field: name}}` format matching FlowingTextRenderer

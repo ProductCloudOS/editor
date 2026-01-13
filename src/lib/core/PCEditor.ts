@@ -28,6 +28,8 @@ import {
   ObjectSourceId
 } from '../undo';
 import { ClipboardManager, type PCEditorClipboardData, type ClipboardContent } from '../clipboard';
+import { PDFImporter, PDFImportProgress, PDFImportResult } from '../import';
+import { PDFImportOptions, PDFImportError, PDFImportErrorCode } from '../import/types';
 
 export class PCEditor extends EventEmitter {
   private container: HTMLElement;
@@ -826,6 +828,56 @@ export class PCEditor extends EventEmitter {
   }
 
   /**
+   * Import a PDF document and load it into the editor.
+   * @param source - PDF file as File, ArrayBuffer, or URL string
+   * @param options - Import options
+   * @param onProgress - Optional progress callback
+   * @returns Promise with import result including warnings and metadata
+   */
+  async importPDF(
+    source: File | ArrayBuffer | string,
+    options?: PDFImportOptions,
+    onProgress?: (progress: PDFImportProgress) => void
+  ): Promise<PDFImportResult> {
+    if (!this._isReady) {
+      throw new Error('Editor is not ready');
+    }
+
+    const importer = new PDFImporter();
+    let result: PDFImportResult;
+
+    try {
+      if (source instanceof File) {
+        result = await importer.importFile(source, options, onProgress);
+      } else if (source instanceof ArrayBuffer) {
+        result = await importer.import(source, options, onProgress);
+      } else if (typeof source === 'string') {
+        result = await importer.importUrl(source, options, onProgress);
+      } else {
+        throw new PDFImportError(
+          'Invalid source type. Expected File, ArrayBuffer, or URL string.',
+          PDFImportErrorCode.INVALID_PDF
+        );
+      }
+
+      // Load the imported document
+      this.loadDocument(result.document);
+
+      // Emit success event
+      this.emit('pdf-imported', {
+        pageCount: result.metadata?.pageCount || 0,
+        warnings: result.warnings,
+        metadata: result.metadata
+      });
+
+      return result;
+    } catch (error) {
+      this.emit('error', { error, context: 'pdf-import' });
+      throw error;
+    }
+  }
+
+  /**
    * Validate document data structure before loading.
    * @throws Error if validation fails
    */
@@ -1138,6 +1190,13 @@ export class PCEditor extends EventEmitter {
     if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
       e.preventDefault();
       this.paste();
+      return;
+    }
+
+    // Handle select all (Ctrl+A / Cmd+A)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+      e.preventDefault();
+      this.selectAll();
       return;
     }
 
@@ -3504,6 +3563,44 @@ export class PCEditor extends EventEmitter {
       this.transactionManager.endCompoundOperation();
       console.error('Paste failed:', error);
       return false;
+    }
+  }
+
+  /**
+   * Select all text in the currently focused content.
+   */
+  selectAll(): void {
+    // Check if editing a text box
+    const editingTextBox = this.canvasManager.getEditingTextBox();
+    if (editingTextBox) {
+      editingTextBox.flowingContent.selectAll();
+      this.canvasManager.render();
+      return;
+    }
+
+    // Check if focused on a table cell
+    const focusedControl = this.canvasManager.getFocusedControl();
+    if (focusedControl instanceof TableObject && focusedControl.focusedCell) {
+      const cell = focusedControl.getCell(
+        focusedControl.focusedCell.row,
+        focusedControl.focusedCell.col
+      );
+      if (cell) {
+        cell.flowingContent.selectAll();
+        this.canvasManager.render();
+        return;
+      }
+    }
+
+    // Select all in the active section (body, header, or footer)
+    const flowingContent = this.getActiveFlowingContent();
+    if (flowingContent) {
+      flowingContent.selectAll();
+      this.canvasManager.render();
+      this.emit('text-selection-changed', {
+        selection: flowingContent.getSelection(),
+        section: this._activeEditingSection
+      });
     }
   }
 

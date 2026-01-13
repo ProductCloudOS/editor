@@ -394,4 +394,272 @@ export class TextState extends EventEmitter {
   private emitSelectionChange(): void {
     this.emit('selection-changed', { selection: this.getSelection() });
   }
+
+  // ============================================
+  // Word and Paragraph Detection
+  // ============================================
+
+  /**
+   * Check if character is a word character (alphanumeric or underscore).
+   * Includes accented characters common in European languages.
+   */
+  private isWordChar(char: string): boolean {
+    return /[\w\u00C0-\u024F]/.test(char);
+  }
+
+  /**
+   * Find word boundaries at a text position.
+   * Words are sequences of alphanumeric characters, not including spaces/punctuation.
+   */
+  getWordBoundaries(position: number): { start: number; end: number } {
+    if (this.content.length === 0) return { start: 0, end: 0 };
+
+    // Clamp position to valid range
+    const pos = Math.max(0, Math.min(position, this.content.length));
+
+    // Handle position at or past end
+    if (pos >= this.content.length) {
+      let start = pos;
+      while (start > 0 && this.isWordChar(this.content.charAt(start - 1))) {
+        start--;
+      }
+      return { start, end: this.content.length };
+    }
+
+    // Check if position is on a word character
+    const charAtPos = this.content.charAt(pos);
+    if (!this.isWordChar(charAtPos)) {
+      // Not on a word - check if we're immediately after a word
+      if (pos > 0 && this.isWordChar(this.content.charAt(pos - 1))) {
+        let start = pos - 1;
+        while (start > 0 && this.isWordChar(this.content.charAt(start - 1))) {
+          start--;
+        }
+        return { start, end: pos };
+      }
+      return { start: pos, end: pos };
+    }
+
+    // Find word start (scan backwards)
+    let start = pos;
+    while (start > 0 && this.isWordChar(this.content.charAt(start - 1))) {
+      start--;
+    }
+
+    // Find word end (scan forwards)
+    let end = pos;
+    while (end < this.content.length && this.isWordChar(this.content.charAt(end))) {
+      end++;
+    }
+
+    return { start, end };
+  }
+
+  /**
+   * Find paragraph boundaries at a text position.
+   * Paragraphs are delimited by newline characters.
+   */
+  getParagraphBoundaries(position: number): { start: number; end: number } {
+    if (this.content.length === 0) return { start: 0, end: 0 };
+
+    const pos = Math.max(0, Math.min(position, this.content.length));
+
+    // Find paragraph start (scan backwards for \n)
+    let start = pos;
+    while (start > 0 && this.content.charAt(start - 1) !== '\n') {
+      start--;
+    }
+
+    // Find paragraph end (scan forwards for \n)
+    let end = pos;
+    while (end < this.content.length && this.content.charAt(end) !== '\n') {
+      end++;
+    }
+
+    return { start, end };
+  }
+
+  /**
+   * Select the word at the current cursor position.
+   */
+  selectWord(): void {
+    const { start, end } = this.getWordBoundaries(this.cursorPosition);
+    if (start !== end) {
+      this.selectionAnchor = start;
+      this.cursorPosition = end;
+      this.emitSelectionChange();
+    }
+  }
+
+  /**
+   * Select the paragraph at the current cursor position.
+   */
+  selectParagraph(): void {
+    const { start, end } = this.getParagraphBoundaries(this.cursorPosition);
+    this.selectionAnchor = start;
+    this.cursorPosition = end;
+    this.emitSelectionChange();
+  }
+
+  /**
+   * Select all text content.
+   */
+  selectAll(): void {
+    if (this.content.length === 0) return;
+    this.selectionAnchor = 0;
+    this.cursorPosition = this.content.length;
+    this.emitSelectionChange();
+  }
+
+  // ============================================
+  // Line and Document Navigation
+  // ============================================
+
+  /**
+   * Move cursor to the start of the current line.
+   */
+  moveCursorToLineStart(): void {
+    let pos = this.cursorPosition;
+    while (pos > 0 && this.content.charAt(pos - 1) !== '\n') {
+      pos--;
+    }
+    this.setCursorPosition(pos);
+  }
+
+  /**
+   * Move cursor to the end of the current line.
+   */
+  moveCursorToLineEnd(): void {
+    let pos = this.cursorPosition;
+    while (pos < this.content.length && this.content.charAt(pos) !== '\n') {
+      pos++;
+    }
+    this.setCursorPosition(pos);
+  }
+
+  /**
+   * Move cursor to the start of the document.
+   */
+  moveCursorToDocumentStart(): void {
+    this.setCursorPosition(0);
+  }
+
+  /**
+   * Move cursor to the end of the document.
+   */
+  moveCursorToDocumentEnd(): void {
+    this.setCursorPosition(this.content.length);
+  }
+
+  /**
+   * Select from current cursor to line start.
+   */
+  selectToLineStart(): void {
+    if (this.selectionAnchor === null) {
+      this.selectionAnchor = this.cursorPosition;
+    }
+    this.moveCursorToLineStart();
+    this.emitSelectionChange();
+  }
+
+  /**
+   * Select from current cursor to line end.
+   */
+  selectToLineEnd(): void {
+    if (this.selectionAnchor === null) {
+      this.selectionAnchor = this.cursorPosition;
+    }
+    this.moveCursorToLineEnd();
+    this.emitSelectionChange();
+  }
+
+  /**
+   * Select from current cursor to document start.
+   */
+  selectToDocumentStart(): void {
+    if (this.selectionAnchor === null) {
+      this.selectionAnchor = this.cursorPosition;
+    }
+    this.moveCursorToDocumentStart();
+    this.emitSelectionChange();
+  }
+
+  /**
+   * Select from current cursor to document end.
+   */
+  selectToDocumentEnd(): void {
+    if (this.selectionAnchor === null) {
+      this.selectionAnchor = this.cursorPosition;
+    }
+    this.moveCursorToDocumentEnd();
+    this.emitSelectionChange();
+  }
+
+  // ============================================
+  // Word-by-Word Navigation
+  // ============================================
+
+  /**
+   * Move cursor to the start of the previous word.
+   */
+  moveCursorWordLeft(): void {
+    if (this.cursorPosition === 0) return;
+
+    let pos = this.cursorPosition - 1;
+
+    // Skip any whitespace/punctuation
+    while (pos > 0 && !this.isWordChar(this.content.charAt(pos))) {
+      pos--;
+    }
+
+    // Skip to start of word
+    while (pos > 0 && this.isWordChar(this.content.charAt(pos - 1))) {
+      pos--;
+    }
+
+    this.setCursorPosition(pos);
+  }
+
+  /**
+   * Move cursor to the start of the next word.
+   */
+  moveCursorWordRight(): void {
+    if (this.cursorPosition >= this.content.length) return;
+
+    let pos = this.cursorPosition;
+
+    // Skip current word if on one
+    while (pos < this.content.length && this.isWordChar(this.content.charAt(pos))) {
+      pos++;
+    }
+
+    // Skip whitespace/punctuation
+    while (pos < this.content.length && !this.isWordChar(this.content.charAt(pos))) {
+      pos++;
+    }
+
+    this.setCursorPosition(pos);
+  }
+
+  /**
+   * Select word left from current position.
+   */
+  selectWordLeft(): void {
+    if (this.selectionAnchor === null) {
+      this.selectionAnchor = this.cursorPosition;
+    }
+    this.moveCursorWordLeft();
+    this.emitSelectionChange();
+  }
+
+  /**
+   * Select word right from current position.
+   */
+  selectWordRight(): void {
+    if (this.selectionAnchor === null) {
+      this.selectionAnchor = this.cursorPosition;
+    }
+    this.moveCursorWordRight();
+    this.emitSelectionChange();
+  }
 }

@@ -706,4 +706,324 @@ describe('TextState', () => {
       expect(state.getText()).toBe('Hello World');
     });
   });
+
+  describe('word and paragraph detection', () => {
+    describe('getWordBoundaries()', () => {
+      it('should find word boundaries at position within word', () => {
+        state.setText('Hello World Test');
+        const bounds = state.getWordBoundaries(7); // 'o' in World
+        expect(bounds).toEqual({ start: 6, end: 11 }); // 'World'
+      });
+
+      it('should find word at start of text', () => {
+        state.setText('Hello World');
+        const bounds = state.getWordBoundaries(2);
+        expect(bounds).toEqual({ start: 0, end: 5 }); // 'Hello'
+      });
+
+      it('should find word at end of text', () => {
+        state.setText('Hello World');
+        const bounds = state.getWordBoundaries(8);
+        expect(bounds).toEqual({ start: 6, end: 11 }); // 'World'
+      });
+
+      it('should return empty bounds on whitespace', () => {
+        state.setText('Hello World');
+        const bounds = state.getWordBoundaries(5); // space
+        // When on space after 'Hello', should find 'Hello' before it
+        expect(bounds).toEqual({ start: 0, end: 5 });
+      });
+
+      it('should handle empty text', () => {
+        state.setText('');
+        const bounds = state.getWordBoundaries(0);
+        expect(bounds).toEqual({ start: 0, end: 0 });
+      });
+
+      it('should handle accented characters', () => {
+        state.setText('Café résumé');
+        const bounds = state.getWordBoundaries(2); // 'f' in Café
+        expect(bounds).toEqual({ start: 0, end: 4 }); // 'Café'
+      });
+    });
+
+    describe('getParagraphBoundaries()', () => {
+      it('should find paragraph boundaries', () => {
+        state.setText('First line\nSecond line\nThird line');
+        const bounds = state.getParagraphBoundaries(15); // in 'Second line'
+        expect(bounds).toEqual({ start: 11, end: 22 });
+      });
+
+      it('should find first paragraph', () => {
+        state.setText('First line\nSecond line');
+        const bounds = state.getParagraphBoundaries(5);
+        expect(bounds).toEqual({ start: 0, end: 10 });
+      });
+
+      it('should find last paragraph', () => {
+        state.setText('First\nLast');
+        const bounds = state.getParagraphBoundaries(8);
+        expect(bounds).toEqual({ start: 6, end: 10 });
+      });
+
+      it('should handle single paragraph', () => {
+        state.setText('No newlines here');
+        const bounds = state.getParagraphBoundaries(5);
+        expect(bounds).toEqual({ start: 0, end: 16 });
+      });
+
+      it('should handle empty text', () => {
+        state.setText('');
+        const bounds = state.getParagraphBoundaries(0);
+        expect(bounds).toEqual({ start: 0, end: 0 });
+      });
+    });
+
+    describe('selectWord()', () => {
+      it('should select word at cursor position', () => {
+        state.setText('Hello World');
+        state.setCursorPosition(7);
+        state.selectWord();
+
+        expect(state.getSelection()).toEqual({ start: 6, end: 11 });
+      });
+
+      it('should not select if cursor is on whitespace only', () => {
+        state.setText('   ');
+        state.setCursorPosition(1);
+        state.selectWord();
+
+        // No word to select, selection should be null
+        expect(state.getSelection()).toBeNull();
+      });
+
+      it('should emit selection-changed event', () => {
+        const handler = vi.fn();
+        state.setText('Hello');
+        state.setCursorPosition(2);
+        state.on('selection-changed', handler);
+
+        state.selectWord();
+
+        expect(handler).toHaveBeenCalled();
+      });
+    });
+
+    describe('selectParagraph()', () => {
+      it('should select entire paragraph', () => {
+        state.setText('First para\nSecond para\nThird para');
+        state.setCursorPosition(15); // in 'Second para'
+        state.selectParagraph();
+
+        expect(state.getSelection()).toEqual({ start: 11, end: 22 });
+      });
+
+      it('should select single paragraph text', () => {
+        state.setText('No newlines');
+        state.setCursorPosition(5);
+        state.selectParagraph();
+
+        expect(state.getSelection()).toEqual({ start: 0, end: 11 });
+      });
+    });
+
+    describe('selectAll()', () => {
+      it('should select all text', () => {
+        state.setText('Hello World');
+        state.setCursorPosition(5);
+        state.selectAll();
+
+        expect(state.getSelection()).toEqual({ start: 0, end: 11 });
+      });
+
+      it('should not select empty text', () => {
+        state.setText('');
+        state.selectAll();
+
+        expect(state.getSelection()).toBeNull();
+      });
+
+      it('should emit selection-changed event', () => {
+        const handler = vi.fn();
+        state.setText('Hello');
+        state.on('selection-changed', handler);
+
+        state.selectAll();
+
+        expect(handler).toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('line and document navigation', () => {
+    describe('moveCursorToLineStart()', () => {
+      it('should move to line start', () => {
+        state.setText('First line\nSecond line');
+        state.setCursorPosition(15); // middle of second line
+        state.moveCursorToLineStart();
+
+        expect(state.getCursorPosition()).toBe(11);
+      });
+
+      it('should stay at start if already there', () => {
+        state.setText('Hello');
+        state.setCursorPosition(0);
+        state.moveCursorToLineStart();
+
+        expect(state.getCursorPosition()).toBe(0);
+      });
+    });
+
+    describe('moveCursorToLineEnd()', () => {
+      it('should move to line end', () => {
+        state.setText('First line\nSecond line');
+        state.setCursorPosition(3); // middle of first line
+        state.moveCursorToLineEnd();
+
+        expect(state.getCursorPosition()).toBe(10);
+      });
+
+      it('should stay at end if already there', () => {
+        state.setText('Hello');
+        state.setCursorPosition(5);
+        state.moveCursorToLineEnd();
+
+        expect(state.getCursorPosition()).toBe(5);
+      });
+    });
+
+    describe('moveCursorToDocumentStart()', () => {
+      it('should move to document start', () => {
+        state.setText('Hello World');
+        state.setCursorPosition(8);
+        state.moveCursorToDocumentStart();
+
+        expect(state.getCursorPosition()).toBe(0);
+      });
+    });
+
+    describe('moveCursorToDocumentEnd()', () => {
+      it('should move to document end', () => {
+        state.setText('Hello World');
+        state.setCursorPosition(3);
+        state.moveCursorToDocumentEnd();
+
+        expect(state.getCursorPosition()).toBe(11);
+      });
+    });
+
+    describe('selectToLineStart()', () => {
+      it('should select from cursor to line start', () => {
+        state.setText('First line\nSecond line');
+        state.setCursorPosition(15);
+        state.selectToLineStart();
+
+        expect(state.getSelection()).toEqual({ start: 11, end: 15 });
+      });
+    });
+
+    describe('selectToLineEnd()', () => {
+      it('should select from cursor to line end', () => {
+        state.setText('First line\nSecond line');
+        state.setCursorPosition(3);
+        state.selectToLineEnd();
+
+        expect(state.getSelection()).toEqual({ start: 3, end: 10 });
+      });
+    });
+
+    describe('selectToDocumentStart()', () => {
+      it('should select from cursor to document start', () => {
+        state.setText('Hello World');
+        state.setCursorPosition(8);
+        state.selectToDocumentStart();
+
+        expect(state.getSelection()).toEqual({ start: 0, end: 8 });
+      });
+    });
+
+    describe('selectToDocumentEnd()', () => {
+      it('should select from cursor to document end', () => {
+        state.setText('Hello World');
+        state.setCursorPosition(3);
+        state.selectToDocumentEnd();
+
+        expect(state.getSelection()).toEqual({ start: 3, end: 11 });
+      });
+    });
+  });
+
+  describe('word-by-word navigation', () => {
+    describe('moveCursorWordLeft()', () => {
+      it('should move to previous word start', () => {
+        state.setText('Hello World Test');
+        state.setCursorPosition(12); // in 'Test'
+        state.moveCursorWordLeft();
+
+        expect(state.getCursorPosition()).toBe(6); // start of 'World'
+      });
+
+      it('should skip whitespace', () => {
+        state.setText('Hello    World');
+        state.setCursorPosition(9); // in whitespace
+        state.moveCursorWordLeft();
+
+        expect(state.getCursorPosition()).toBe(0); // start of 'Hello'
+      });
+
+      it('should not move past document start', () => {
+        state.setText('Hello');
+        state.setCursorPosition(0);
+        state.moveCursorWordLeft();
+
+        expect(state.getCursorPosition()).toBe(0);
+      });
+    });
+
+    describe('moveCursorWordRight()', () => {
+      it('should move to next word start', () => {
+        state.setText('Hello World Test');
+        state.setCursorPosition(0);
+        state.moveCursorWordRight();
+
+        expect(state.getCursorPosition()).toBe(6); // start of 'World'
+      });
+
+      it('should skip whitespace', () => {
+        state.setText('Hello    World');
+        state.setCursorPosition(5); // end of 'Hello'
+        state.moveCursorWordRight();
+
+        expect(state.getCursorPosition()).toBe(9); // start of 'World'
+      });
+
+      it('should not move past document end', () => {
+        state.setText('Hello');
+        state.setCursorPosition(5);
+        state.moveCursorWordRight();
+
+        expect(state.getCursorPosition()).toBe(5);
+      });
+    });
+
+    describe('selectWordLeft()', () => {
+      it('should select word left', () => {
+        state.setText('Hello World');
+        state.setCursorPosition(11); // end
+        state.selectWordLeft();
+
+        expect(state.getSelection()).toEqual({ start: 6, end: 11 }); // 'World'
+      });
+    });
+
+    describe('selectWordRight()', () => {
+      it('should select word right', () => {
+        state.setText('Hello World');
+        state.setCursorPosition(0);
+        state.selectWordRight();
+
+        expect(state.getSelection()).toEqual({ start: 0, end: 6 }); // 'Hello '
+      });
+    });
+  });
 });

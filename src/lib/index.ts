@@ -108,3 +108,31 @@ export type {
   RulerOrientation,
   TickMark
 } from './controls';
+
+// PDF Import module exports
+export {
+  PDFImporter,
+  PDFParser,
+  ContentAnalyzer,
+  DocumentBuilder,
+  PDFImportError,
+  PDFImportErrorCode,
+  DEFAULT_IMPORT_OPTIONS
+} from './import';
+
+export type {
+  PDFImportProgress,
+  PDFImportResult,
+  PDFImportOptions,
+  PDFExtractedContent,
+  PDFExtractedPage,
+  PDFTextItem,
+  PDFImage,
+  PDFMetadata,
+  AnalyzedContent,
+  AnalyzedParagraph,
+  AnalyzedImage,
+  AnalyzedTable,
+  FormattingRun,
+  PageInfo
+} from './import';

@@ -54,7 +54,8 @@ export default [
       name: 'PCEditor',
       sourcemap: true,
       globals: {
-        'pdf-lib': 'PDFLib'
+        'pdf-lib': 'PDFLib',
+        'pdfjs-dist': 'pdfjsLib'
       }
     },
     plugins: [
