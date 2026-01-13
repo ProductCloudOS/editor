@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PC Editor Demo</title>
+  <script type="module" crossorigin src="/editor/assets/index-DF6eFO8J.js"></script>
+  <link rel="stylesheet" crossorigin href="/editor/assets/index-B8-bK88j.css">
+</head>
+<body>
+    <div id="app">
+        <header class="app-header">
+            <h1>PC Editor Demo</h1>
+            <div class="toolbar">
+                <div class="toolbar-group">
+                    <label>Document:</label>
+                    <button id="load-sample">Load Sample</button>
+                    <button id="load-tmd-sample">Load TMD</button>
+                    <button id="clear-doc">Clear</button>
+                </div>
+                <div class="toolbar-group">
+                    <label>Edit:</label>
+                    <button id="undo-btn" title="Ctrl+Z" disabled>Undo</button>
+                    <button id="redo-btn" title="Ctrl+Y" disabled>Redo</button>
+                    <button id="cut-btn" title="Ctrl+X">Cut</button>
+                    <button id="copy-btn" title="Ctrl+C">Copy</button>
+                    <button id="paste-btn" title="Ctrl+V">Paste</button>
+                </div>
+                <div class="toolbar-group">
+                    <label>View:</label>
+                    <button id="zoom-in">Zoom In</button>
+                    <button id="zoom-out">Zoom Out</button>
+                    <button id="fit-page">Fit Page</button>
+                    <button id="toggle-control-chars">¶</button>
+                </div>
+                <div class="toolbar-group">
+                    <label>Embedded Content:</label>
+                    <button id="insert-inline-image">Image</button>
+                    <button id="insert-inline-text">Text Box</button>
+                    <button id="insert-inline-table">Table</button>
+                    <div class="field-picker-container">
+                        <button id="insert-substitution-field">Field</button>
+                        <div id="field-picker" class="field-picker hidden">
+                            <div class="field-picker-list" id="field-picker-list"></div>
+                        </div>
+                    </div>
+                    <button id="insert-page-number">Page #</button>
+                </div>
+                <div class="toolbar-group">
+                    <label>Structure:</label>
+                    <button id="create-loop">Create Loop</button>
+                    <button id="insert-page-break" title="Ctrl+Enter">Page Break</button>
+                </div>
+                <div class="toolbar-group">
+                    <label>File:</label>
+                    <button id="save-document">Save</button>
+                    <button id="load-document">Load</button>
+                    <input type="file" id="file-input" accept=".json,.pceditor.json" style="display: none;">
+                </div>
+                <div class="toolbar-group">
+                    <label>PDF:</label>
+                    <button id="import-pdf">Import PDF</button>
+                    <button id="export-pdf">Export PDF</button>
+                    <input type="file" id="pdf-file-input" accept=".pdf" style="display: none;">
+                </div>
+            </div>
+        </header>
+
+        <div class="app-content">
+            <aside class="sidebar">
+                <div class="collapsible-section">
+                    <button class="collapsible-header expanded" data-target="view-settings">
+                        <span class="collapsible-icon"></span>
+                        <span>View</span>
+                    </button>
+                    <div class="collapsible-content" id="view-settings">
+                        <div class="view-toggles">
+                            <button id="toggle-rulers-btn" class="toggle-btn active" title="Show/hide rulers">
+                                <span class="toggle-icon">📏</span>
+                                <span class="toggle-label">Rulers</span>
+                            </button>
+                            <button id="toggle-control-chars-btn" class="toggle-btn" title="Show/hide control characters">
+                                <span class="toggle-icon">¶</span>
+                                <span class="toggle-label">Control Characters</span>
+                            </button>
+                            <button id="toggle-margin-lines-btn" class="toggle-btn active" title="Show/hide margin lines">
+                                <span class="toggle-icon">⊞</span>
+                                <span class="toggle-label">Margin Lines</span>
+                            </button>
+                            <button id="toggle-grid-btn" class="toggle-btn active" title="Show/hide grid">
+                                <span class="toggle-icon">▦</span>
+                                <span class="toggle-label">Grid</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section">
+                    <button class="collapsible-header" data-target="document-settings">
+                        <span class="collapsible-icon"></span>
+                        <span>Document Settings</span>
+                    </button>
+                    <div class="collapsible-content collapsed" id="document-settings">
+                        <div class="setting-group">
+                            <label>Margins (mm):</label>
+                            <div class="margin-controls">
+                                <div class="margin-input">
+                                    <label>Top:</label>
+                                    <input type="number" id="margin-top" min="5" max="50" step="0.5" value="20">
+                                </div>
+                                <div class="margin-input">
+                                    <label>Right:</label>
+                                    <input type="number" id="margin-right" min="5" max="50" step="0.5" value="20">
+                                </div>
+                                <div class="margin-input">
+                                    <label>Bottom:</label>
+                                    <input type="number" id="margin-bottom" min="5" max="50" step="0.5" value="20">
+                                </div>
+                                <div class="margin-input">
+                                    <label>Left:</label>
+                                    <input type="number" id="margin-left" min="5" max="50" step="0.5" value="20">
+                                </div>
+                            </div>
+                            <button id="apply-margins">Apply Margins</button>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Page Size:</label>
+                            <select id="page-size-select">
+                                <option value="A4">A4</option>
+                                <option value="Letter">Letter</option>
+                                <option value="Legal">Legal</option>
+                                <option value="A3">A3</option>
+                            </select>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Orientation:</label>
+                            <select id="page-orientation-select">
+                                <option value="portrait">Portrait</option>
+                                <option value="landscape">Landscape</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section">
+                    <button class="collapsible-header" data-target="merge-data-section">
+                        <span class="collapsible-icon"></span>
+                        <span>Merge Data</span>
+                    </button>
+                    <div class="collapsible-content collapsed" id="merge-data-section">
+                        <div class="setting-group">
+                            <label>JSON Data:</label>
+                            <textarea id="merge-data-input" rows="10" placeholder='{"customerName": "John Doe", "orderNumber": "12345"}'>{
+  "customerName": "John Doe",
+  "orderNumber": "ORD-12345",
+  "date": "January 6, 2026",
+  "amount": "150.00",
+  "items": [
+    { "item": "Calendar", "amount": "51.00" },
+    { "item": "Stamps", "amount": "15.50" },
+    { "item": "Power Adapter", "amount": "83.50" }
+  ],
+  "contact": {
+    "address": {
+      "street": "80 Collins St",
+      "city": "Melbourne",
+      "postcode": "3000"
+    },
+    "mobile": "+61455555555"
+  }
+}</textarea>
+                        </div>
+                        <button id="apply-merge">Apply Merge</button>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="formatting-pane">
+                    <button class="collapsible-header expanded" data-target="formatting-section">
+                        <span class="collapsible-icon"></span>
+                        <span>Formatting</span>
+                    </button>
+                    <div class="collapsible-content" id="formatting-section">
+                        <div class="setting-group">
+                            <label>Style:</label>
+                            <div class="format-buttons">
+                                <button id="format-bold" class="format-btn" title="Bold">B</button>
+                                <button id="format-italic" class="format-btn format-italic" title="Italic">I</button>
+                            </div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Alignment:</label>
+                            <div class="format-buttons">
+                                <button id="align-left" class="format-btn active" title="Align Left">⫷</button>
+                                <button id="align-center" class="format-btn" title="Center">☰</button>
+                                <button id="align-right" class="format-btn" title="Align Right">⫸</button>
+                                <button id="align-justify" class="format-btn" title="Justify">≡</button>
+                            </div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Lists:</label>
+                            <div class="format-buttons">
+                                <button id="toggle-bullet-list" class="format-btn" title="Bullet List">•</button>
+                                <button id="toggle-number-list" class="format-btn" title="Numbered List">1.</button>
+                                <button id="indent-list" class="format-btn" title="Increase Indent">→</button>
+                                <button id="outdent-list" class="format-btn" title="Decrease Indent">←</button>
+                            </div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Link:</label>
+                            <div class="format-buttons">
+                                <button id="insert-hyperlink" class="format-btn" title="Insert/Edit Link (Ctrl+K)">🔗</button>
+                                <button id="remove-hyperlink" class="format-btn" title="Remove Link">✂</button>
+                            </div>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Font:</label>
+                            <select id="format-font-family">
+                                <option value="Arial">Arial</option>
+                                <option value="Times New Roman">Times New Roman</option>
+                                <option value="Georgia">Georgia</option>
+                                <option value="Verdana">Verdana</option>
+                                <option value="Courier New">Courier New</option>
+                            </select>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Size:</label>
+                            <select id="format-font-size">
+                                <option value="10">10</option>
+                                <option value="12">12</option>
+                                <option value="14" selected>14</option>
+                                <option value="16">16</option>
+                                <option value="18">18</option>
+                                <option value="20">20</option>
+                                <option value="24">24</option>
+                                <option value="28">28</option>
+                                <option value="32">32</option>
+                                <option value="36">36</option>
+                            </select>
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Color:</label>
+                            <input type="color" id="format-color" value="#000000">
+                        </div>
+
+                        <div class="setting-group">
+                            <label>Highlight:</label>
+                            <div class="highlight-controls">
+                                <input type="color" id="format-highlight" value="#ffff00">
+                                <button id="clear-highlight" class="small-btn">Clear</button>
+                            </div>
+                        </div>
+
+                        <p class="format-hint">Select text first, then apply formatting</p>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="hyperlink-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="hyperlink-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Hyperlink</span>
+                    </button>
+                    <div class="collapsible-content" id="hyperlink-properties">
+                        <div class="setting-group">
+                            <label>URL:</label>
+                            <input type="text" id="hyperlink-url-input" placeholder="https://example.com">
+                        </div>
+                        <div class="setting-group">
+                            <label>Title:</label>
+                            <input type="text" id="hyperlink-title-input" placeholder="Link title (optional)">
+                        </div>
+                        <button id="apply-hyperlink-changes">Apply Changes</button>
+                        <button id="remove-hyperlink-btn" class="danger-button" style="margin-top: 0.5rem;">Remove Link</button>
+                        <p class="field-hint" id="hyperlink-range-hint"></p>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="field-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="field-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Substitution Field</span>
+                    </button>
+                    <div class="collapsible-content" id="field-properties">
+                        <div class="setting-group">
+                            <label>Field Name:</label>
+                            <input type="text" id="field-name-input" placeholder="Field name">
+                        </div>
+                        <div class="setting-group">
+                            <label>Default Value:</label>
+                            <input type="text" id="field-default-input" placeholder="Default value (optional)">
+                        </div>
+                        <div class="setting-group">
+                            <label>Value Type:</label>
+                            <select id="field-value-type">
+                                <option value="">Plain Text</option>
+                                <option value="number">Number</option>
+                                <option value="currency">Currency</option>
+                                <option value="date">Date</option>
+                            </select>
+                        </div>
+                        <div class="setting-group" id="number-format-group" style="display: none;">
+                            <label>Number Format:</label>
+                            <select id="field-number-format">
+                                <option value="integer">Integer (1234)</option>
+                                <option value="decimal">Decimal (1234.56)</option>
+                                <option value="decimal-1">1 Decimal (1234.5)</option>
+                                <option value="decimal-3">3 Decimals (1234.567)</option>
+                                <option value="thousands">Thousands (1,234)</option>
+                                <option value="percent">Percent (12.34%)</option>
+                            </select>
+                        </div>
+                        <div class="setting-group" id="currency-format-group" style="display: none;">
+                            <label>Currency:</label>
+                            <select id="field-currency-format">
+                                <option value="USD">USD ($1,234.56)</option>
+                                <option value="EUR">EUR (€1.234,56)</option>
+                                <option value="GBP">GBP (£1,234.56)</option>
+                                <option value="JPY">JPY (¥1,234)</option>
+                            </select>
+                        </div>
+                        <div class="setting-group" id="date-format-group" style="display: none;">
+                            <label>Date Format:</label>
+                            <select id="field-date-format">
+                                <option value="short">Short (1/15/24)</option>
+                                <option value="medium">Medium (Jan 15, 2024)</option>
+                                <option value="long">Long (January 15, 2024)</option>
+                                <option value="iso">ISO (2024-01-15)</option>
+                            </select>
+                        </div>
+                        <button id="apply-field-changes">Apply Changes</button>
+                        <p class="field-hint" id="field-position-hint"></p>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="loop-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="loop-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Repeating Section</span>
+                    </button>
+                    <div class="collapsible-content" id="loop-properties">
+                        <div class="setting-group">
+                            <label>Array Field Path:</label>
+                            <input type="text" id="loop-field-path" placeholder="e.g., items">
+                        </div>
+                        <p class="field-hint" id="loop-position-hint"></p>
+                        <button id="apply-loop-changes">Apply Changes</button>
+                        <button id="delete-loop" class="danger-button" style="margin-top: 0.5rem;">Delete Loop</button>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="table-row-loop-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="table-row-loop-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Table Row Loop</span>
+                    </button>
+                    <div class="collapsible-content" id="table-row-loop-properties">
+                        <div class="setting-group">
+                            <label>Array Field Path:</label>
+                            <input type="text" id="table-row-loop-field-path" placeholder="e.g., items">
+                        </div>
+                        <div class="setting-group">
+                            <label>Row Range:</label>
+                            <p class="field-hint" id="table-row-loop-range-hint">Select rows in table first</p>
+                        </div>
+                        <button id="apply-table-row-loop">Apply Changes</button>
+                        <button id="delete-table-row-loop" class="danger-button" style="margin-top: 0.5rem;">Delete Row Loop</button>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="textbox-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="textbox-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Text Box</span>
+                    </button>
+                    <div class="collapsible-content" id="textbox-properties">
+                        <div class="setting-group">
+                            <label>Position:</label>
+                            <select id="textbox-position">
+                                <option value="inline">Inline</option>
+                                <option value="block">Block</option>
+                                <option value="relative">Relative</option>
+                            </select>
+                        </div>
+                        <div class="setting-group" id="textbox-offset-group" style="display: none;">
+                            <label>Offset (px):</label>
+                            <div class="offset-controls">
+                                <div class="offset-input">
+                                    <label>X:</label>
+                                    <input type="number" id="textbox-offset-x" value="0" style="width: 70px;">
+                                </div>
+                                <div class="offset-input">
+                                    <label>Y:</label>
+                                    <input type="number" id="textbox-offset-y" value="0" style="width: 70px;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="setting-group">
+                            <label>Background:</label>
+                            <input type="color" id="textbox-bg-color" value="#ffffff">
+                        </div>
+                        <div class="setting-group">
+                            <label>Border Width:</label>
+                            <input type="number" id="textbox-border-width" min="0" max="10" value="1" style="width: 100%;">
+                        </div>
+                        <div class="setting-group">
+                            <label>Border Color:</label>
+                            <input type="color" id="textbox-border-color" value="#cccccc">
+                        </div>
+                        <div class="setting-group">
+                            <label>Border Style:</label>
+                            <select id="textbox-border-style">
+                                <option value="solid">Solid</option>
+                                <option value="dashed">Dashed</option>
+                                <option value="dotted">Dotted</option>
+                                <option value="none">None</option>
+                            </select>
+                        </div>
+                        <div class="setting-group">
+                            <label>Padding:</label>
+                            <input type="number" id="textbox-padding" min="0" max="20" value="4" style="width: 100%;">
+                        </div>
+                        <button id="apply-textbox-changes">Apply Changes</button>
+                        <p class="field-hint" style="margin-top: 0.5rem;">Double-click text box to edit text</p>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="image-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="image-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Image Settings</span>
+                    </button>
+                    <div class="collapsible-content" id="image-properties">
+                        <div class="setting-group">
+                            <label>Position:</label>
+                            <select id="image-position">
+                                <option value="inline">Inline</option>
+                                <option value="block">Block</option>
+                                <option value="relative">Relative</option>
+                            </select>
+                        </div>
+                        <div class="setting-group" id="image-offset-group" style="display: none;">
+                            <label>Offset (px):</label>
+                            <div class="offset-controls">
+                                <div class="offset-input">
+                                    <label>X:</label>
+                                    <input type="number" id="image-offset-x" value="0" style="width: 70px;">
+                                </div>
+                                <div class="offset-input">
+                                    <label>Y:</label>
+                                    <input type="number" id="image-offset-y" value="0" style="width: 70px;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="setting-group">
+                            <label>Fit Mode:</label>
+                            <select id="image-fit-mode">
+                                <option value="contain">Contain</option>
+                                <option value="cover">Cover</option>
+                                <option value="fill">Fill (stretch)</option>
+                                <option value="none">None (original size)</option>
+                                <option value="tile">Tile</option>
+                            </select>
+                        </div>
+                        <div class="setting-group">
+                            <label>Resize Mode:</label>
+                            <select id="image-resize-mode">
+                                <option value="locked-aspect-ratio">Lock Aspect Ratio</option>
+                                <option value="free">Free</option>
+                            </select>
+                        </div>
+                        <div class="setting-group">
+                            <label>Alt Text:</label>
+                            <input type="text" id="image-alt-text" placeholder="Image description">
+                        </div>
+                        <div class="setting-group">
+                            <label>Change Image:</label>
+                            <input type="file" id="image-file-picker" accept="image/*" style="display: none;">
+                            <button id="change-image-btn">Choose File...</button>
+                        </div>
+                        <button id="apply-image-changes">Apply Changes</button>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" id="table-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="table-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Table Settings</span>
+                    </button>
+                    <div class="collapsible-content" id="table-properties">
+                        <!-- Structure -->
+                        <div class="setting-group">
+                            <label>Structure:</label>
+                            <div class="table-structure-info">
+                                <span>Rows: <strong id="table-row-count">0</strong></span>
+                                <span>Columns: <strong id="table-col-count">0</strong></span>
+                            </div>
+                            <div class="table-structure-buttons">
+                                <button id="table-pane-add-row-before" class="small-action-btn" title="Add row before">+ Row Before</button>
+                                <button id="table-pane-add-row-after" class="small-action-btn" title="Add row after">+ Row After</button>
+                                <button id="table-pane-delete-row" class="small-action-btn danger" title="Delete row">- Row</button>
+                            </div>
+                            <div class="table-structure-buttons">
+                                <button id="table-pane-add-col-before" class="small-action-btn" title="Add column before">+ Col Before</button>
+                                <button id="table-pane-add-col-after" class="small-action-btn" title="Add column after">+ Col After</button>
+                                <button id="table-pane-delete-col" class="small-action-btn danger" title="Delete column">- Col</button>
+                            </div>
+                        </div>
+
+                        <!-- Cell Selection -->
+                        <div class="setting-group">
+                            <label>Cell Selection:</label>
+                            <p class="field-hint" id="table-cell-selection-info">No cell selected</p>
+                            <div class="table-cell-buttons">
+                                <button id="table-pane-merge" class="small-action-btn">Merge Cells</button>
+                                <button id="table-pane-split" class="small-action-btn">Split Cell</button>
+                            </div>
+                        </div>
+
+                        <!-- Cell Styling -->
+                        <div class="setting-group">
+                            <label>Cell Background:</label>
+                            <input type="color" id="table-cell-bg-color" value="#ffffff">
+                            <button id="table-apply-cell-bg" class="small-action-btn" style="margin-top: 0.25rem;">Apply to Selected</button>
+                        </div>
+
+                        <!-- Borders -->
+                        <div class="setting-group">
+                            <label>Borders:</label>
+                            <div class="border-controls">
+                                <div class="border-input-row">
+                                    <label>Width:</label>
+                                    <input type="number" id="table-border-width" min="0" max="5" value="1" style="width: 60px;">
+                                </div>
+                                <div class="border-input-row">
+                                    <label>Color:</label>
+                                    <input type="color" id="table-border-color" value="#000000">
+                                </div>
+                                <div class="border-input-row">
+                                    <label>Style:</label>
+                                    <select id="table-border-style" style="width: 100px;">
+                                        <option value="solid">Solid</option>
+                                        <option value="dashed">Dashed</option>
+                                        <option value="dotted">Dotted</option>
+                                        <option value="none">None</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="border-side-checkboxes">
+                                <label><input type="checkbox" id="table-border-top" checked> Top</label>
+                                <label><input type="checkbox" id="table-border-right" checked> Right</label>
+                                <label><input type="checkbox" id="table-border-bottom" checked> Bottom</label>
+                                <label><input type="checkbox" id="table-border-left" checked> Left</label>
+                            </div>
+                            <button id="table-apply-borders" class="small-action-btn" style="margin-top: 0.25rem;">Apply Borders</button>
+                        </div>
+
+                        <!-- Headers -->
+                        <div class="setting-group">
+                            <label>Headers:</label>
+                            <div class="header-controls">
+                                <div class="header-input-row">
+                                    <label>Header Rows:</label>
+                                    <input type="number" id="table-header-row-count" min="0" max="10" value="0" style="width: 60px;">
+                                </div>
+                                <div class="header-input-row">
+                                    <label>Header Columns:</label>
+                                    <input type="number" id="table-header-col-count" min="0" max="10" value="0" style="width: 60px;">
+                                </div>
+                            </div>
+                            <button id="table-apply-headers" class="small-action-btn" style="margin-top: 0.25rem;">Apply Header Count</button>
+                        </div>
+
+                        <!-- Header Styling -->
+                        <div class="setting-group">
+                            <label>Header Styling:</label>
+                            <div class="header-style-controls">
+                                <div class="header-input-row">
+                                    <label>Background:</label>
+                                    <input type="color" id="table-header-bg-color" value="#f0f0f0">
+                                </div>
+                                <div class="header-input-row">
+                                    <label><input type="checkbox" id="table-header-bold" checked> Bold text</label>
+                                </div>
+                            </div>
+                            <button id="table-apply-header-style" class="small-action-btn" style="margin-top: 0.25rem;">Apply to Headers</button>
+                        </div>
+
+                        <!-- Table Defaults -->
+                        <div class="setting-group">
+                            <label>Table Defaults:</label>
+                            <div class="table-defaults-controls">
+                                <div class="header-input-row">
+                                    <label>Cell Padding:</label>
+                                    <input type="number" id="table-default-padding" min="0" max="20" value="4" style="width: 60px;">
+                                </div>
+                                <div class="header-input-row">
+                                    <label>Border Color:</label>
+                                    <input type="color" id="table-default-border-color" value="#000000">
+                                </div>
+                            </div>
+                            <button id="table-apply-defaults" class="small-action-btn" style="margin-top: 0.25rem;">Apply Defaults</button>
+                        </div>
+
+                        <p class="field-hint" style="margin-top: 0.5rem;">Double-click table to edit cells</p>
+                    </div>
+                </div>
+
+                <div class="collapsible-section">
+                    <button class="collapsible-header expanded" data-target="doc-info-section">
+                        <span class="collapsible-icon"></span>
+                        <span>Document Info</span>
+                    </button>
+                    <div class="collapsible-content" id="doc-info-section">
+                        <div id="doc-info">
+                            <p>Pages: <span id="page-count">1</span></p>
+                            <p>Size: <span id="page-size">A4</span></p>
+                            <p>Orientation: <span id="page-orientation">Portrait</span></p>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="editor-area">
+                <div class="ruler-corner"></div>
+                <div id="horizontal-ruler" class="ruler-container horizontal"></div>
+                <div id="vertical-ruler" class="ruler-container vertical"></div>
+                <div class="editor-container" id="editor-container">
+                    <div id="editor"></div>
+                </div>
+            </main>
+
+        </div>
+
+        <footer class="app-footer">
+            <div class="status-bar">
+                <span id="status-message">Ready</span>
+                <span id="section-indicator" class="section-indicator section-body">Section: Body</span>
+                <span id="zoom-level">Zoom: 100%</span>
+            </div>
+        </footer>
+    </div>
+
+</body>
+</html>
