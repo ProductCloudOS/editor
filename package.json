@@ -4,13 +4,13 @@
   "description": "Browser-based WYSIWYG document editor library for creating pixel-perfect documents with data binding and PDF export capabilities",
   "author": "",
   "license": "MIT",
-  "homepage": "https://github.com/nickmitchko/pc-editor#readme",
+  "homepage": "https://github.com/ProductCloudOS/editor#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nickmitchko/pc-editor.git"
+    "url": "git+https://github.com/ProductCloudOS/editor.git"
   },
   "bugs": {
-    "url": "https://github.com/nickmitchko/pc-editor/issues"
+    "url": "https://github.com/ProductCloudOS/editor/issues"
   },
   "keywords": [
     "wysiwyg",
@@ -56,7 +56,7 @@
     "build:types": "tsc --project tsconfig.lib.json --declaration --emitDeclarationOnly --outDir dist/types",
     "build:demo": "vite build src/demo --outDir ../../dev-dist",
     "preview": "vite preview",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit --project tsconfig.lib.json",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "test": "vitest",

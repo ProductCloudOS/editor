@@ -949,7 +949,7 @@ export class FlowingTextRenderer extends EventEmitter {
       ctx.translate(elementX, elementY);
 
       if (object instanceof TextBoxObject) {
-        const textBox = object as TextBoxObject;
+        const textBox = object;
         textBox.reflow(ctx);
         textBox.render(ctx);
         ctx.restore();
@@ -1410,13 +1410,14 @@ export class FlowingTextRenderer extends EventEmitter {
         }
         elementY = position.y; // No vertical centering for block objects
         break;
-      case 'relative':
+      case 'relative': {
         // Relative objects: position at anchor + offset
         // (This case is for when relative object is NOT marked as anchor-only)
         const offset = object.relativeOffset;
         elementX = lineStartX + offset.x;
         elementY = position.y + offset.y;
         break;
+      }
       case 'inline':
       default:
         elementX = position.x;
@@ -1440,7 +1441,7 @@ export class FlowingTextRenderer extends EventEmitter {
 
     // Check if this is a TextBoxObject - delegate text rendering to renderRegion
     if (object instanceof TextBoxObject) {
-      const textBox = object as TextBoxObject;
+      const textBox = object;
 
       // Flow text before rendering (populates _flowedLines)
       textBox.reflow(ctx);
@@ -1462,7 +1463,7 @@ export class FlowingTextRenderer extends EventEmitter {
         clipToBounds: true
       });
     } else if (object instanceof TableObject) {
-      const table = object as TableObject;
+      const table = object;
 
       // CRITICAL: Force layout recalculation before any page split decisions
       // This ensures row heights are accurate for page layout calculations

@@ -104,11 +104,13 @@ describe('PCEditor Initialization', () => {
       expect(container.style.position).toBe('relative');
     });
 
-    it('should set container overflow to auto', async () => {
+    it('should not set container overflow (left to parent)', async () => {
       const result = await createEditor();
       container = result.container;
 
-      expect(container.style.overflow).toBe('auto');
+      // Note: overflow is intentionally not set on the container
+      // to allow external controls (rulers) to sync with scroll
+      expect(container.style.overflow).toBe('');
     });
 
     it('should add light theme class by default', async () => {

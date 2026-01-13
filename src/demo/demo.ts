@@ -839,12 +839,12 @@ function loadTMDSample(): void {
   editor.setFlowingText(editor.getFlowingText() + '  \u2022  have the likely needs, objectives and financial situation described below (Target Market).\n\n');
 
   // Format "Eligibility Requirements" and "Target Market" as bold
-  let currentText = editor.getFlowingText();
-  let eligPos = currentText.indexOf('(Eligibility Requirements)');
+  const currentText = editor.getFlowingText();
+  const eligPos = currentText.indexOf('(Eligibility Requirements)');
   if (eligPos >= 0) {
     editor.applyFormattingWithFallback(eligPos, eligPos + 26, { fontWeight: 'bold' });
   }
-  let targetMarketPos = currentText.lastIndexOf('(Target Market)');
+  const targetMarketPos = currentText.lastIndexOf('(Target Market)');
   if (targetMarketPos >= 0) {
     editor.applyFormattingWithFallback(targetMarketPos, targetMarketPos + 15, { fontWeight: 'bold' });
   }
@@ -2307,13 +2307,13 @@ function updateFieldPane(field: SubstitutionField | null): void {
       fieldValueType.value = field.formatConfig?.valueType || '';
     }
     if (fieldNumberFormat && field.formatConfig?.numberFormat) {
-      fieldNumberFormat.value = field.formatConfig.numberFormat as string;
+      fieldNumberFormat.value = field.formatConfig.numberFormat;
     }
     if (fieldCurrencyFormat && field.formatConfig?.currencyFormat) {
       fieldCurrencyFormat.value = field.formatConfig.currencyFormat;
     }
     if (fieldDateFormat && field.formatConfig?.dateFormat) {
-      fieldDateFormat.value = field.formatConfig.dateFormat as string;
+      fieldDateFormat.value = field.formatConfig.dateFormat;
     }
 
     // Update visibility of format groups

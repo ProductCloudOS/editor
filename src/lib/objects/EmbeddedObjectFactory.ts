@@ -128,7 +128,7 @@ export class EmbeddedObjectFactory {
       // Restore substitution fields if present
       if (data.data.substitutionFields && Array.isArray(data.data.substitutionFields)) {
         const fieldManager = textBox.flowingContent.getSubstitutionFieldManager();
-        for (const field of data.data.substitutionFields as any[]) {
+        for (const field of data.data.substitutionFields) {
           if (field.textIndex !== undefined && field.fieldName) {
             fieldManager.insert(field.fieldName, field.textIndex, {
               defaultValue: field.defaultValue,

@@ -104,7 +104,7 @@ export class CanvasManager extends EventEmitter {
     this.regionManager.setFooterRegion(footerRegion);
   }
 
-  async initialize(): Promise<void> {
+  initialize(): void {
     this.createCanvases();
     this.setupEventListeners();
     this.setupScrollListener();
@@ -572,7 +572,7 @@ export class CanvasManager extends EventEmitter {
     const embeddedObjectHit = hitTestManager.queryByType(mouseDownPageIndex, point, 'embedded-object');
 
     if (embeddedObjectHit && embeddedObjectHit.data.type === 'embedded-object') {
-      const object = embeddedObjectHit.data.object as BaseEmbeddedObject;
+      const object = embeddedObjectHit.data.object;
 
       // For relative-positioned objects, prepare for potential drag
       // Don't start drag immediately - wait for threshold to allow double-click
@@ -1387,7 +1387,7 @@ export class CanvasManager extends EventEmitter {
     const hitTestManager = this.flowingTextRenderer.hitTestManager;
     const embeddedObjectHit = hitTestManager.queryByType(pageIndex, point, 'embedded-object');
     if (embeddedObjectHit && embeddedObjectHit.data.type === 'embedded-object') {
-      const object = embeddedObjectHit.data.object as BaseEmbeddedObject;
+      const object = embeddedObjectHit.data.object;
       if (object.position === 'relative') {
         canvas.style.cursor = 'move';
         return;
@@ -1707,7 +1707,7 @@ export class CanvasManager extends EventEmitter {
    */
   getContentOffset(): { x: number; y: number } {
     const scrollContainer = this.findScrollContainer();
-    const firstCanvas = this.canvases.values().next().value as HTMLCanvasElement | undefined;
+    const firstCanvas = this.canvases.values().next().value;
 
     if (!scrollContainer || !firstCanvas) {
       return { x: 0, y: 0 };

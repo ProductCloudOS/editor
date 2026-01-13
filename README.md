@@ -3,7 +3,7 @@
 A powerful browser-based WYSIWYG document editor library for creating pixel-perfect documents with data binding and PDF export capabilities.
 
 [![npm version](https://img.shields.io/npm/v/pc-editor.svg)](https://www.npmjs.com/package/pc-editor)
-[![CI](https://github.com/nickmitchko/pc-editor/workflows/CI/badge.svg)](https://github.com/nickmitchko/pc-editor/actions)
+[![CI](https://github.com/ProductCloudOS/editor/workflows/CI/badge.svg)](https://github.com/ProductCloudOS/editor/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
@@ -326,7 +326,7 @@ import {
 ### Setup
 
 ```bash
-git clone https://github.com/nickmitchko/pc-editor.git
+git clone https://github.com/ProductCloudOS/editor.git
 cd pc-editor
 npm install
 ```

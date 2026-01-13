@@ -94,7 +94,7 @@ export class PCEditor extends EventEmitter {
     };
   }
 
-  private async initialize(): Promise<void> {
+  private initialize(): void {
     try {
       this.setupContainer();
       this.canvasManager = new CanvasManager(this.container, this.document, this.options);
@@ -104,12 +104,13 @@ export class PCEditor extends EventEmitter {
         gridSize: this.options.gridSize
       });
 
-      await this.canvasManager.initialize();
+      this.canvasManager.initialize();
       this.setupEventListeners();
       this.setupKeyboardListeners();
       this.setupTransactionUndo();
       this._isReady = true;
-      this.emit('ready');
+      // Defer ready event to next microtask so handlers can be attached after constructor
+      queueMicrotask(() => this.emit('ready'));
     } catch (error) {
       console.error('Failed to initialize editor:', error);
       this.emit('error', { error });
@@ -1179,17 +1180,17 @@ export class PCEditor extends EventEmitter {
     // Handle copy/cut/paste shortcuts
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
       e.preventDefault();
-      this.copy();
+      void this.copy();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'x') {
       e.preventDefault();
-      this.cut();
+      void this.cut();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
       e.preventDefault();
-      this.paste();
+      void this.paste();
       return;
     }
 
@@ -3536,7 +3537,7 @@ export class PCEditor extends EventEmitter {
 
       if (result.type === 'pceditor') {
         // Paste proprietary format with full fidelity
-        pasted = await this.pasteProprietaryContent(flowingContent, result.data as PCEditorClipboardData);
+        pasted = this.pasteProprietaryContent(flowingContent, result.data as PCEditorClipboardData);
       } else if (result.type === 'html') {
         // Parse HTML and paste
         const content = this.clipboardManager.parseHtml(result.data as string);
@@ -3607,10 +3608,10 @@ export class PCEditor extends EventEmitter {
   /**
    * Paste proprietary clipboard content.
    */
-  private async pasteProprietaryContent(
+  private pasteProprietaryContent(
     flowingContent: FlowingTextContent,
     data: PCEditorClipboardData
-  ): Promise<boolean> {
+  ): boolean {
     // Generate new IDs for all items to avoid conflicts
     const content = this.clipboardManager.generateNewIds(data.content);
     return this.pasteClipboardContent(flowingContent, content);

@@ -98,7 +98,7 @@ export class PDFParser {
     for (const item of textContent.items) {
       // Filter to TextItem (not TextMarkedContent)
       if ('str' in item && item.str) {
-        const textItem = this.convertTextItem(item as TextItem, viewport.height);
+        const textItem = this.convertTextItem(item, viewport.height);
         if (textItem.text.trim()) {
           textItems.push(textItem);
         }

@@ -306,7 +306,7 @@ export class PDFGenerator {
 
       // Render substitution fields (page numbers, data fields)
       for (const fieldRef of line.substitutionFields) {
-        await this.renderSubstitutionField(
+        this.renderSubstitutionField(
           pdfPage,
           fieldRef,
           lineX,
@@ -378,7 +378,7 @@ export class PDFGenerator {
   /**
    * Render a substitution field (page number, data field value).
    */
-  private async renderSubstitutionField(
+  private renderSubstitutionField(
     pdfPage: PDFPage,
     fieldRef: { field: any; x: number; width: number },
     lineX: number,
@@ -387,7 +387,7 @@ export class PDFGenerator {
     pageHeight: number,
     pageIndex: number,
     totalPages: number
-  ): Promise<void> {
+  ): void {
     const field = fieldRef.field;
     let displayText = '';
 

@@ -167,7 +167,7 @@ function tokenize(text: string): Token[] {
     }
 
     // Consume text until next markdown character
-    const textMatch = remaining.match(/^[^*_\[]+/);
+    const textMatch = remaining.match(/^[^*_[]+/);
     if (textMatch) {
       tokens.push({ type: 'text', value: textMatch[0] });
       remaining = remaining.slice(textMatch[0].length);

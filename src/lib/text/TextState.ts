@@ -218,7 +218,7 @@ export class TextState extends EventEmitter {
   moveCursorLeft(): void {
     if (this.cursorPosition === 0) return;
 
-    let newPosition = this.cursorPosition - 1;
+    const newPosition = this.cursorPosition - 1;
 
     // If we're landing on a field (the \uFFFC character), the cursor
     // should be positioned before the field, which is at newPosition.
@@ -235,7 +235,7 @@ export class TextState extends EventEmitter {
   moveCursorRight(): void {
     if (this.cursorPosition >= this.content.length) return;
 
-    let newPosition = this.cursorPosition + 1;
+    const newPosition = this.cursorPosition + 1;
 
     // If the character at current position is a field, skip past it entirely
     // (cursor moves from before the field to after the field)
