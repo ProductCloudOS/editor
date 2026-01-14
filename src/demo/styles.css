@@ -20,19 +20,114 @@ body {
 .app-header {
     background-color: #2c3e50;
     color: white;
-    padding: 1rem;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-.app-header h1 {
-    font-size: 1.5rem;
-    margin-bottom: 1rem;
+.header-top {
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.app-header h1 {
+    font-size: 1.25rem;
+    font-weight: 500;
+}
+
+/* Menu Bar */
+.menu-bar {
+    display: flex;
+    background-color: #34495e;
+}
+
+.menu-item {
+    position: relative;
+}
+
+.menu-trigger {
+    padding: 0.5rem 1rem;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: white;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.menu-trigger:hover,
+.menu-item.open .menu-trigger {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.menu-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    min-width: 200px;
+    background-color: white;
+    border-radius: 0 0 4px 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    padding: 0.25rem 0;
+}
+
+.menu-item.open .menu-dropdown {
+    display: block;
+}
+
+.menu-dropdown button {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 0.5rem 1rem;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: #333;
+    font-size: 0.875rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.menu-dropdown button:hover:not(:disabled) {
+    background-color: #f0f0f0;
+}
+
+.menu-dropdown button:disabled {
+    color: #999;
+    cursor: default;
+}
+
+.menu-dropdown button.menu-toggle.active::before {
+    content: '✓';
+    margin-right: 0.5rem;
+}
+
+.menu-label {
+    flex: 1;
+}
+
+.menu-shortcut {
+    color: #888;
+    font-size: 0.75rem;
+    margin-left: 2rem;
+}
+
+.menu-divider {
+    height: 1px;
+    background-color: #e0e0e0;
+    margin: 0.25rem 0;
+}
+
+/* Legacy toolbar styles - kept for any remaining toolbar elements */
 .toolbar {
     display: flex;
     gap: 2rem;
     flex-wrap: wrap;
+    padding: 0.5rem 1rem;
 }
 
 .toolbar-group {
