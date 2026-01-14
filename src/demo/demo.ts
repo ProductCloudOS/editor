@@ -265,7 +265,62 @@ function setupEditorEventLogging(): void {
   });
 }
 
+function setupMenuBar(): void {
+  const menuItems = document.querySelectorAll('.menu-item');
+  let openMenu: Element | null = null;
+
+  // Handle menu trigger clicks
+  menuItems.forEach(item => {
+    const trigger = item.querySelector('.menu-trigger');
+    trigger?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (item.classList.contains('open')) {
+        item.classList.remove('open');
+        openMenu = null;
+      } else {
+        menuItems.forEach(m => m.classList.remove('open'));
+        item.classList.add('open');
+        openMenu = item;
+      }
+    });
+
+    // Hover to switch menus when one is already open
+    item.addEventListener('mouseenter', () => {
+      if (openMenu && openMenu !== item) {
+        openMenu.classList.remove('open');
+        item.classList.add('open');
+        openMenu = item;
+      }
+    });
+  });
+
+  // Close menus when clicking outside
+  document.addEventListener('click', () => {
+    menuItems.forEach(item => item.classList.remove('open'));
+    openMenu = null;
+  });
+
+  // Close menus when clicking a menu item (action)
+  document.querySelectorAll('.menu-dropdown button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      menuItems.forEach(item => item.classList.remove('open'));
+      openMenu = null;
+    });
+  });
+
+  // Close menus on Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && openMenu) {
+      menuItems.forEach(item => item.classList.remove('open'));
+      openMenu = null;
+    }
+  });
+}
+
 function setupEventHandlers(): void {
+  // Set up menu bar
+  setupMenuBar();
+
   // Document controls
   document.getElementById('load-sample')?.addEventListener('click', loadSampleDocument);
   document.getElementById('load-tmd-sample')?.addEventListener('click', loadTMDSample);
@@ -1320,10 +1375,10 @@ function toggleControlCharacters(): void {
   const currentState = editor.getShowControlCharacters();
   editor.setShowControlCharacters(!currentState);
 
-  // Update toolbar button state
-  const toolbarButton = document.getElementById('toggle-control-chars');
-  if (toolbarButton) {
-    toolbarButton.classList.toggle('active', !currentState);
+  // Update menu toggle button state
+  const menuButton = document.getElementById('toggle-control-chars');
+  if (menuButton) {
+    menuButton.classList.toggle('active', !currentState);
   }
 
   // Update sidebar button state
