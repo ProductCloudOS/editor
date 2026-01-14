@@ -4,65 +4,75 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PC Editor Demo</title>
-  <script type="module" crossorigin src="/editor/assets/index-DF6eFO8J.js"></script>
-  <link rel="stylesheet" crossorigin href="/editor/assets/index-B8-bK88j.css">
+  <script type="module" crossorigin src="/editor/assets/index-BN9ldYGf.js"></script>
+  <link rel="stylesheet" crossorigin href="/editor/assets/index-DIVC6lwA.css">
 </head>
 <body>
     <div id="app">
         <header class="app-header">
-            <h1>PC Editor Demo</h1>
-            <div class="toolbar">
-                <div class="toolbar-group">
-                    <label>Document:</label>
-                    <button id="load-sample">Load Sample</button>
-                    <button id="load-tmd-sample">Load TMD</button>
-                    <button id="clear-doc">Clear</button>
-                </div>
-                <div class="toolbar-group">
-                    <label>Edit:</label>
-                    <button id="undo-btn" title="Ctrl+Z" disabled>Undo</button>
-                    <button id="redo-btn" title="Ctrl+Y" disabled>Redo</button>
-                    <button id="cut-btn" title="Ctrl+X">Cut</button>
-                    <button id="copy-btn" title="Ctrl+C">Copy</button>
-                    <button id="paste-btn" title="Ctrl+V">Paste</button>
-                </div>
-                <div class="toolbar-group">
-                    <label>View:</label>
-                    <button id="zoom-in">Zoom In</button>
-                    <button id="zoom-out">Zoom Out</button>
-                    <button id="fit-page">Fit Page</button>
-                    <button id="toggle-control-chars">¶</button>
-                </div>
-                <div class="toolbar-group">
-                    <label>Embedded Content:</label>
-                    <button id="insert-inline-image">Image</button>
-                    <button id="insert-inline-text">Text Box</button>
-                    <button id="insert-inline-table">Table</button>
-                    <div class="field-picker-container">
-                        <button id="insert-substitution-field">Field</button>
-                        <div id="field-picker" class="field-picker hidden">
-                            <div class="field-picker-list" id="field-picker-list"></div>
-                        </div>
+            <div class="header-top">
+                <h1>PC Editor</h1>
+            </div>
+            <nav class="menu-bar">
+                <div class="menu-item">
+                    <button class="menu-trigger">File</button>
+                    <div class="menu-dropdown">
+                        <button id="clear-doc">New Document</button>
+                        <div class="menu-divider"></div>
+                        <button id="load-document">Open...</button>
+                        <button id="save-document">Save</button>
+                        <div class="menu-divider"></div>
+                        <button id="import-pdf">Import PDF...</button>
+                        <button id="export-pdf">Export PDF</button>
+                        <input type="file" id="file-input" accept=".json,.pceditor.json" style="display: none;">
+                        <input type="file" id="pdf-file-input" accept=".pdf" style="display: none;">
                     </div>
-                    <button id="insert-page-number">Page #</button>
                 </div>
-                <div class="toolbar-group">
-                    <label>Structure:</label>
-                    <button id="create-loop">Create Loop</button>
-                    <button id="insert-page-break" title="Ctrl+Enter">Page Break</button>
+                <div class="menu-item">
+                    <button class="menu-trigger">Edit</button>
+                    <div class="menu-dropdown">
+                        <button id="undo-btn" disabled><span class="menu-label">Undo</span><span class="menu-shortcut">Ctrl+Z</span></button>
+                        <button id="redo-btn" disabled><span class="menu-label">Redo</span><span class="menu-shortcut">Ctrl+Y</span></button>
+                        <div class="menu-divider"></div>
+                        <button id="cut-btn"><span class="menu-label">Cut</span><span class="menu-shortcut">Ctrl+X</span></button>
+                        <button id="copy-btn"><span class="menu-label">Copy</span><span class="menu-shortcut">Ctrl+C</span></button>
+                        <button id="paste-btn"><span class="menu-label">Paste</span><span class="menu-shortcut">Ctrl+V</span></button>
+                    </div>
                 </div>
-                <div class="toolbar-group">
-                    <label>File:</label>
-                    <button id="save-document">Save</button>
-                    <button id="load-document">Load</button>
-                    <input type="file" id="file-input" accept=".json,.pceditor.json" style="display: none;">
+                <div class="menu-item">
+                    <button class="menu-trigger">View</button>
+                    <div class="menu-dropdown">
+                        <button id="zoom-in"><span class="menu-label">Zoom In</span><span class="menu-shortcut">Ctrl++</span></button>
+                        <button id="zoom-out"><span class="menu-label">Zoom Out</span><span class="menu-shortcut">Ctrl+-</span></button>
+                        <button id="fit-page">Fit to Page</button>
+                        <div class="menu-divider"></div>
+                        <button id="toggle-control-chars" class="menu-toggle">Show Control Characters</button>
+                    </div>
                 </div>
-                <div class="toolbar-group">
-                    <label>PDF:</label>
-                    <button id="import-pdf">Import PDF</button>
-                    <button id="export-pdf">Export PDF</button>
-                    <input type="file" id="pdf-file-input" accept=".pdf" style="display: none;">
+                <div class="menu-item">
+                    <button class="menu-trigger">Insert</button>
+                    <div class="menu-dropdown">
+                        <button id="insert-inline-image">Image</button>
+                        <button id="insert-inline-text">Text Box</button>
+                        <button id="insert-inline-table">Table</button>
+                        <div class="menu-divider"></div>
+                        <button id="insert-substitution-field">Substitution Field...</button>
+                        <button id="insert-page-number">Page Number</button>
+                        <div class="menu-divider"></div>
+                        <button id="insert-page-break"><span class="menu-label">Page Break</span><span class="menu-shortcut">Ctrl+Enter</span></button>
+                        <button id="create-loop">Repeating Section</button>
+                    </div>
                 </div>
+                <div class="menu-item">
+                    <button class="menu-trigger">Samples</button>
+                    <div class="menu-dropdown">
+                        <button id="load-sample">Load Sample Document</button>
+                        <button id="load-tmd-sample">Load TMD Sample</button>
+                    </div>
+                </div>
+            </nav>
+            <div id="field-picker" class="field-picker hidden">
+                <div class="field-picker-list" id="field-picker-list"></div>
             </div>
         </header>
 
