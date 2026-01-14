@@ -44,8 +44,6 @@
                         <button id="zoom-in"><span class="menu-label">Zoom In</span><span class="menu-shortcut">Ctrl++</span></button>
                         <button id="zoom-out"><span class="menu-label">Zoom Out</span><span class="menu-shortcut">Ctrl+-</span></button>
                         <button id="fit-page">Fit to Page</button>
-                        <div class="menu-divider"></div>
-                        <button id="toggle-control-chars" class="menu-toggle">Show Control Characters</button>
                     </div>
                 </div>
                 <div class="menu-item">
@@ -70,10 +68,25 @@
                     </div>
                 </div>
             </nav>
-            <div id="field-picker" class="field-picker hidden">
-                <div class="field-picker-list" id="field-picker-list"></div>
-            </div>
         </header>
+
+        <div id="field-picker-overlay" class="field-picker-overlay hidden"></div>
+        <div id="field-picker" class="field-picker hidden">
+            <div class="field-picker-header">
+                Select Field
+                <button class="field-picker-close" id="field-picker-close">&times;</button>
+            </div>
+            <div class="field-picker-list" id="field-picker-list"></div>
+        </div>
+
+        <div id="array-picker-overlay" class="field-picker-overlay hidden"></div>
+        <div id="array-picker" class="field-picker hidden">
+            <div class="field-picker-header">
+                Select Array Field
+                <button class="field-picker-close" id="array-picker-close">&times;</button>
+            </div>
+            <div class="field-picker-list" id="array-picker-list"></div>
+        </div>
 
         <div class="app-content">
             <aside class="sidebar">

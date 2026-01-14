@@ -310,9 +310,22 @@ function setupMenuBar(): void {
 
   // Close menus on Escape key
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && openMenu) {
-      menuItems.forEach(item => item.classList.remove('open'));
-      openMenu = null;
+    if (e.key === 'Escape') {
+      // Close menus
+      if (openMenu) {
+        menuItems.forEach(item => item.classList.remove('open'));
+        openMenu = null;
+      }
+      // Close field picker modal
+      const fieldPicker = document.getElementById('field-picker');
+      if (fieldPicker && !fieldPicker.classList.contains('hidden')) {
+        hideFieldPicker();
+      }
+      // Close array picker modal
+      const arrayPicker = document.getElementById('array-picker');
+      if (arrayPicker && !arrayPicker.classList.contains('hidden')) {
+        hideArrayPicker();
+      }
     }
   });
 }
@@ -347,11 +360,10 @@ function setupEventHandlers(): void {
     updateStatus(result ? 'Pasted from clipboard' : 'Nothing to paste');
   });
 
-  // View controls (toolbar)
+  // View controls (menu)
   document.getElementById('zoom-in')?.addEventListener('click', () => editor?.zoomIn());
   document.getElementById('zoom-out')?.addEventListener('click', () => editor?.zoomOut());
   document.getElementById('fit-page')?.addEventListener('click', () => editor?.fitToPage());
-  document.getElementById('toggle-control-chars')?.addEventListener('click', toggleControlCharacters);
 
   // View controls (sidebar pane)
   document.getElementById('toggle-control-chars-btn')?.addEventListener('click', toggleControlCharacters);
@@ -376,6 +388,10 @@ function setupEventHandlers(): void {
   document.getElementById('insert-inline-table')?.addEventListener('click', insertEmbeddedTable);
   document.getElementById('insert-substitution-field')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-substitution-field')?.addEventListener('click', toggleFieldPicker);
+  document.getElementById('field-picker-close')?.addEventListener('click', hideFieldPicker);
+  document.getElementById('field-picker-overlay')?.addEventListener('click', hideFieldPicker);
+  document.getElementById('array-picker-close')?.addEventListener('click', hideArrayPicker);
+  document.getElementById('array-picker-overlay')?.addEventListener('click', hideArrayPicker);
   document.getElementById('insert-page-number')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-page-number')?.addEventListener('click', insertPageNumber);
 
@@ -1375,12 +1391,6 @@ function toggleControlCharacters(): void {
   const currentState = editor.getShowControlCharacters();
   editor.setShowControlCharacters(!currentState);
 
-  // Update menu toggle button state
-  const menuButton = document.getElementById('toggle-control-chars');
-  if (menuButton) {
-    menuButton.classList.toggle('active', !currentState);
-  }
-
   // Update sidebar button state
   const sidebarButton = document.getElementById('toggle-control-chars-btn');
   if (sidebarButton) {
@@ -1766,6 +1776,32 @@ function extractFieldPaths(obj: unknown, prefix: string = ''): string[] {
 }
 
 /**
+ * Extract only array field paths from the merge data object.
+ * Only returns top-level arrays in the current context.
+ */
+function extractArrayPaths(obj: unknown, prefix: string = ''): string[] {
+  const paths: string[] = [];
+
+  if (obj === null || obj === undefined || typeof obj !== 'object' || Array.isArray(obj)) {
+    return paths;
+  }
+
+  for (const [key, value] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+
+    if (Array.isArray(value)) {
+      // Found an array - add it
+      paths.push(path);
+    } else if (typeof value === 'object' && value !== null) {
+      // Nested object - recurse to find nested arrays
+      paths.push(...extractArrayPaths(value, path));
+    }
+  }
+
+  return paths;
+}
+
+/**
  * Get the current merge data from the textarea.
  */
 function getMergeData(): Record<string, unknown> | null {
@@ -1784,6 +1820,7 @@ function getMergeData(): Record<string, unknown> | null {
  */
 function showFieldPicker(): void {
   const picker = document.getElementById('field-picker');
+  const overlay = document.getElementById('field-picker-overlay');
   const list = document.getElementById('field-picker-list');
   if (!picker || !list) return;
 
@@ -1815,33 +1852,104 @@ function showFieldPicker(): void {
   }
 
   picker.classList.remove('hidden');
-
-  // Add click-outside listener to close
-  setTimeout(() => {
-    document.addEventListener('click', handleFieldPickerClickOutside);
-  }, 0);
+  overlay?.classList.remove('hidden');
 }
 
 /**
- * Hide the field picker dropdown.
+ * Hide the field picker modal.
  */
 function hideFieldPicker(): void {
   const picker = document.getElementById('field-picker');
+  const overlay = document.getElementById('field-picker-overlay');
   if (picker) {
     picker.classList.add('hidden');
   }
-  document.removeEventListener('click', handleFieldPickerClickOutside);
+  if (overlay) {
+    overlay.classList.add('hidden');
+  }
+}
+
+// Store pending loop boundaries for the array picker
+let pendingLoopStart: number | null = null;
+let pendingLoopEnd: number | null = null;
+
+/**
+ * Show the array picker modal with available array field paths.
+ */
+function showArrayPicker(startBoundary: number, endBoundary: number): void {
+  const picker = document.getElementById('array-picker');
+  const overlay = document.getElementById('array-picker-overlay');
+  const list = document.getElementById('array-picker-list');
+  if (!picker || !list) return;
+
+  // Store boundaries for when user selects an array
+  pendingLoopStart = startBoundary;
+  pendingLoopEnd = endBoundary;
+
+  // Get array paths from merge data
+  const mergeData = getMergeData();
+  const paths = mergeData ? extractArrayPaths(mergeData) : [];
+
+  // Clear and populate the list
+  list.innerHTML = '';
+
+  if (paths.length === 0) {
+    const emptyItem = document.createElement('div');
+    emptyItem.className = 'field-picker-item';
+    emptyItem.textContent = '(no array fields available)';
+    emptyItem.style.color = '#999';
+    emptyItem.style.fontStyle = 'italic';
+    list.appendChild(emptyItem);
+  } else {
+    for (const path of paths) {
+      const item = document.createElement('button');
+      item.className = 'field-picker-item';
+      item.textContent = path;
+      item.addEventListener('click', () => {
+        createLoopWithPath(path);
+        hideArrayPicker();
+      });
+      list.appendChild(item);
+    }
+  }
+
+  picker.classList.remove('hidden');
+  overlay?.classList.remove('hidden');
 }
 
 /**
- * Handle clicks outside the field picker to close it.
+ * Hide the array picker modal.
  */
-function handleFieldPickerClickOutside(e: MouseEvent): void {
-  const picker = document.getElementById('field-picker');
-  const button = document.getElementById('insert-substitution-field');
+function hideArrayPicker(): void {
+  const picker = document.getElementById('array-picker');
+  const overlay = document.getElementById('array-picker-overlay');
+  if (picker) {
+    picker.classList.add('hidden');
+  }
+  if (overlay) {
+    overlay.classList.add('hidden');
+  }
+  pendingLoopStart = null;
+  pendingLoopEnd = null;
+}
 
-  if (picker && !picker.contains(e.target as Node) && e.target !== button) {
-    hideFieldPicker();
+/**
+ * Create a loop with the specified field path using stored boundaries.
+ */
+function createLoopWithPath(fieldPath: string): void {
+  if (!editor || pendingLoopStart === null || pendingLoopEnd === null) return;
+
+  try {
+    const section = editor.createRepeatingSection(pendingLoopStart, pendingLoopEnd, fieldPath.trim());
+    if (section) {
+      updateLoopPane(section);
+      updateStatus(`Loop created for "${fieldPath.trim()}"`);
+    } else {
+      updateStatus('Failed to create loop - check boundaries', 'error');
+    }
+  } catch (error) {
+    updateStatus('Failed to create loop', 'error');
+    console.error('Loop creation error:', error);
   }
 }
 
@@ -2708,25 +2816,8 @@ function createLoop(): void {
     return;
   }
 
-  // Prompt for field path (in a real app, this would be a dialog)
-  const fieldPath = prompt('Enter the array field path to loop over (e.g., "items"):');
-  if (!fieldPath) {
-    updateStatus('Loop creation cancelled');
-    return;
-  }
-
-  try {
-    const section = editor.createRepeatingSection(startBoundary, endBoundary, fieldPath.trim());
-    if (section) {
-      updateLoopPane(section);
-      updateStatus(`Loop created for "${fieldPath.trim()}"`);
-    } else {
-      updateStatus('Failed to create loop - check boundaries', 'error');
-    }
-  } catch (error) {
-    updateStatus('Failed to create loop', 'error');
-    console.error('Loop creation error:', error);
-  }
+  // Show the array picker modal
+  showArrayPicker(startBoundary, endBoundary);
 }
 
 /**
