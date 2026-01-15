@@ -24,12 +24,24 @@ import { BaseEmbeddedObject, ImageObject, TextBoxObject } from '../objects';
 import { TableObject } from '../objects/table';
 
 /**
+ * Hyperlink data for PDF generation.
+ */
+export interface HyperlinkInfo {
+  url: string;
+  startIndex: number;
+  endIndex: number;
+}
+
+/**
  * Snapshot of flowed content for PDF generation.
  */
 export interface FlowedContentSnapshot {
   body: FlowedPage[];
   header: FlowedPage | null;
   footer: FlowedPage | null;
+  bodyHyperlinks?: HyperlinkInfo[];
+  headerHyperlinks?: HyperlinkInfo[];
+  footerHyperlinks?: HyperlinkInfo[];
 }
 
 /**
@@ -98,7 +110,8 @@ export class PDFGenerator {
             headerBounds,
             dimensions.height,
             pageIndex,
-            document.pages.length
+            document.pages.length,
+            flowedContent.headerHyperlinks
           );
         }
 
@@ -110,7 +123,8 @@ export class PDFGenerator {
             contentBounds,
             dimensions.height,
             pageIndex,
-            document.pages.length
+            document.pages.length,
+            flowedContent.bodyHyperlinks
           );
         }
 
@@ -129,7 +143,8 @@ export class PDFGenerator {
             footerBounds,
             dimensions.height,
             pageIndex,
-            document.pages.length
+            document.pages.length,
+            flowedContent.footerHyperlinks
           );
         }
       } catch (pageError) {
@@ -225,7 +240,8 @@ export class PDFGenerator {
     bounds: { x: number; y: number; width: number; height: number },
     pageHeight: number,
     pageIndex: number,
-    totalPages: number
+    totalPages: number,
+    hyperlinks?: HyperlinkInfo[]
   ): Promise<void> {
     let y = bounds.y;
 
@@ -234,6 +250,16 @@ export class PDFGenerator {
       object: BaseEmbeddedObject;
       anchorX: number;
       anchorY: number;
+    }> = [];
+
+    // Track rendered text positions for hyperlink annotations
+    const renderedRuns: Array<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      startIndex: number;
+      endIndex: number;
     }> = [];
 
     for (const line of flowedPage.lines) {
@@ -269,10 +295,11 @@ export class PDFGenerator {
         const fontSize = formatting.fontSize || 14;
         const color = parseColor(formatting.color || '#000000');
 
+        const textWidth = font.widthOfTextAtSize(safeText, fontSize);
+
         // Draw background if present
         if (formatting.backgroundColor) {
           const bgColor = parseColor(formatting.backgroundColor);
-          const textWidth = font.widthOfTextAtSize(safeText, fontSize);
           drawFilledRect(
             pdfPage,
             runX,
@@ -294,8 +321,20 @@ export class PDFGenerator {
           color
         });
 
+        // Track this run's position for hyperlink annotations
+        if (hyperlinks && hyperlinks.length > 0) {
+          renderedRuns.push({
+            x: runX,
+            y: y,
+            width: textWidth,
+            height: line.height,
+            startIndex: run.startIndex,
+            endIndex: run.endIndex
+          });
+        }
+
         // Advance X position
-        runX += font.widthOfTextAtSize(safeText, fontSize);
+        runX += textWidth;
 
         // Add extra word spacing for justified text
         if (line.extraWordSpacing && safeText.includes(' ')) {
@@ -357,6 +396,75 @@ export class PDFGenerator {
 
     // Render relative objects last (so they appear on top of text)
     await this.renderRelativeObjects(pdfPage, relativeObjects, pageHeight, pageIndex, totalPages);
+
+    // Create hyperlink annotations
+    if (hyperlinks && hyperlinks.length > 0 && renderedRuns.length > 0) {
+      this.createHyperlinkAnnotations(pdfPage, renderedRuns, hyperlinks, pageHeight);
+    }
+  }
+
+  /**
+   * Create PDF link annotations for hyperlinks.
+   * Matches hyperlink ranges with rendered text positions and creates clickable links.
+   */
+  private createHyperlinkAnnotations(
+    pdfPage: PDFPage,
+    renderedRuns: Array<{ x: number; y: number; width: number; height: number; startIndex: number; endIndex: number }>,
+    hyperlinks: HyperlinkInfo[],
+    pageHeight: number
+  ): void {
+    for (const hyperlink of hyperlinks) {
+      // Find all runs that overlap with this hyperlink
+      const overlappingRuns = renderedRuns.filter(run =>
+        run.startIndex < hyperlink.endIndex && run.endIndex > hyperlink.startIndex
+      );
+
+      if (overlappingRuns.length === 0) continue;
+
+      // Calculate bounding box for the hyperlink
+      // For multi-line hyperlinks, we create separate annotations for each line segment
+      // Group runs by their Y position (same line)
+      const runsByLine = new Map<number, typeof overlappingRuns>();
+      for (const run of overlappingRuns) {
+        const key = run.y;
+        if (!runsByLine.has(key)) {
+          runsByLine.set(key, []);
+        }
+        runsByLine.get(key)!.push(run);
+      }
+
+      // Create an annotation for each line segment
+      for (const [lineY, lineRuns] of runsByLine) {
+        // Calculate bounds for this line's portion of the hyperlink
+        const minX = Math.min(...lineRuns.map(r => r.x));
+        const maxX = Math.max(...lineRuns.map(r => r.x + r.width));
+        const height = lineRuns[0].height;
+
+        // Transform to PDF coordinates (Y is inverted)
+        const pdfY = pageHeight - lineY - height;
+
+        // Create link annotation using pdf-lib
+        const linkAnnotation = pdfPage.doc.context.obj({
+          Type: 'Annot',
+          Subtype: 'Link',
+          Rect: [minX, pdfY, maxX, pdfY + height],
+          Border: [0, 0, 0], // No visible border
+          A: {
+            Type: 'Action',
+            S: 'URI',
+            URI: hyperlink.url
+          }
+        });
+
+        // Add annotation to page
+        const annotations = pdfPage.node.get(pdfPage.doc.context.obj('Annots'));
+        if (annotations) {
+          (annotations as any).push(linkAnnotation);
+        } else {
+          pdfPage.node.set(pdfPage.doc.context.obj('Annots'), pdfPage.doc.context.obj([linkAnnotation]));
+        }
+      }
+    }
   }
 
   /**
