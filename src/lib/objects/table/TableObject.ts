@@ -491,7 +491,9 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       }
       x += width;
     }
-    if (targetCol === -1) return null;
+    if (targetCol === -1) {
+      return null;
+    }
 
     // Calculate row positions
     let y = 0;
@@ -646,6 +648,20 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       row.removeCell(colIndex);
     }
 
+    // Clear selection if it references the deleted column or is now out of bounds
+    if (this._selectedRange) {
+      const { start, end } = this._selectedRange;
+      if (start.col >= this._columns.length || end.col >= this._columns.length ||
+          (colIndex >= start.col && colIndex <= end.col)) {
+        this._selectedRange = null;
+      }
+    }
+
+    // Clear focused cell if it references the deleted column or is now out of bounds
+    if (this._focusedCell && this._focusedCell.col >= this._columns.length) {
+      this._focusedCell = null;
+    }
+
     this._layoutDirty = true;
     this.updateCoveredCells();
     this.updateSizeFromLayout();
@@ -711,6 +727,20 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
     // Adjust row loop indices
     this.shiftRowLoopIndices(rowIndex, -1);
+
+    // Clear selection if it references the deleted row or is now out of bounds
+    if (this._selectedRange) {
+      const { start, end } = this._selectedRange;
+      if (start.row >= this._rows.length || end.row >= this._rows.length ||
+          (rowIndex >= start.row && rowIndex <= end.row)) {
+        this._selectedRange = null;
+      }
+    }
+
+    // Clear focused cell if it references the deleted row or is now out of bounds
+    if (this._focusedCell && this._focusedCell.row >= this._rows.length) {
+      this._focusedCell = null;
+    }
 
     this._layoutDirty = true;
     this.updateCoveredCells();
@@ -901,6 +931,21 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
   removeRowsInRange(startIndex: number, endIndex: number): TableRow[] {
     const count = endIndex - startIndex + 1;
     const removed = this._rows.splice(startIndex, count);
+
+    // Clear selection if it overlaps with removed rows or is now out of bounds
+    if (this._selectedRange) {
+      const { start, end } = this._selectedRange;
+      if (start.row >= this._rows.length || end.row >= this._rows.length ||
+          (start.row <= endIndex && end.row >= startIndex)) {
+        this._selectedRange = null;
+      }
+    }
+
+    // Clear focused cell if it's now out of bounds
+    if (this._focusedCell && this._focusedCell.row >= this._rows.length) {
+      this._focusedCell = null;
+    }
+
     this._layoutDirty = true;
     this.updateCoveredCells();
     return removed;
@@ -1391,7 +1436,84 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       y += row.calculatedHeight;
     }
 
+    // Render cell range selection highlight for this slice
+    if (this._selectedRange) {
+      this.renderRangeSelectionForSlice(ctx, slice, pageLayout);
+    }
+
     // Note: Selection border is drawn by FlowingTextRenderer with correct slice height
+  }
+
+  /**
+   * Render range selection highlight for a specific slice.
+   * Only renders the portion of the selection that's visible in this slice.
+   */
+  private renderRangeSelectionForSlice(
+    ctx: CanvasRenderingContext2D,
+    slice: TablePageSlice,
+    pageLayout: TablePageLayout
+  ): void {
+    if (!this._selectedRange) return;
+
+    const { start, end } = this._selectedRange;
+    const columnPositions = this.getColumnPositions();
+    const columnWidths = this.getColumnWidths();
+
+    // Calculate X bounds (same for all slices)
+    const x1 = columnPositions[start.col];
+    const x2 = columnPositions[end.col] + columnWidths[end.col];
+
+    // Build a map of row index -> Y position in this slice's coordinate system
+    const rowYInSlice: Map<number, number> = new Map();
+    let y = 0;
+
+    // On continuation pages, header rows are at the top
+    if (slice.isContinuation && pageLayout.headerRowIndices.length > 0) {
+      for (const headerRowIdx of pageLayout.headerRowIndices) {
+        const row = this._rows[headerRowIdx];
+        if (row) {
+          rowYInSlice.set(headerRowIdx, y);
+          y += row.calculatedHeight;
+        }
+      }
+    }
+
+    // Data rows for this slice
+    for (let rowIdx = slice.startRow; rowIdx < slice.endRow; rowIdx++) {
+      const row = this._rows[rowIdx];
+      if (!row) continue;
+      if (slice.isContinuation && row.isHeader) continue; // Skip headers, already added
+      rowYInSlice.set(rowIdx, y);
+      y += row.calculatedHeight;
+    }
+
+    // Check if any selected rows are visible in this slice
+    let y1: number | null = null;
+    let y2: number | null = null;
+
+    for (let rowIdx = start.row; rowIdx <= end.row; rowIdx++) {
+      const rowY = rowYInSlice.get(rowIdx);
+      if (rowY !== undefined) {
+        const row = this._rows[rowIdx];
+        if (row) {
+          if (y1 === null) y1 = rowY;
+          y2 = rowY + row.calculatedHeight;
+        }
+      }
+    }
+
+    // If no selected rows are visible in this slice, don't render
+    if (y1 === null || y2 === null) return;
+
+    // Draw selection highlight
+    ctx.fillStyle = 'rgba(0, 120, 215, 0.2)';
+    ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+
+    // Draw selection border
+    ctx.strokeStyle = 'rgba(0, 120, 215, 0.8)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    ctx.strokeRect(x1 + 1, y1 + 1, x2 - x1 - 2, y2 - y1 - 2);
   }
 
   /**
@@ -1598,6 +1720,8 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
   blur(): void {
     this.editing = false;
+    // Clear cell range selection when table loses focus
+    this.clearSelection();
     this.emit('blur', {});
   }
 

@@ -122,6 +122,7 @@ export class ImageObject extends BaseEmbeddedObject {
 
     let sx = 0, sy = 0, sw = imgWidth, sh = imgHeight;
     let dx = 0, dy = 0, dw = width, dh = height;
+    let needsClipping = false;
 
     switch (this._fit) {
       case 'fill':
@@ -149,11 +150,15 @@ export class ImageObject extends BaseEmbeddedObject {
       }
 
       case 'none':
-        // Original size, centered
+        // Original size, centered - clip to box bounds if image is larger
         dw = imgWidth;
         dh = imgHeight;
         dx = (width - imgWidth) / 2;
         dy = (height - imgHeight) / 2;
+        // Need clipping if image extends beyond bounds
+        if (imgWidth > width || imgHeight > height) {
+          needsClipping = true;
+        }
         break;
 
       case 'tile':
@@ -162,7 +167,18 @@ export class ImageObject extends BaseEmbeddedObject {
         return; // Early return, tiling handles its own drawing
     }
 
+    if (needsClipping) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, width, height);
+      ctx.clip();
+    }
+
     ctx.drawImage(this._image, sx, sy, sw, sh, dx, dy, dw, dh);
+
+    if (needsClipping) {
+      ctx.restore();
+    }
   }
 
   private drawTiledImage(ctx: CanvasRenderingContext2D, width: number, height: number): void {
