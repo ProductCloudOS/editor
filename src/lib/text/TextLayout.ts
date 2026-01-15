@@ -190,11 +190,14 @@ export class TextLayout {
       const emptyLine = this.createEmptyLine(startIndex, formatting, alignment);
       // Add list marker to empty line if it's a list item
       if (listFormatting) {
+        // Get formatting for the empty line (inherited from previous position)
+        const markerFormatting = formatting.getFormattingAt(startIndex > 0 ? startIndex - 1 : startIndex);
         emptyLine.listMarker = {
           text: markerText,
           width: markerWidth,
           indent: listIndent,
-          isFirstLineOfListItem: true
+          isFirstLineOfListItem: true,
+          formatting: markerFormatting
         };
       }
       lines.push(emptyLine);

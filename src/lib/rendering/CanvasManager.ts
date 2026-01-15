@@ -168,6 +168,28 @@ export class CanvasManager extends EventEmitter {
     this.contexts.clear();
   }
 
+  /**
+   * Update canvas sizes to match current page dimensions.
+   * Call this when page size or orientation changes.
+   */
+  updateCanvasSizes(): void {
+    this.document.pages.forEach(page => {
+      const canvas = this.canvases.get(page.id);
+      if (!canvas) return;
+
+      const dimensions = page.getPageDimensions();
+
+      // Only update if dimensions have changed
+      if (canvas.width !== dimensions.width || canvas.height !== dimensions.height) {
+        canvas.width = dimensions.width;
+        canvas.height = dimensions.height;
+      }
+    });
+
+    // Update zoom scale to account for new dimensions
+    this.updateCanvasScale();
+  }
+
   render(): void {
     this.document.pages.forEach(page => {
       const ctx = this.contexts.get(page.id);
@@ -574,6 +596,13 @@ export class CanvasManager extends EventEmitter {
     if (embeddedObjectHit && embeddedObjectHit.data.type === 'embedded-object') {
       const object = embeddedObjectHit.data.object;
 
+      // Check which section the object belongs to - only interact if in active section
+      const objectSection = this.getSectionForEmbeddedObject(object);
+      if (objectSection && objectSection !== this._activeSection) {
+        // Object is in a different section - ignore the interaction
+        return;
+      }
+
       // For relative-positioned objects, prepare for potential drag
       // Don't start drag immediately - wait for threshold to allow double-click
       if (object.position === 'relative') {
@@ -764,19 +793,46 @@ export class CanvasManager extends EventEmitter {
     // Handle table cell selection drag
     if (this.isSelectingTableCells && this.tableCellSelectionStart && this.tableCellSelectionTable) {
       const table = this.tableCellSelectionTable;
-      if (table.renderedPosition) {
-        const localPoint = {
-          x: point.x - table.renderedPosition.x,
-          y: point.y - table.renderedPosition.y
-        };
-        const cellAddr = table.getCellAtPoint(localPoint);
-        if (cellAddr) {
-          // Update selection range
-          table.selectRange({
-            start: this.tableCellSelectionStart,
-            end: cellAddr
-          });
-          this.render();
+      const currentPageIndex = this.document.pages.findIndex(p => p.id === pageId);
+
+      // Get the slice for the current page (for multi-page tables)
+      const slice = table.getRenderedSlice(currentPageIndex);
+      const tablePosition = slice?.position || table.renderedPosition;
+      const sliceHeight = slice?.height || table.height;
+
+      if (tablePosition) {
+        // Check if point is within the table slice on this page
+        const isInsideTable =
+          point.x >= tablePosition.x &&
+          point.x <= tablePosition.x + table.width &&
+          point.y >= tablePosition.y &&
+          point.y <= tablePosition.y + sliceHeight;
+
+        if (isInsideTable) {
+          const localPoint = {
+            x: point.x - tablePosition.x,
+            y: point.y - tablePosition.y
+          };
+
+          // If this is a continuation slice, adjust y for the slice offset
+          if (slice && (slice.slicePosition === 'middle' || slice.slicePosition === 'last')) {
+            const headerHeight = slice.headerHeight;
+            if (localPoint.y >= headerHeight) {
+              // Click is in the data rows area - transform coordinates
+              localPoint.y = slice.yOffset + (localPoint.y - headerHeight);
+            }
+            // If y < headerHeight, click is in repeated header - no adjustment needed
+          }
+
+          const cellAddr = table.getCellAtPoint(localPoint);
+          if (cellAddr) {
+            // Update selection range
+            table.selectRange({
+              start: this.tableCellSelectionStart,
+              end: cellAddr
+            });
+            this.render();
+          }
         }
       }
       e.preventDefault();
@@ -908,6 +964,11 @@ export class CanvasManager extends EventEmitter {
           });
         }
       }
+
+      // Re-render to update rendered positions, then update resize handle hit targets
+      // This fixes the bug where resize handles don't work after a resize operation
+      this.render();
+      this.updateResizeHandleHitTargets();
     }
     this.isResizing = false;
     this.dragStart = null;
@@ -1099,13 +1160,24 @@ export class CanvasManager extends EventEmitter {
     const embeddedObjectHit = hitTestManager.queryByType(clickedPageIndex, point, 'embedded-object');
 
     if (embeddedObjectHit && embeddedObjectHit.data.type === 'embedded-object') {
-      // Clicked on embedded object - clear text selection and select it
+      const clickedObject = embeddedObjectHit.data.object;
+
+      // Check which section the object belongs to
+      const objectSection = this.getSectionForEmbeddedObject(clickedObject);
+
+      // Only allow selection if object is in the active section
+      if (objectSection && objectSection !== this._activeSection) {
+        // Object is in a different section - ignore the click
+        return;
+      }
+
+      // Clicked on embedded object in the active section - clear text selection and select it
       const activeFlowingContent = this.getFlowingContentForActiveSection();
       if (activeFlowingContent) {
         activeFlowingContent.clearSelection();
       }
       this.clearSelection();
-      this.selectInlineElement(embeddedObjectHit.data.object);
+      this.selectInlineElement(clickedObject);
       return;
     }
 
@@ -1388,10 +1460,55 @@ export class CanvasManager extends EventEmitter {
     const embeddedObjectHit = hitTestManager.queryByType(pageIndex, point, 'embedded-object');
     if (embeddedObjectHit && embeddedObjectHit.data.type === 'embedded-object') {
       const object = embeddedObjectHit.data.object;
-      if (object.position === 'relative') {
-        canvas.style.cursor = 'move';
-        return;
+
+      // Only show interactive cursors for objects in the active section
+      const objectSection = this.getSectionForEmbeddedObject(object);
+      if (objectSection && objectSection !== this._activeSection) {
+        // Object is in a different section - don't show interactive cursor
+        // Fall through to text region detection
+      } else {
+        if (object.position === 'relative') {
+          canvas.style.cursor = 'move';
+          return;
+        }
+        // Show text cursor for text boxes
+        if (object instanceof TextBoxObject) {
+          canvas.style.cursor = 'text';
+          return;
+        }
       }
+    }
+
+    // Check for table cells (show text cursor)
+    const tableCellHit = hitTestManager.queryByType(pageIndex, point, 'table-cell');
+    if (tableCellHit && tableCellHit.data.type === 'table-cell') {
+      canvas.style.cursor = 'text';
+      return;
+    }
+
+    // Check for text regions (body, header, footer - show text cursor)
+    const textRegionHit = hitTestManager.queryByType(pageIndex, point, 'text-region');
+    if (textRegionHit && textRegionHit.data.type === 'text-region') {
+      canvas.style.cursor = 'text';
+      return;
+    }
+
+    // Also check if point is within any editable region (body, header, footer)
+    // This catches cases where text region hit targets may not cover empty space
+    const bodyRegion = this.regionManager.getBodyRegion();
+    if (bodyRegion && bodyRegion.containsPointInRegion(point, pageIndex)) {
+      canvas.style.cursor = 'text';
+      return;
+    }
+    const headerRegion = this.regionManager.getHeaderRegion();
+    if (headerRegion && headerRegion.containsPointInRegion(point, pageIndex)) {
+      canvas.style.cursor = 'text';
+      return;
+    }
+    const footerRegion = this.regionManager.getFooterRegion();
+    if (footerRegion && footerRegion.containsPointInRegion(point, pageIndex)) {
+      canvas.style.cursor = 'text';
+      return;
     }
 
     canvas.style.cursor = 'default';
@@ -1599,6 +1716,10 @@ export class CanvasManager extends EventEmitter {
   }
 
   selectBaseEmbeddedObject(embeddedObject: any, isPartOfRangeSelection: boolean = false): void {
+    // Clear focus from any currently focused control (e.g., header/footer text)
+    // This ensures cursor stops blinking in the previous section
+    this.setFocus(null);
+
     // Mark the embedded object as selected
     const obj = embeddedObject.object || embeddedObject;
     obj.selected = true;
@@ -2133,6 +2254,28 @@ export class CanvasManager extends EventEmitter {
       this.render();
       this.emit('section-focus-changed', { section, previousSection });
     }
+  }
+
+  /**
+   * Determine which section (body/header/footer) an embedded object belongs to.
+   */
+  private getSectionForEmbeddedObject(object: BaseEmbeddedObject): EditingSection | null {
+    const sectionMappings: Array<{ content: any; section: EditingSection }> = [
+      { content: this.document.bodyFlowingContent, section: 'body' as EditingSection },
+      { content: this.document.headerFlowingContent, section: 'header' as EditingSection },
+      { content: this.document.footerFlowingContent, section: 'footer' as EditingSection }
+    ];
+
+    for (const { content, section } of sectionMappings) {
+      if (!content) continue;
+      const embeddedObjects = content.getEmbeddedObjects();
+      for (const [, embeddedObj] of embeddedObjects.entries()) {
+        if (embeddedObj.id === object.id) {
+          return section;
+        }
+      }
+    }
+    return null;
   }
 
   /**

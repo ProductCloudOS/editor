@@ -122,6 +122,8 @@ function setupEditorEventLogging(): void {
   editor.on('document-change', (event: any) => {
     console.log('[Editor Event] document-change', event);
     updateDocumentInfo();
+    // Update list buttons in case list formatting changed (e.g., via Shift+Tab)
+    updateListButtons();
   });
 
   editor.on('document-loaded', (event: any) => {
@@ -227,6 +229,8 @@ function setupEditorEventLogging(): void {
 
   editor.on('cursor-changed', (event: any) => {
     console.log('[Editor Event] cursor-changed', event);
+    // Update list buttons when cursor moves to reflect current paragraph's formatting
+    updateListButtons();
   });
 
   // Layout events
@@ -949,6 +953,8 @@ function loadTMDSample(): void {
     headerCell1.content = 'Key Attributes of the NOW Finance Secured Personal Loan that make the product consistent with the likely objectives, financial situation and needs of consumers in the target market.';
     headerCell1.flowingContent.applyFormatting(0, headerCell1.content.length, { fontStyle: 'italic', fontWeight: 'bold' });
   }
+  // Mark row 0 as a header row so it repeats on page breaks
+  mainTable.setHeaderRow(0, true);
 
   // Row 1: Objectives section header
   const objHeaderCell0 = mainTable.getCell(1, 0);
@@ -1649,7 +1655,7 @@ function insertEmbeddedTextBox(): void {
       id: `textbox_${Date.now()}`,
       textIndex: 0,
       size: { width: 200, height: 48 },
-      content: 'Text Box',
+      content: '',
       fontFamily: 'Arial',
       fontSize: 12,
       color: '#000000'
@@ -1697,22 +1703,13 @@ function insertEmbeddedTable(): void {
       defaultBorderColor: '#000000'
     });
 
-    // Add some sample content to cells
-    for (let row = 0; row < 3; row++) {
-      for (let col = 0; col < 3; col++) {
-        const cell = tableObject.getCell(row, col);
-        if (cell) {
-          if (row === 0) {
-            cell.content = `Header ${col + 1}`;
-            cell.backgroundColor = '#f0f0f0';
-          } else {
-            cell.content = `Cell ${row},${col + 1}`;
-          }
-        }
+    // Set up the first row as a header row with header styling (but no default text)
+    for (let col = 0; col < 3; col++) {
+      const cell = tableObject.getCell(0, col);
+      if (cell) {
+        cell.backgroundColor = '#f0f0f0';
       }
     }
-
-    // Set the first row as a header row (will repeat on page breaks)
     tableObject.setHeaderRow(0, true);
 
     editor.insertEmbeddedObject(tableObject, 'inline');
@@ -3650,7 +3647,14 @@ function tablePaneAddRowBefore(): void {
   if (!currentSelectedTable || !editor) return;
 
   const focusedCell = currentSelectedTable.focusedCell;
-  const insertIndex = focusedCell ? focusedCell.row : 0;
+  let insertIndex = focusedCell ? focusedCell.row : 0;
+
+  // Ensure we don't insert before header rows - find first non-header row
+  const headerRowCount = currentSelectedTable.headerRowCount;
+  if (insertIndex < headerRowCount) {
+    insertIndex = headerRowCount;
+  }
+
   // Source row is the current row (which shifts down after insert)
   const sourceRowIndex = focusedCell ? insertIndex + 1 : undefined;
 
@@ -3666,8 +3670,15 @@ function tablePaneAddRowAfter(): void {
 
   const focusedCell = currentSelectedTable.focusedCell;
   const insertIndex = focusedCell ? focusedCell.row + 1 : currentSelectedTable.rowCount;
-  // Source row is the current row (before the new row)
-  const sourceRowIndex = focusedCell ? focusedCell.row : undefined;
+
+  // Source row is the current row, but don't use header rows as styling sources
+  let sourceRowIndex: number | undefined;
+  if (focusedCell) {
+    const sourceRow = currentSelectedTable.rows[focusedCell.row];
+    if (sourceRow && !sourceRow.isHeader) {
+      sourceRowIndex = focusedCell.row;
+    }
+  }
 
   // Table operations are automatically tracked for undo via ObjectMutationObserver
   currentSelectedTable.insertRow(insertIndex);
@@ -3690,6 +3701,13 @@ function tablePaneDeleteRow(): void {
     return;
   }
 
+  // Prevent deleting header rows
+  const row = currentSelectedTable.rows[focusedCell.row];
+  if (row?.isHeader) {
+    updateStatus('Cannot delete header rows');
+    return;
+  }
+
   editor.tableRemoveRow(currentSelectedTable, focusedCell.row);
   updateTablePane(currentSelectedTable);
   updateStatus(`Deleted row ${focusedCell.row + 1}`);
@@ -3699,7 +3717,14 @@ function tablePaneAddColBefore(): void {
   if (!currentSelectedTable || !editor) return;
 
   const focusedCell = currentSelectedTable.focusedCell;
-  const insertIndex = focusedCell ? focusedCell.col : 0;
+  let insertIndex = focusedCell ? focusedCell.col : 0;
+
+  // Ensure we don't insert before header columns - find first non-header column
+  const headerColCount = currentSelectedTable.headerColumnCount;
+  if (insertIndex < headerColCount) {
+    insertIndex = headerColCount;
+  }
+
   // Source column is the current column (which shifts right after insert)
   const sourceColIndex = focusedCell ? insertIndex + 1 : undefined;
 
@@ -3736,6 +3761,13 @@ function tablePaneDeleteCol(): void {
 
   if (currentSelectedTable.columnCount <= 1) {
     updateStatus('Cannot delete the last column');
+    return;
+  }
+
+  // Prevent deleting header columns
+  const col = currentSelectedTable.columns[focusedCell.col];
+  if (col?.isHeader) {
+    updateStatus('Cannot delete header columns');
     return;
   }
 

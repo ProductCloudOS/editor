@@ -684,7 +684,9 @@ export class FlowingTextRenderer extends EventEmitter {
     const flowingContent = region.flowingContent;
 
     // Get cursor position for field selection highlighting
-    const cursorTextIndex = flowingContent.getCursorPosition();
+    // Only use cursor position if the content has focus (otherwise fields stay "selected")
+    const hasFocus = flowingContent.hasFocus();
+    const cursorTextIndex = hasFocus ? flowingContent.getCursorPosition() : undefined;
 
     // Setup clipping if requested (useful for text boxes)
     if (clipToBounds) {
@@ -729,7 +731,7 @@ export class FlowingTextRenderer extends EventEmitter {
 
     // Render cursor if this region is active and cursor should be shown
     if (renderCursor && flowingContent.hasFocus() && flowingContent.isCursorVisible()) {
-      this.renderRegionCursor(flowedLines, ctx, bounds, maxWidth, cursorTextIndex);
+      this.renderRegionCursor(flowedLines, ctx, bounds, maxWidth, flowingContent.getCursorPosition());
     }
 
     if (clipToBounds) {
@@ -873,8 +875,10 @@ export class FlowingTextRenderer extends EventEmitter {
     }
 
     // Get cursor position from the specified FlowingTextContent, or fall back to body
+    // Only use cursor position for field selection if the content has focus
     const contentForCursor = flowingContent || this.document.bodyFlowingContent;
-    const cursorTextIndex = contentForCursor ? contentForCursor.getCursorPosition() : 0;
+    const hasFocus = contentForCursor?.hasFocus() ?? false;
+    const cursorTextIndex = hasFocus && contentForCursor ? contentForCursor.getCursorPosition() : undefined;
 
     // Get total page count for page count fields
     const firstPage = this.document.pages[0];
@@ -989,7 +993,7 @@ export class FlowingTextRenderer extends EventEmitter {
 
     // Render list marker if this is the first line of a list item
     if (line.listMarker?.isFirstLineOfListItem && line.listMarker.text) {
-      this.renderListMarker(line.listMarker, ctx, position, line.baseline, line.runs[0]?.formatting);
+      this.renderListMarker(line.listMarker, ctx, position, line.baseline, line.runs[0]?.formatting || line.listMarker.formatting);
     }
 
     // Create maps for quick lookup by text index
@@ -2452,12 +2456,15 @@ export class FlowingTextRenderer extends EventEmitter {
     for (const line of flowedPage.lines) {
       if (this.lineContainsSelection(line, this.selectedText)) {
         const selectionBounds = this.getSelectionBoundsInLine(line, this.selectedText);
-        // Add alignment offset to position the selection correctly
-        const alignmentOffset = this.getAlignmentOffset(line, bounds.width);
-        // Account for list indentation
+        // Account for list indentation - must match renderFlowedLine calculation
         const listIndent = line.listMarker?.indent ?? 0;
+        // Calculate alignment offset using effective width (excluding list indent)
+        // This matches how renderFlowedLine calculates alignment
+        const effectiveMaxWidth = bounds.width - listIndent;
+        const alignmentOffset = this.getAlignmentOffset(line, effectiveMaxWidth);
+        const baseX = bounds.x + listIndent;
         ctx.fillRect(
-          bounds.x + alignmentOffset + listIndent + selectionBounds.x,
+          baseX + alignmentOffset + selectionBounds.x,
           y,
           selectionBounds.width,
           line.height
@@ -3016,20 +3023,43 @@ export class FlowingTextRenderer extends EventEmitter {
 
   /**
    * Get a complete snapshot of all flowed content for PDF export.
-   * Returns body pages, header, and footer content.
+   * Returns body pages, header, footer content, and hyperlinks.
    */
   getFlowedPagesSnapshot(): {
     body: FlowedPage[];
     header: FlowedPage | null;
     footer: FlowedPage | null;
+    bodyHyperlinks?: { url: string; startIndex: number; endIndex: number }[];
+    headerHyperlinks?: { url: string; startIndex: number; endIndex: number }[];
+    footerHyperlinks?: { url: string; startIndex: number; endIndex: number }[];
   } {
     const firstPage = this.document.pages[0];
     const bodyPages = firstPage ? this.flowedPages.get(firstPage.id) || [] : [];
 
+    // Extract hyperlinks from each content area
+    const bodyHyperlinks = this.document.bodyFlowingContent?.getAllHyperlinks().map(h => ({
+      url: h.url,
+      startIndex: h.startIndex,
+      endIndex: h.endIndex
+    }));
+    const headerHyperlinks = this.document.headerFlowingContent?.getAllHyperlinks().map(h => ({
+      url: h.url,
+      startIndex: h.startIndex,
+      endIndex: h.endIndex
+    }));
+    const footerHyperlinks = this.document.footerFlowingContent?.getAllHyperlinks().map(h => ({
+      url: h.url,
+      startIndex: h.startIndex,
+      endIndex: h.endIndex
+    }));
+
     return {
       body: bodyPages,
       header: this.headerFlowedPage,
-      footer: this.footerFlowedPage
+      footer: this.footerFlowedPage,
+      bodyHyperlinks: bodyHyperlinks?.length ? bodyHyperlinks : undefined,
+      headerHyperlinks: headerHyperlinks?.length ? headerHyperlinks : undefined,
+      footerHyperlinks: footerHyperlinks?.length ? footerHyperlinks : undefined
     };
   }
 

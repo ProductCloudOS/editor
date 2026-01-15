@@ -254,6 +254,7 @@ export interface ListMarker {
   width: number;          // Width of marker area
   indent: number;         // Total left indent for this line
   isFirstLineOfListItem: boolean;  // Only first line shows marker
+  formatting?: TextFormattingStyle;  // Formatting for the marker (used for empty lines)
 }
 
 /**

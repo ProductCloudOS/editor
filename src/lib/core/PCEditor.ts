@@ -138,8 +138,12 @@ export class PCEditor extends EventEmitter {
     });
 
     this.document.on('settings-changed', () => {
-      // When settings change (like margins), we need to check if pages need to be added/removed
+      // When settings change (like page size, orientation, margins), we need to:
+      // 1. Update canvas sizes to match new page dimensions
+      // 2. Re-render the content
+      // 3. Check if pages need to be added/removed
       if (this.canvasManager) {
+        this.canvasManager.updateCanvasSizes();
         this.canvasManager.render();
         // Defer the page check to allow reflow to complete
         setTimeout(() => {
