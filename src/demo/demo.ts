@@ -57,8 +57,8 @@ function initializeEditor(): void {
 
   editor.on('ready', () => {
     console.log('[Editor Event] ready');
-    // Add some initial flowing text to demonstrate the feature
-    editor.setFlowingText('Welcome to PC Editor!\n\nThis is a document layout engine with flowing text support. Click in the text to position your cursor, then use the toolbar buttons to insert embedded content.\n\nTry inserting an image, text box, or substitution field at the cursor position. You can also use Float Left/Right to position images alongside text.\n\nThe text will automatically reflow around embedded content and across multiple pages as needed.');
+    // Insert a welcome message with demo content
+    insertWelcomeContent();
     loadDocumentSettings();
     initializeRulers();
     initializeLibraryPanes();
@@ -322,7 +322,6 @@ function setupEventHandlers(): void {
 
   // Document controls
   document.getElementById('load-sample')?.addEventListener('click', loadSampleDocument);
-  document.getElementById('load-tmd-sample')?.addEventListener('click', loadTMDSample);
   document.getElementById('clear-doc')?.addEventListener('click', clearDocument);
 
   // Undo/Redo controls
@@ -399,6 +398,110 @@ function setupEventHandlers(): void {
   // loop, textbox, image, table) are now handled by library panes in src/lib/panes/
 }
 
+/**
+ * Insert welcome content when the demo starts.
+ * Demonstrates basic editing features without overwhelming the user.
+ */
+function insertWelcomeContent(): void {
+  if (!editor) return;
+
+  // Set a simple header and footer with page number field
+  editor.setHeaderText('PC Editor Demo');
+  editor.setFooterText('Page ');
+
+  // Insert page number field in footer
+  editor.setActiveSection('footer');
+  editor.setCursorPosition(5); // After "Page "
+  editor.insertPageNumberField();
+  editor.setActiveSection('body');
+
+  // Build welcome content
+  editor.setFlowingText('Welcome to PC Editor\n\n');
+
+  // Format the title
+  editor.applyFormattingWithFallback(0, 20, { fontWeight: 'bold', fontSize: 24 });
+
+  const getTextLength = () => editor.getFlowingText().length;
+
+  // Introduction
+  editor.setFlowingText(editor.getFlowingText() +
+    'PC Editor is a document layout engine that supports rich text editing, embedded objects, and data-driven content.\n\n');
+
+  // Getting Started section
+  const gettingStartedPos = getTextLength();
+  editor.setFlowingText(editor.getFlowingText() + 'Getting Started\n\n');
+  editor.applyFormattingWithFallback(gettingStartedPos, gettingStartedPos + 15, { fontWeight: 'bold', fontSize: 16 });
+
+  editor.setFlowingText(editor.getFlowingText() +
+    'Click anywhere in this text to position your cursor and start typing. ' +
+    'Use the Formatting pane on the left to change text styles, alignment, and colors.\n\n');
+
+  // Features section
+  const featuresPos = getTextLength();
+  editor.setFlowingText(editor.getFlowingText() + 'Key Features\n\n');
+  editor.applyFormattingWithFallback(featuresPos, featuresPos + 12, { fontWeight: 'bold', fontSize: 16 });
+
+  // Insert a sample table to demonstrate tables
+  editor.setCursorPosition(getTextLength());
+  const featureTable = new TableObject({
+    id: `welcome_table_${Date.now()}`,
+    textIndex: 0,
+    size: { width: 400, height: 120 },
+    rows: 4,
+    columns: 2,
+    columnWidths: [150, 250],
+    defaultFontFamily: 'Arial',
+    defaultFontSize: 11,
+    defaultColor: '#000000',
+    defaultCellPadding: 6,
+    defaultBorderWidth: 1,
+    defaultBorderColor: '#cccccc'
+  });
+
+  // Header row
+  const headerCell0 = featureTable.getCell(0, 0);
+  const headerCell1 = featureTable.getCell(0, 1);
+  if (headerCell0) { headerCell0.content = 'Feature'; headerCell0.backgroundColor = '#f0f0f0'; }
+  if (headerCell1) { headerCell1.content = 'Description'; headerCell1.backgroundColor = '#f0f0f0'; }
+  featureTable.setHeaderRow(0, true);
+
+  // Data rows
+  const row1col0 = featureTable.getCell(1, 0);
+  const row1col1 = featureTable.getCell(1, 1);
+  if (row1col0) row1col0.content = 'Text Formatting';
+  if (row1col1) row1col1.content = 'Bold, italic, fonts, colors, alignment';
+
+  const row2col0 = featureTable.getCell(2, 0);
+  const row2col1 = featureTable.getCell(2, 1);
+  if (row2col0) row2col0.content = 'Tables & Images';
+  if (row2col1) row2col1.content = 'Insert via the Insert menu';
+
+  const row3col0 = featureTable.getCell(3, 0);
+  const row3col1 = featureTable.getCell(3, 1);
+  if (row3col0) row3col0.content = 'Data Merge';
+  if (row3col1) row3col1.content = 'Substitution fields with JSON data';
+
+  editor.insertEmbeddedObject(featureTable, 'inline');
+
+  // Sample data section
+  editor.setFlowingText(editor.getFlowingText() + '\n\n');
+  const sampleDataPos = getTextLength();
+  editor.setFlowingText(editor.getFlowingText() + 'Try Data Merge\n\n');
+  editor.applyFormattingWithFallback(sampleDataPos, sampleDataPos + 14, { fontWeight: 'bold', fontSize: 16 });
+
+  editor.setFlowingText(editor.getFlowingText() + 'The Merge Data pane contains sample JSON. Insert a substitution field to see it in action: ');
+  editor.setCursorPosition(getTextLength());
+  editor.insertSubstitutionField('customerName');
+  editor.setFlowingText(editor.getFlowingText() + '\n\n');
+
+  // Closing
+  const closingPos = getTextLength();
+  editor.setFlowingText(editor.getFlowingText() + 'Use Samples > Load Sample Document for a more complete demonstration.');
+  editor.applyFormattingWithFallback(closingPos, closingPos + 71, { fontStyle: 'italic', color: '#666666' });
+
+  editor.render();
+}
+
 function loadSampleDocument(): void {
   if (!editor) return;
 
@@ -416,9 +519,14 @@ function loadSampleDocument(): void {
 
   editor.loadDocument(emptyDoc);
 
-  // Set header and footer
+  // Set header and footer with page number field
   editor.setHeaderText('Sample Document - PC Editor Demo');
-  editor.setFooterText('Page 1 | Generated with PC Editor');
+  editor.setFooterText('Page ');
+  editor.setActiveSection('footer');
+  editor.setCursorPosition(5); // After "Page "
+  editor.insertPageNumberField();
+  editor.insertText(' | Generated with PC Editor');
+  editor.setActiveSection('body');
 
   // Helper to get current text length
   const getTextLength = () => editor.getFlowingText().length;
@@ -619,609 +727,6 @@ function loadSampleDocument(): void {
   updateStatus('Sample document loaded with real substitution fields and repeating section');
 }
 
-function loadTMDSample(): void {
-  if (!editor) return;
-
-  // Start with a clean document
-  const emptyDoc: DocumentData = {
-    version: '1.0.0',
-    settings: {
-      pageSize: 'A4',
-      pageOrientation: 'portrait',
-      margins: { top: 20, right: 20, bottom: 20, left: 20 },
-      units: 'mm'
-    },
-    pages: [{ id: 'page_1' }]
-  };
-
-  editor.loadDocument(emptyDoc);
-
-  // Set footer (appears on all pages)
-  editor.setFooterText('LG.003.002 v4.2');
-
-  // Helper to get current text length
-  const getTextLength = () => editor.getFlowingText().length;
-
-  // ===== PAGE 1 =====
-
-  // Title
-  editor.setFlowingText('Target Market Determination: NOW Finance Secured Personal Loan\n\n');
-
-  // Format title - bold and large
-  editor.applyFormattingWithFallback(0, 61, { fontWeight: 'bold', fontSize: 16 });
-
-  // Insert metadata table (Issuer, Start Date, Product)
-  const metadataTable = new TableObject({
-    id: `tmd_metadata_${Date.now()}`,
-    textIndex: 0,
-    size: { width: 530, height: 120 },
-    rows: 3,
-    columns: 2,
-    columnWidths: [90, 440],
-    defaultFontFamily: 'Arial',
-    defaultFontSize: 10,
-    defaultColor: '#000000',
-    defaultCellPadding: 6,
-    defaultBorderWidth: 0,
-    defaultBorderColor: '#ffffff'
-  });
-
-  // Row 0: Issuer
-  const issuerLabelCell = metadataTable.getCell(0, 0);
-  const issuerValueCell = metadataTable.getCell(0, 1);
-  if (issuerLabelCell) {
-    issuerLabelCell.content = 'Issuer:';
-    issuerLabelCell.flowingContent.applyFormatting(0, 7, { fontWeight: 'bold' });
-  }
-  if (issuerValueCell) {
-    issuerValueCell.content = 'Now Finance Group Pty Ltd as agent for NF Finco 2 Pty Ltd (NOW Finance)\nACN 164 213 030 Australian Credit Licence number 425142.';
-    issuerValueCell.flowingContent.applyFormatting(52, 63, { fontWeight: 'bold' });
-  }
-
-  // Row 1: Start Date
-  const startDateLabelCell = metadataTable.getCell(1, 0);
-  const startDateValueCell = metadataTable.getCell(1, 1);
-  if (startDateLabelCell) {
-    startDateLabelCell.content = 'Start Date:';
-    startDateLabelCell.flowingContent.applyFormatting(0, 11, { fontWeight: 'bold' });
-  }
-  if (startDateValueCell) {
-    startDateValueCell.content = '18 November 2025';
-  }
-
-  // Row 2: Product
-  const productLabelCell = metadataTable.getCell(2, 0);
-  const productValueCell = metadataTable.getCell(2, 1);
-  if (productLabelCell) {
-    productLabelCell.content = 'Product:';
-    productLabelCell.flowingContent.applyFormatting(0, 8, { fontWeight: 'bold' });
-  }
-  if (productValueCell) {
-    productValueCell.content = 'NOW Finance Secured Personal Loan\nNOW Finance\'s Secured Personal Loan (the Loan) allows individuals to borrow funds for a number of personal, domestic or household purposes secured against a vehicle, watercraft or caravan. The Loan offers a fixed interest rate and requires individuals to make regular repayments over a fixed term.';
-    productValueCell.flowingContent.applyFormatting(0, 33, { fontWeight: 'bold' });
-  }
-
-  editor.setCursorPosition(getTextLength());
-  editor.insertEmbeddedObject(metadataTable, 'inline');
-
-  // "Purpose of this Document" section header
-  editor.setFlowingText(editor.getFlowingText() + '\n');
-  editor.setCursorPosition(getTextLength());
-
-  const purposeHeaderBox = new TextBoxObject({
-    id: `tmd_purpose_header_${Date.now()}`,
-    textIndex: 0,
-    size: { width: 530, height: 22 },
-    backgroundColor: '#d9d9d9',
-    border: {
-      top: { width: 0, color: '#d9d9d9', style: 'solid' },
-      right: { width: 0, color: '#d9d9d9', style: 'solid' },
-      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
-      left: { width: 0, color: '#d9d9d9', style: 'solid' }
-    },
-    padding: 4
-  });
-  purposeHeaderBox.flowingContent.insertText('Purpose of this Document');
-  purposeHeaderBox.flowingContent.applyFormatting(0, 24, { fontWeight: 'bold', fontSize: 11 });
-  editor.insertEmbeddedObject(purposeHeaderBox, 'inline');
-
-  // Purpose paragraph
-  editor.setFlowingText(editor.getFlowingText() + '\n\nThis target market determination (TMD) seeks to provide consumers, distributors and staff with an understanding of the class of consumers (target market) for which this product has been designed, having regard to the likely objectives, financial situation and needs of the target market.\n\nThis document should not be treated as a full summary of the product\'s terms and conditions or all of the product\'s features. This document is not a customer disclosure document and does not provide financial advice.\n\nConsumers should refer to the Credit Guide, Credit Schedule and the other documents setting out the terms and conditions of the product when making a decision about this product. These documents are provided to a consumer prior to the provision of credit. A copy of these documents can otherwise be requested by contacting us at: customerservice@nowfinance.com.au\n\n');
-
-  // Format "TMD" as bold
-  const tmdText = editor.getFlowingText();
-  const tmdPos = tmdText.indexOf('(TMD)');
-  if (tmdPos >= 0) {
-    editor.applyFormattingWithFallback(tmdPos, tmdPos + 5, { fontWeight: 'bold' });
-  }
-
-  // "Target Market and Key Attributes" section header
-  editor.setCursorPosition(getTextLength());
-  const targetMarketHeaderBox = new TextBoxObject({
-    id: `tmd_target_header_${Date.now()}`,
-    textIndex: 0,
-    size: { width: 530, height: 22 },
-    backgroundColor: '#d9d9d9',
-    border: {
-      top: { width: 0, color: '#d9d9d9', style: 'solid' },
-      right: { width: 0, color: '#d9d9d9', style: 'solid' },
-      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
-      left: { width: 0, color: '#d9d9d9', style: 'solid' }
-    },
-    padding: 4
-  });
-  targetMarketHeaderBox.flowingContent.insertText('Target Market and Key Attributes');
-  targetMarketHeaderBox.flowingContent.applyFormatting(0, 33, { fontWeight: 'bold', fontSize: 11 });
-  editor.insertEmbeddedObject(targetMarketHeaderBox, 'inline');
-
-  // Target Market intro text with bullet list
-  editor.setFlowingText(editor.getFlowingText() + '\n\nThe Loan is designed for the class of consumers who:\n');
-  editor.setFlowingText(editor.getFlowingText() + '  \u2022  wish to borrow a large sum of credit from a non-bank lender and are able to provide an asset as security for the Loan;\n');
-  editor.setFlowingText(editor.getFlowingText() + '  \u2022  meet the eligibility requirements for the Loan (Eligibility Requirements), including:\n');
-  editor.setFlowingText(editor.getFlowingText() + '        o  being of 18+ years of age;\n');
-  editor.setFlowingText(editor.getFlowingText() + '        o  holding Australian citizenship or permanent residency;\n');
-  editor.setFlowingText(editor.getFlowingText() + '        o  currently employed (full time/ part time/ casual) and not on probation;\n');
-  editor.setFlowingText(editor.getFlowingText() + '        o  no unpaid defaults;\n');
-  editor.setFlowingText(editor.getFlowingText() + '        o  Centrelink is not the primary form of income;\n');
-  editor.setFlowingText(editor.getFlowingText() + '        o  not a current or prior bankrupt or party to a court judgement; and\n');
-  editor.setFlowingText(editor.getFlowingText() + '  \u2022  have the likely needs, objectives and financial situation described below (Target Market).\n\n');
-
-  // Format "Eligibility Requirements" and "Target Market" as bold
-  const currentText = editor.getFlowingText();
-  const eligPos = currentText.indexOf('(Eligibility Requirements)');
-  if (eligPos >= 0) {
-    editor.applyFormattingWithFallback(eligPos, eligPos + 26, { fontWeight: 'bold' });
-  }
-  const targetMarketPos = currentText.lastIndexOf('(Target Market)');
-  if (targetMarketPos >= 0) {
-    editor.applyFormattingWithFallback(targetMarketPos, targetMarketPos + 15, { fontWeight: 'bold' });
-  }
-
-  // ===== MAIN TARGET MARKET TABLE (Pages 2-3) =====
-  editor.setCursorPosition(getTextLength());
-
-  const mainTable = new TableObject({
-    id: `tmd_main_table_${Date.now()}`,
-    textIndex: 0,
-    size: { width: 530, height: 700 },
-    rows: 10,
-    columns: 2,
-    columnWidths: [175, 355],
-    defaultFontFamily: 'Arial',
-    defaultFontSize: 10,
-    defaultColor: '#000000',
-    defaultCellPadding: 6,
-    defaultBorderWidth: 1,
-    defaultBorderColor: '#000000'
-  });
-
-  // Row 0: Header row (italic)
-  const headerCell0 = mainTable.getCell(0, 0);
-  const headerCell1 = mainTable.getCell(0, 1);
-  if (headerCell0) {
-    headerCell0.content = 'The NOW Finance Secured Personal Loan has been designed for customers with the following likely needs, objectives and financial situation:';
-    headerCell0.flowingContent.applyFormatting(0, headerCell0.content.length, { fontStyle: 'italic', fontWeight: 'bold' });
-  }
-  if (headerCell1) {
-    headerCell1.content = 'Key Attributes of the NOW Finance Secured Personal Loan that make the product consistent with the likely objectives, financial situation and needs of consumers in the target market.';
-    headerCell1.flowingContent.applyFormatting(0, headerCell1.content.length, { fontStyle: 'italic', fontWeight: 'bold' });
-  }
-  // Mark row 0 as a header row so it repeats on page breaks
-  mainTable.setHeaderRow(0, true);
-
-  // Row 1: Objectives section header
-  const objHeaderCell0 = mainTable.getCell(1, 0);
-  const objHeaderCell1 = mainTable.getCell(1, 1);
-  if (objHeaderCell0) {
-    objHeaderCell0.content = 'Objectives';
-    objHeaderCell0.flowingContent.applyFormatting(0, 10, { fontStyle: 'italic' });
-    objHeaderCell0.backgroundColor = '#f2f2f2';
-  }
-  if (objHeaderCell1) {
-    objHeaderCell1.backgroundColor = '#f2f2f2';
-  }
-
-  // Row 2: Objectives content
-  const objCell0 = mainTable.getCell(2, 0);
-  const objCell1 = mainTable.getCell(2, 1);
-  if (objCell0) {
-    objCell0.content = '\u2022  Obtain a large lump sum which can be used for a wide range of personal, domestic, or household purposes including but not limited to:\n    \u25AA  Vehicle, watercraft or caravan purchases;\n    \u25AA  Home renovations;\n    \u25AA  Household furnishings;\n    \u25AA  Debt consolidation;\n    \u25AA  Travel;\n    \u25AA  Medical expenses; and\n    \u25AA  Wedding expenses.';
-  }
-  if (objCell1) {
-    objCell1.content = '\u2022  A NOW Finance Secured Personal Loan provides:\n    o  a single lump sum of credit (in other words it is not revolving credit);\n    o  a minimum sum of $15,000 and a maximum sum of $100,000, which is a sufficiently large sum for these types of personal, domestic or household purposes.\n    o  it can be used for a wide range of personal, domestic, or household purposes.';
-  }
-
-  // Row 3: Needs section header
-  const needsHeaderCell0 = mainTable.getCell(3, 0);
-  const needsHeaderCell1 = mainTable.getCell(3, 1);
-  if (needsHeaderCell0) {
-    needsHeaderCell0.content = 'Needs';
-    needsHeaderCell0.flowingContent.applyFormatting(0, 5, { fontStyle: 'italic' });
-    needsHeaderCell0.backgroundColor = '#f2f2f2';
-  }
-  if (needsHeaderCell1) {
-    needsHeaderCell1.backgroundColor = '#f2f2f2';
-  }
-
-  // Row 4: First needs item
-  const needs1Cell0 = mainTable.getCell(4, 0);
-  const needs1Cell1 = mainTable.getCell(4, 1);
-  if (needs1Cell0) {
-    needs1Cell0.content = '\u2022  Spread / smooth the repayments over an extended period of time without a balloon payment at the end.';
-  }
-  if (needs1Cell1) {
-    needs1Cell1.content = '\u2022  A NOW Finance Secured Person Loan provides:\n    o  a term between 1.5 years to 7 years which is an extended period of time;\n    o  weekly or fortnightly payments to smooth/spread the repayments; and\n    o  repayments of principal and interest so that it is paid off by the end of the term.';
-  }
-
-  // Row 5: Second needs item (certainty)
-  const needs2Cell0 = mainTable.getCell(5, 0);
-  const needs2Cell1 = mainTable.getCell(5, 1);
-  if (needs2Cell0) {
-    needs2Cell0.content = '\u2022  Need certainty of repayment amounts.';
-  }
-  if (needs2Cell1) {
-    needs2Cell1.content = '\u2022  A NOW Finance Secured Person Loan provides:\n    o  a fixed interest rate which allows repayment amounts to be the same and therefore certain;\n    o  no Loan fees, including upfront fees, periodic fees or event-based fees.';
-  }
-
-  // Row 6: Third needs item (flexibility)
-  const needs3Cell0 = mainTable.getCell(6, 0);
-  const needs3Cell1 = mainTable.getCell(6, 1);
-  if (needs3Cell0) {
-    needs3Cell0.content = '\u2022  Need flexibility to make extra repayments or pay out the Loan early.';
-  }
-  if (needs3Cell1) {
-    needs3Cell1.content = '\u2022  A NOW Finance Secured Person Loan provides:\n    o  No extra repayment charges: customers can make early repayments during the Loan without any fees.\n    o  No early repayment charges: customers can pay out their Loan at any time without any fees or charges.';
-    // Bold the "No extra repayment charges" and "No early repayment charges"
-    const noExtraPos = needs3Cell1.content.indexOf('No extra repayment charges');
-    const noEarlyPos = needs3Cell1.content.indexOf('No early repayment charges');
-    if (noExtraPos >= 0) {
-      needs3Cell1.flowingContent.applyFormatting(noExtraPos, noExtraPos + 26, { fontWeight: 'bold' });
-    }
-    if (noEarlyPos >= 0) {
-      needs3Cell1.flowingContent.applyFormatting(noEarlyPos, noEarlyPos + 26, { fontWeight: 'bold' });
-    }
-  }
-
-  // Row 7: Financial situation header
-  const finHeaderCell0 = mainTable.getCell(7, 0);
-  const finHeaderCell1 = mainTable.getCell(7, 1);
-  if (finHeaderCell0) {
-    finHeaderCell0.content = 'Financial situation';
-    finHeaderCell0.flowingContent.applyFormatting(0, 19, { fontStyle: 'italic' });
-    finHeaderCell0.backgroundColor = '#f2f2f2';
-  }
-  if (finHeaderCell1) {
-    finHeaderCell1.backgroundColor = '#f2f2f2';
-  }
-
-  // Row 8: First financial situation item
-  const fin1Cell0 = mainTable.getCell(8, 0);
-  const fin1Cell1 = mainTable.getCell(8, 1);
-  if (fin1Cell0) {
-    fin1Cell0.content = '\u2022  Owns (or will acquire with the funds) a vehicle, watercraft or caravan to provide as security for the Loan.';
-  }
-  if (fin1Cell1) {
-    fin1Cell1.content = '\u2022  Security: a customer is required to provide security for the Loaned amount.';
-    const securityPos = fin1Cell1.content.indexOf('Security');
-    if (securityPos >= 0) {
-      fin1Cell1.flowingContent.applyFormatting(securityPos, securityPos + 8, { fontWeight: 'bold' });
-    }
-  }
-
-  // Row 9: Second financial situation item
-  const fin2Cell0 = mainTable.getCell(9, 0);
-  const fin2Cell1 = mainTable.getCell(9, 1);
-  if (fin2Cell0) {
-    fin2Cell0.content = '\u2022  Have the financial capacity to service the Loan.';
-  }
-  if (fin2Cell1) {
-    fin2Cell1.content = '\u2022  NOW Finance analyses and assesses the suitability and affordability of the Loan to the consumer\'s needs and objectives when assessing an application for the Loan and conducts a credit assessment to confirm whether the consumer would have the financial capacity to service the ongoing financial obligations under the Loan.';
-  }
-
-  editor.insertEmbeddedObject(mainTable, 'inline');
-
-  // ===== EXCLUDED CUSTOMERS SECTION =====
-  editor.setFlowingText(editor.getFlowingText() + '\n');
-  editor.setCursorPosition(getTextLength());
-
-  const excludedHeaderBox = new TextBoxObject({
-    id: `tmd_excluded_header_${Date.now()}`,
-    textIndex: 0,
-    size: { width: 530, height: 22 },
-    backgroundColor: '#d9d9d9',
-    border: {
-      top: { width: 0, color: '#d9d9d9', style: 'solid' },
-      right: { width: 0, color: '#d9d9d9', style: 'solid' },
-      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
-      left: { width: 0, color: '#d9d9d9', style: 'solid' }
-    },
-    padding: 4
-  });
-  excludedHeaderBox.flowingContent.insertText('Excluded customers');
-  excludedHeaderBox.flowingContent.applyFormatting(0, 18, { fontWeight: 'bold', fontSize: 11 });
-  editor.insertEmbeddedObject(excludedHeaderBox, 'inline');
-
-  editor.setFlowingText(editor.getFlowingText() + '\n\nThe NOW Finance Secured Personal Loan is not designed for individuals who:\n');
-  editor.setFlowingText(editor.getFlowingText() + '  \u2022  do not satisfy each of the Eligibility Requirements;\n');
-  editor.setFlowingText(editor.getFlowingText() + '  \u2022  do not have consistent income;\n');
-  editor.setFlowingText(editor.getFlowingText() + '  \u2022  want the interest rate to increase/decrease over the life of the Loan;\n');
-  editor.setFlowingText(editor.getFlowingText() + '  \u2022  want to be able to redraw any additional repayments made on the Loan;\n');
-  editor.setFlowingText(editor.getFlowingText() + '  \u2022  do not have a suitable asset to provide as security for the Loan;\n');
-  editor.setFlowingText(editor.getFlowingText() + '  \u2022  are seeking a Loan amount of less than $15,000 or more than $100,000; and/or\n');
-  editor.setFlowingText(editor.getFlowingText() + '  \u2022  require an ongoing line of credit that can be redrawn up to the limit.\n\n');
-
-  // ===== DISTRIBUTION SECTION =====
-  editor.setCursorPosition(getTextLength());
-
-  const distHeaderBox = new TextBoxObject({
-    id: `tmd_dist_header_${Date.now()}`,
-    textIndex: 0,
-    size: { width: 530, height: 22 },
-    backgroundColor: '#d9d9d9',
-    border: {
-      top: { width: 0, color: '#d9d9d9', style: 'solid' },
-      right: { width: 0, color: '#d9d9d9', style: 'solid' },
-      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
-      left: { width: 0, color: '#d9d9d9', style: 'solid' }
-    },
-    padding: 4
-  });
-  distHeaderBox.flowingContent.insertText('Distribution of the NOW Finance Secured Personal Loan');
-  distHeaderBox.flowingContent.applyFormatting(0, 53, { fontWeight: 'bold', fontSize: 11 });
-  editor.insertEmbeddedObject(distHeaderBox, 'inline');
-
-  editor.setFlowingText(editor.getFlowingText() + '\n\nNOW Finance has the following distribution channels and applies the following conditions and restrictions to the distribution of the NOW Finance Secured Personal Loan through the channels so that this product is likely to be provided to customers who are in the target market.\n\n');
-
-  // Distribution table
-  editor.setCursorPosition(getTextLength());
-
-  const distTable = new TableObject({
-    id: `tmd_dist_table_${Date.now()}`,
-    textIndex: 0,
-    size: { width: 530, height: 500 },
-    rows: 2,
-    columns: 2,
-    columnWidths: [120, 410],
-    defaultFontFamily: 'Arial',
-    defaultFontSize: 10,
-    defaultColor: '#000000',
-    defaultCellPadding: 6,
-    defaultBorderWidth: 1,
-    defaultBorderColor: '#000000'
-  });
-
-  // Distribution Channels row
-  const distChannelsLabel = distTable.getCell(0, 0);
-  const distChannelsValue = distTable.getCell(0, 1);
-  if (distChannelsLabel) {
-    distChannelsLabel.content = 'Distribution Channels:';
-    distChannelsLabel.flowingContent.applyFormatting(0, 22, { fontWeight: 'bold' });
-  }
-  if (distChannelsValue) {
-    distChannelsValue.content = 'Direct Channels\n\u2022  The NOW Finance website; and\n\u2022  The NOW Finance call centre.\n\nThird Party Distributions Channels\nAuthorised third party distributors such as:\n\u2022  finance brokers and aggregators;\n\u2022  partner websites (including comparison websites); and\n\u2022  authorised referrers.\n(Distributors)';
-    distChannelsValue.flowingContent.applyFormatting(0, 15, { fontWeight: 'bold' });
-    const thirdPartyPos = distChannelsValue.content.indexOf('Third Party Distributions Channels');
-    if (thirdPartyPos >= 0) {
-      distChannelsValue.flowingContent.applyFormatting(thirdPartyPos, thirdPartyPos + 34, { fontWeight: 'bold' });
-    }
-    const distributorsPos = distChannelsValue.content.indexOf('(Distributors)');
-    if (distributorsPos >= 0) {
-      distChannelsValue.flowingContent.applyFormatting(distributorsPos, distributorsPos + 14, { fontWeight: 'bold' });
-    }
-  }
-
-  // Distribution Conditions row
-  const distCondLabel = distTable.getCell(1, 0);
-  const distCondValue = distTable.getCell(1, 1);
-  if (distCondLabel) {
-    distCondLabel.content = 'Distribution Conditions:';
-    distCondLabel.flowingContent.applyFormatting(0, 24, { fontWeight: 'bold' });
-  }
-  if (distCondValue) {
-    distCondValue.content = 'The NOW Finance Secured Personal Loan can only be distributed in accordance with the distribution conditions below.\n\nDirect Channels\n\u2022  NOW Finance website: Consumers click through a website journey which collects information on the consumer\'s objectives, needs and financial situation for assessment by NOW Finance. A Loan cannot be provided to a consumer until this information is collected and verified.\n\u2022  NOW Finance call centre: Call centre staff are trained and follow a call script which asks questions of a consumer to collect information on their objectives, needs and financial situation for assessment by NOW Finance. A Loan cannot be provided to a consumer until this information is collected and verified.\n\u2022  NOW Finance assesses each application against the Eligibility Requirements and conducts a credit assessment check to confirm that the consumer has an appropriate borrowing capacity to service the Loan, in accordance with NOW Finance\'s responsible lending guidelines and product and process requirements.\n\u2022  Consumers who access the Loan via direct channels are provided with information and disclosures that make it more likely that the consumer will be able to assess whether the Loan is suitable for their objectives, needs and financial situation.\n\nThird Party Distributors\n\u2022  All Distributors must have entered into a written agreement with NOW Finance which controls what they can and cannot do in distributing the product including in relation to marketing materials.\n\u2022  For partner websites and referrers, they are not permitted to market the product other than through NOW Finance approved marketing material, most only display product information on their websites and must refer the customer lead through to NOW Finance\'s direct channels above which then follow the conditions above.\n\u2022  All Distributors (excluding partner websites and referrers) must hold an Australian Credit Licence or be an authorised Credit Representative and be accredited by NOW Finance. This means that they are regulated (or subject to regulatory requirements), have their own requirements to comply with regulatory requirements, are of good standing and insured. This allows these distributors to do more than simply provide product information, they can also market and have unscripted conversations with customers.\n\u2022  All Distributors (excluding partner websites and referrers) must be trained by NOW Finance on the product features and attributes, eligibility requirements, target market and distribution to inform their conversations with customers and so they can discharge their regulatory obligations. This training is also on the Eligibility Requirements for the Loan.\n\u2022  To comply with their own regulatory obligations, all Distributors (excluding partner websites and referrers) ask questions to assess the individual customer\'s specific objectives, needs and financial situation and if they meet the eligibility criteria.\n\nIn all circumstances, a Loan cannot be provided to a consumer until NOW Finance has collected and verified required consumer information. As part of this process, NOW Finance will assess the suitability of the consumer and confirm whether the Loan will meet the consumers objectives and requirements.';
-    // Bold section headers
-    const directChannelsPos = distCondValue.content.indexOf('Direct Channels');
-    if (directChannelsPos >= 0) {
-      distCondValue.flowingContent.applyFormatting(directChannelsPos, directChannelsPos + 15, { fontWeight: 'bold' });
-    }
-    const thirdPartyDistPos = distCondValue.content.indexOf('Third Party Distributors');
-    if (thirdPartyDistPos >= 0) {
-      distCondValue.flowingContent.applyFormatting(thirdPartyDistPos, thirdPartyDistPos + 24, { fontWeight: 'bold' });
-    }
-    // Bold specific terms
-    const nowWebsitePos = distCondValue.content.indexOf('NOW Finance website:');
-    if (nowWebsitePos >= 0) {
-      distCondValue.flowingContent.applyFormatting(nowWebsitePos, nowWebsitePos + 20, { fontWeight: 'bold' });
-    }
-    const nowCallCentrePos = distCondValue.content.indexOf('NOW Finance call centre:');
-    if (nowCallCentrePos >= 0) {
-      distCondValue.flowingContent.applyFormatting(nowCallCentrePos, nowCallCentrePos + 24, { fontWeight: 'bold' });
-    }
-  }
-
-  editor.insertEmbeddedObject(distTable, 'inline');
-
-  // ===== REVIEW OF TMD SECTION =====
-  editor.setFlowingText(editor.getFlowingText() + '\n');
-  editor.setCursorPosition(getTextLength());
-
-  const reviewHeaderBox = new TextBoxObject({
-    id: `tmd_review_header_${Date.now()}`,
-    textIndex: 0,
-    size: { width: 530, height: 22 },
-    backgroundColor: '#d9d9d9',
-    border: {
-      top: { width: 0, color: '#d9d9d9', style: 'solid' },
-      right: { width: 0, color: '#d9d9d9', style: 'solid' },
-      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
-      left: { width: 0, color: '#d9d9d9', style: 'solid' }
-    },
-    padding: 4
-  });
-  reviewHeaderBox.flowingContent.insertText('Review of TMD');
-  reviewHeaderBox.flowingContent.applyFormatting(0, 13, { fontWeight: 'bold', fontSize: 11 });
-  editor.insertEmbeddedObject(reviewHeaderBox, 'inline');
-
-  editor.setFlowingText(editor.getFlowingText() + '\n\nNOW Finance will review this TMD periodically to ensure it remains appropriate.\n\n');
-
-  // Review table
-  editor.setCursorPosition(getTextLength());
-
-  const reviewTable = new TableObject({
-    id: `tmd_review_table_${Date.now()}`,
-    textIndex: 0,
-    size: { width: 530, height: 200 },
-    rows: 2,
-    columns: 2,
-    columnWidths: [120, 410],
-    defaultFontFamily: 'Arial',
-    defaultFontSize: 10,
-    defaultColor: '#000000',
-    defaultCellPadding: 6,
-    defaultBorderWidth: 1,
-    defaultBorderColor: '#000000'
-  });
-
-  // Review Period row
-  const reviewPeriodLabel = reviewTable.getCell(0, 0);
-  const reviewPeriodValue = reviewTable.getCell(0, 1);
-  if (reviewPeriodLabel) {
-    reviewPeriodLabel.content = 'Review Period';
-    reviewPeriodLabel.flowingContent.applyFormatting(0, 13, { fontWeight: 'bold' });
-  }
-  if (reviewPeriodValue) {
-    reviewPeriodValue.content = 'Initial Review: Within 12 months of the date of this TMD.\n\nOngoing Review: Within 12 months of the date of the previous review.';
-    reviewPeriodValue.flowingContent.applyFormatting(0, 15, { fontWeight: 'bold' });
-    const ongoingPos = reviewPeriodValue.content.indexOf('Ongoing Review:');
-    if (ongoingPos >= 0) {
-      reviewPeriodValue.flowingContent.applyFormatting(ongoingPos, ongoingPos + 15, { fontWeight: 'bold' });
-    }
-  }
-
-  // Review Triggers row
-  const reviewTriggersLabel = reviewTable.getCell(1, 0);
-  const reviewTriggersValue = reviewTable.getCell(1, 1);
-  if (reviewTriggersLabel) {
-    reviewTriggersLabel.content = 'Review Triggers';
-    reviewTriggersLabel.flowingContent.applyFormatting(0, 15, { fontWeight: 'bold' });
-  }
-  if (reviewTriggersValue) {
-    reviewTriggersValue.content = 'NOW Finance will also review this TMD if one or more of the following events occur:\n\u2022  Material changes to the NOW Finance Secured Personal Loan terms and conditions;\n\u2022  Occurrence of a significant dealing (where the NOW Finance Secured Personal Loan is not consistent with this TMD);\n\u2022  If the distribution conditions are found to be inadequate;\n\u2022  If there is an external event such as adverse media coverage or regulatory attention;\n\u2022  If there is a significant change in metrics, including but not limited to, complaints, default rates and application rates.';
-  }
-
-  editor.insertEmbeddedObject(reviewTable, 'inline');
-
-  // ===== INFORMATION REPORTING SECTION =====
-  editor.setFlowingText(editor.getFlowingText() + '\n');
-  editor.setCursorPosition(getTextLength());
-
-  const infoHeaderBox = new TextBoxObject({
-    id: `tmd_info_header_${Date.now()}`,
-    textIndex: 0,
-    size: { width: 530, height: 22 },
-    backgroundColor: '#d9d9d9',
-    border: {
-      top: { width: 0, color: '#d9d9d9', style: 'solid' },
-      right: { width: 0, color: '#d9d9d9', style: 'solid' },
-      bottom: { width: 0, color: '#d9d9d9', style: 'solid' },
-      left: { width: 0, color: '#d9d9d9', style: 'solid' }
-    },
-    padding: 4
-  });
-  infoHeaderBox.flowingContent.insertText('Information Reporting');
-  infoHeaderBox.flowingContent.applyFormatting(0, 21, { fontWeight: 'bold', fontSize: 11 });
-  editor.insertEmbeddedObject(infoHeaderBox, 'inline');
-
-  editor.setFlowingText(editor.getFlowingText() + '\n\nDistributors or any \'regulated person\' who engages in relation distribution conduct must provide Now Finance the following information:\n\n');
-
-  // Information Reporting table (3 columns)
-  editor.setCursorPosition(getTextLength());
-
-  const infoTable = new TableObject({
-    id: `tmd_info_table_${Date.now()}`,
-    textIndex: 0,
-    size: { width: 530, height: 250 },
-    rows: 3,
-    columns: 3,
-    columnWidths: [100, 215, 215],
-    defaultFontFamily: 'Arial',
-    defaultFontSize: 10,
-    defaultColor: '#000000',
-    defaultCellPadding: 6,
-    defaultBorderWidth: 1,
-    defaultBorderColor: '#000000'
-  });
-
-  // Header row
-  const infoHeader0 = infoTable.getCell(0, 0);
-  const infoHeader1 = infoTable.getCell(0, 1);
-  const infoHeader2 = infoTable.getCell(0, 2);
-  if (infoHeader0) {
-    infoHeader0.content = 'Category';
-    infoHeader0.flowingContent.applyFormatting(0, 8, { fontStyle: 'italic', fontWeight: 'bold' });
-    infoHeader0.backgroundColor = '#f2f2f2';
-  }
-  if (infoHeader1) {
-    infoHeader1.content = 'Information to be provided';
-    infoHeader1.flowingContent.applyFormatting(0, 26, { fontStyle: 'italic', fontWeight: 'bold' });
-    infoHeader1.backgroundColor = '#f2f2f2';
-  }
-  if (infoHeader2) {
-    infoHeader2.content = 'How and When to Report';
-    infoHeader2.flowingContent.applyFormatting(0, 22, { fontStyle: 'italic', fontWeight: 'bold' });
-    infoHeader2.backgroundColor = '#f2f2f2';
-  }
-  infoTable.setHeaderRow(0, true);
-
-  // Complaints row
-  const complaints0 = infoTable.getCell(1, 0);
-  const complaints1 = infoTable.getCell(1, 1);
-  const complaints2 = infoTable.getCell(1, 2);
-  if (complaints0) {
-    complaints0.content = 'Complaints';
-    complaints0.flowingContent.applyFormatting(0, 10, { fontWeight: 'bold' });
-  }
-  if (complaints1) {
-    complaints1.content = 'Any complaints made in relation to the NOW Finance Secured Personal Loan including:\n\u2022  the number of complaints received during the reporting period and;\n\u2022  written details of any complaints in the form as instructed by Now Finance.';
-  }
-  if (complaints2) {
-    complaints2.content = 'When to report:\nWithin 10 days following the end of every six months.\n\nHow to report:\nReports should be made to: Head of Dispute Resolution by email at: disputeresolution@nowfinance.com.au';
-    complaints2.flowingContent.applyFormatting(0, 15, { fontWeight: 'bold' });
-    const howToReportPos = complaints2.content.indexOf('How to report:');
-    if (howToReportPos >= 0) {
-      complaints2.flowingContent.applyFormatting(howToReportPos, howToReportPos + 14, { fontWeight: 'bold' });
-    }
-  }
-
-  // Significant dealings row
-  const dealings0 = infoTable.getCell(2, 0);
-  const dealings1 = infoTable.getCell(2, 1);
-  const dealings2 = infoTable.getCell(2, 2);
-  if (dealings0) {
-    dealings0.content = 'Significant dealings';
-    dealings0.flowingContent.applyFormatting(0, 20, { fontWeight: 'bold' });
-  }
-  if (dealings1) {
-    dealings1.content = 'Any significant dealing in relation to the NOW Finance Secured Personal Loan and this TMD';
-  }
-  if (dealings2) {
-    dealings2.content = 'When to report:\nAs soon as possible but no later than 10 days after the person becomes aware of the significant dealing.\n\nHow to report:\nReports should be made to the General Counsel by email at: legal@nowfinance.com.au';
-    dealings2.flowingContent.applyFormatting(0, 15, { fontWeight: 'bold' });
-    const howToReportPos2 = dealings2.content.indexOf('How to report:');
-    if (howToReportPos2 >= 0) {
-      dealings2.flowingContent.applyFormatting(howToReportPos2, howToReportPos2 + 14, { fontWeight: 'bold' });
-    }
-  }
-
-  editor.insertEmbeddedObject(infoTable, 'inline');
-
-  // Last Review date
-  editor.setFlowingText(editor.getFlowingText() + '\n\nLast Review: November 2025');
-
-  editor.render();
-  loadDocumentSettings();
-  updateStatus('TMD Sample document loaded');
-}
 
 function clearDocument(): void {
   if (!editor) return;
