@@ -60,6 +60,21 @@ export class TextFormattingManager extends EventEmitter {
   }
 
   /**
+   * Set formatting at a specific position, replacing all existing formatting.
+   * Unlike applyFormatting which merges, this replaces completely.
+   * Used by undo operations to restore exact previous state.
+   * @param position Character position
+   * @param formatting Complete formatting to set
+   * @param silent If true, don't emit the formatting-changed event
+   */
+  setFormattingAt(position: number, formatting: TextFormattingStyle, silent: boolean = false): void {
+    this.formatting.set(position, { ...formatting });
+    if (!silent) {
+      this.emit('formatting-changed', { start: position, end: position + 1, formatting });
+    }
+  }
+
+  /**
    * Remove formatting from a range, reverting to default.
    */
   clearFormatting(start: number, end: number): void {

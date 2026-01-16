@@ -181,11 +181,11 @@ export class MutationUndo {
     // Restore deleted text
     content.insertTextAt(data.position, data.deletedText);
 
-    // Restore formatting
+    // Restore formatting using setFormattingAt to replace completely
     if (data.deletedFormatting) {
       const fm = content.getFormattingManager();
       data.deletedFormatting.forEach((style, offset) => {
-        fm.applyFormatting(data.position + offset, data.position + offset + 1, style);
+        fm.setFormattingAt(data.position + offset, style, true);
       });
     }
 
@@ -216,9 +216,10 @@ export class MutationUndo {
     const data = mutation.data as FormatMutationData;
     const fm = content.getFormattingManager();
 
-    // Restore previous formatting
+    // Restore previous formatting using setFormattingAt to replace completely
+    // (not merge, which would leave properties like backgroundColor intact)
     data.previousFormatting.forEach((style, offset) => {
-      fm.applyFormatting(data.start + offset, data.start + offset + 1, style);
+      fm.setFormattingAt(data.start + offset, style, true);
     });
   }
 

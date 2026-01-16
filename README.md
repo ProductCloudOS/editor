@@ -322,6 +322,7 @@ import {
 
 - [Getting Started Guide](./docs/getting-started.md)
 - [API Reference](./docs/api-reference.md)
+- [Optional Modules](./docs/optional-modules.md) - Rulers, panes, and CSS customization
 
 ## Development
 

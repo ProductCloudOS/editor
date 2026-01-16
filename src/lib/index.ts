@@ -109,6 +109,48 @@ export type {
   TickMark
 } from './controls';
 
+// Panes module exports (optional property editor components)
+export {
+  BasePane,
+  DocumentInfoPane,
+  ViewSettingsPane,
+  DocumentSettingsPane,
+  MergeDataPane,
+  FormattingPane,
+  HyperlinkPane,
+  SubstitutionFieldPane,
+  RepeatingSectionPane,
+  TableRowLoopPane,
+  TextBoxPane,
+  ImagePane,
+  TablePane
+} from './panes';
+
+export type {
+  PaneOptions,
+  PaneAttachOptions,
+  BorderSideConfig,
+  BorderConfig,
+  CellPadding,
+  CellUpdates,
+  TableDefaults,
+  HeaderStyle,
+  TextBoxUpdates,
+  ImageUpdates,
+  ImageSourceOptions,
+  ViewSettingsPaneOptions,
+  MergeDataPaneOptions,
+  FormattingPaneOptions,
+  HyperlinkData,
+  HyperlinkPaneOptions,
+  SubstitutionFieldPaneOptions,
+  RepeatingSectionPaneOptions,
+  TableRowLoopPaneOptions,
+  TextBoxPaneOptions,
+  ImagePaneOptions,
+  TablePaneOptions
+} from './panes';
+
 // PDF Import module exports
 export {
   PDFImporter,
