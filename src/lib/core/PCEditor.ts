@@ -2278,6 +2278,178 @@ export class PCEditor extends EventEmitter {
   }
 
   // ============================================
+  // Text Box Update Operations
+  // ============================================
+
+  /**
+   * Update properties of a text box.
+   * @param textBoxId The ID of the text box to update
+   * @param updates The properties to update
+   */
+  updateTextBox(textBoxId: string, updates: {
+    position?: 'inline' | 'block' | 'relative';
+    relativeOffset?: { x: number; y: number };
+    backgroundColor?: string;
+    border?: {
+      top?: { width: number; color: string; style: 'solid' | 'dashed' | 'dotted' | 'none' };
+      right?: { width: number; color: string; style: 'solid' | 'dashed' | 'dotted' | 'none' };
+      bottom?: { width: number; color: string; style: 'solid' | 'dashed' | 'dotted' | 'none' };
+      left?: { width: number; color: string; style: 'solid' | 'dashed' | 'dotted' | 'none' };
+    };
+    padding?: number;
+  }): boolean {
+    if (!this._isReady) return false;
+
+    // Find the text box in all flowing contents
+    const textBox = this.findTextBoxById(textBoxId);
+    if (!textBox) {
+      console.warn(`[PCEditor.updateTextBox] Text box not found: ${textBoxId}`);
+      return false;
+    }
+
+    // Apply updates
+    if (updates.position !== undefined) {
+      textBox.position = updates.position;
+    }
+    if (updates.relativeOffset !== undefined) {
+      textBox.relativeOffset = updates.relativeOffset;
+    }
+    if (updates.backgroundColor !== undefined) {
+      textBox.backgroundColor = updates.backgroundColor;
+    }
+    if (updates.border !== undefined) {
+      // Merge with existing border
+      const existingBorder = textBox.border;
+      textBox.border = {
+        top: updates.border.top || existingBorder.top,
+        right: updates.border.right || existingBorder.right,
+        bottom: updates.border.bottom || existingBorder.bottom,
+        left: updates.border.left || existingBorder.left
+      };
+    }
+    if (updates.padding !== undefined) {
+      textBox.padding = updates.padding;
+    }
+
+    this.render();
+    this.emit('textbox-updated', { textBoxId, updates });
+    return true;
+  }
+
+  /**
+   * Find a text box by ID across all flowing contents.
+   */
+  private findTextBoxById(textBoxId: string): TextBoxObject | null {
+    const flowingContents = [
+      this.document.bodyFlowingContent,
+      this.document.headerFlowingContent,
+      this.document.footerFlowingContent
+    ].filter(Boolean);
+
+    for (const flowingContent of flowingContents) {
+      const embeddedObjects = flowingContent.getEmbeddedObjects();
+      for (const [, obj] of embeddedObjects.entries()) {
+        if (obj.id === textBoxId && obj instanceof TextBoxObject) {
+          return obj;
+        }
+      }
+    }
+    return null;
+  }
+
+  // ============================================
+  // Image Update Operations
+  // ============================================
+
+  /**
+   * Update properties of an image.
+   * @param imageId The ID of the image to update
+   * @param updates The properties to update
+   */
+  updateImage(imageId: string, updates: {
+    position?: 'inline' | 'block' | 'relative';
+    relativeOffset?: { x: number; y: number };
+    fit?: 'contain' | 'cover' | 'fill' | 'none' | 'tile';
+    resizeMode?: 'free' | 'locked-aspect-ratio';
+    alt?: string;
+  }): boolean {
+    if (!this._isReady) return false;
+
+    // Find the image in all flowing contents
+    const image = this.findImageById(imageId);
+    if (!image) {
+      console.warn(`[PCEditor.updateImage] Image not found: ${imageId}`);
+      return false;
+    }
+
+    // Apply updates
+    if (updates.position !== undefined) {
+      image.position = updates.position;
+    }
+    if (updates.relativeOffset !== undefined) {
+      image.relativeOffset = updates.relativeOffset;
+    }
+    if (updates.fit !== undefined) {
+      image.fit = updates.fit;
+    }
+    if (updates.resizeMode !== undefined) {
+      image.resizeMode = updates.resizeMode;
+    }
+    if (updates.alt !== undefined) {
+      image.alt = updates.alt;
+    }
+
+    this.render();
+    this.emit('image-updated', { imageId, updates });
+    return true;
+  }
+
+  /**
+   * Set the source of an image.
+   * @param imageId The ID of the image
+   * @param dataUrl The data URL of the new image source
+   * @param options Optional sizing options
+   */
+  setImageSource(imageId: string, dataUrl: string, options?: {
+    maxWidth?: number;
+    maxHeight?: number;
+  }): boolean {
+    if (!this._isReady) return false;
+
+    const image = this.findImageById(imageId);
+    if (!image) {
+      console.warn(`[PCEditor.setImageSource] Image not found: ${imageId}`);
+      return false;
+    }
+
+    image.setSource(dataUrl, options);
+    this.render();
+    this.emit('image-source-changed', { imageId });
+    return true;
+  }
+
+  /**
+   * Find an image by ID across all flowing contents.
+   */
+  private findImageById(imageId: string): ImageObject | null {
+    const flowingContents = [
+      this.document.bodyFlowingContent,
+      this.document.headerFlowingContent,
+      this.document.footerFlowingContent
+    ].filter(Boolean);
+
+    for (const flowingContent of flowingContents) {
+      const embeddedObjects = flowingContent.getEmbeddedObjects();
+      for (const [, obj] of embeddedObjects.entries()) {
+        if (obj.id === imageId && obj instanceof ImageObject) {
+          return obj;
+        }
+      }
+    }
+    return null;
+  }
+
+  // ============================================
   // Table Structure Operations (with undo support)
   // ============================================
 

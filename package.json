@@ -1,6 +1,6 @@
 {
   "name": "@productcloudos/editor",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Browser-based WYSIWYG document editor library for creating pixel-perfect documents with data binding and PDF export capabilities",
   "author": "",
   "license": "MIT",

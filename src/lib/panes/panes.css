@@ -1,0 +1,348 @@
+/**
+ * PC Editor Panes - Minimal structural CSS
+ *
+ * These styles provide basic structure. Consumers can customize via:
+ * - CSS variables (--pc-pane-*)
+ * - Overriding classes
+ * - Adding their own styles
+ */
+
+/* CSS Variables with defaults */
+:root {
+  --pc-pane-spacing: 0.5rem;
+  --pc-pane-spacing-sm: 0.25rem;
+  --pc-pane-font-size: 13px;
+  --pc-pane-text-color: #222;
+  --pc-pane-label-color: #666;
+  --pc-pane-background: white;
+  --pc-pane-input-height: 28px;
+  --pc-pane-button-height: 28px;
+  --pc-pane-button-icon-width: 28px;
+  --pc-pane-border-radius: 4px;
+  --pc-pane-border-color: #ccc;
+  --pc-pane-focus-color: #0066cc;
+
+  /* Alignment icons (SVG data URIs) */
+  --pc-pane-icon-align-left: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='%23000' d='M1 2h14v2H1zM1 7h10v2H1zM1 12h12v2H1z'/%3E%3C/svg%3E");
+  --pc-pane-icon-align-center: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='%23000' d='M1 2h14v2H1zM3 7h10v2H3zM2 12h12v2H2z'/%3E%3C/svg%3E");
+  --pc-pane-icon-align-right: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='%23000' d='M1 2h14v2H1zM5 7h10v2H5zM3 12h12v2H3z'/%3E%3C/svg%3E");
+  --pc-pane-icon-align-justify: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='%23000' d='M1 2h14v2H1zM1 7h14v2H1zM1 12h14v2H1z'/%3E%3C/svg%3E");
+}
+
+/* Pane container */
+.pc-pane {
+  font-size: var(--pc-pane-font-size);
+  line-height: 1.4;
+  color: var(--pc-pane-text-color);
+}
+
+/* Form group */
+.pc-pane-form-group {
+  margin-bottom: var(--pc-pane-spacing);
+}
+
+.pc-pane-form-group--inline {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-pane-spacing-sm);
+}
+
+.pc-pane-form-group--inline .pc-pane-label {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+/* Labels */
+.pc-pane-label {
+  display: block;
+  margin-bottom: var(--pc-pane-spacing-sm);
+  color: var(--pc-pane-label-color);
+  font-weight: 500;
+}
+
+/* Inputs */
+.pc-pane-input {
+  width: 100%;
+  height: var(--pc-pane-input-height);
+  padding: 0 8px;
+  border: 1px solid var(--pc-pane-border-color);
+  border-radius: var(--pc-pane-border-radius);
+  font-size: inherit;
+  box-sizing: border-box;
+  background: var(--pc-pane-background);
+  color: var(--pc-pane-text-color);
+}
+
+.pc-pane-input:focus {
+  outline: none;
+  border-color: var(--pc-pane-focus-color);
+}
+
+.pc-pane-input--number {
+  width: 80px;
+}
+
+/* Selects */
+.pc-pane-select {
+  width: 100%;
+  height: var(--pc-pane-input-height);
+  padding: 0 8px;
+  border: 1px solid var(--pc-pane-border-color);
+  border-radius: var(--pc-pane-border-radius);
+  font-size: inherit;
+  background: var(--pc-pane-background);
+  color: var(--pc-pane-text-color);
+  box-sizing: border-box;
+}
+
+.pc-pane-select:focus {
+  outline: none;
+  border-color: var(--pc-pane-focus-color);
+}
+
+/* Color inputs */
+.pc-pane-color {
+  width: 40px;
+  height: var(--pc-pane-input-height);
+  padding: 2px;
+  border: 1px solid var(--pc-pane-border-color);
+  border-radius: var(--pc-pane-border-radius);
+  cursor: pointer;
+}
+
+/* Checkboxes */
+.pc-pane-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pc-pane-spacing-sm);
+  cursor: pointer;
+}
+
+.pc-pane-checkbox input {
+  margin: 0;
+}
+
+/* Buttons */
+.pc-pane-button {
+  height: var(--pc-pane-button-height);
+  padding: 0 12px;
+  border: 1px solid var(--pc-pane-border-color);
+  border-radius: var(--pc-pane-border-radius);
+  background: var(--pc-pane-background);
+  color: var(--pc-pane-text-color);
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.pc-pane-button:hover {
+  background: #f5f5f5;
+}
+
+.pc-pane-button--primary {
+  background: var(--pc-pane-focus-color);
+  border-color: var(--pc-pane-focus-color);
+  color: white;
+}
+
+.pc-pane-button--primary:hover {
+  background: #0055aa;
+}
+
+.pc-pane-button--danger {
+  background: #dc3545;
+  border-color: #dc3545;
+  color: white;
+}
+
+.pc-pane-button--danger:hover {
+  background: #c82333;
+}
+
+/* Icon buttons (fixed width with background image) */
+.pc-pane-button--icon {
+  width: var(--pc-pane-button-icon-width);
+  padding: 0;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 16px 16px;
+}
+
+/* Alignment icon buttons */
+.pc-pane-button--align-left {
+  background-image: var(--pc-pane-icon-align-left);
+}
+
+.pc-pane-button--align-center {
+  background-image: var(--pc-pane-icon-align-center);
+}
+
+.pc-pane-button--align-right {
+  background-image: var(--pc-pane-icon-align-right);
+}
+
+.pc-pane-button--align-justify {
+  background-image: var(--pc-pane-icon-align-justify);
+}
+
+/* Button groups */
+.pc-pane-button-group {
+  display: flex;
+  gap: var(--pc-pane-spacing-sm);
+  flex-wrap: wrap;
+}
+
+/* Sections */
+.pc-pane-section {
+  margin-top: var(--pc-pane-spacing);
+  padding-top: var(--pc-pane-spacing);
+  border-top: 1px solid var(--pc-pane-border-color);
+}
+
+.pc-pane-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.pc-pane-section-label {
+  font-weight: 600;
+  margin-bottom: var(--pc-pane-spacing);
+  color: var(--pc-pane-label-color);
+}
+
+/* Rows */
+.pc-pane-row {
+  display: flex;
+  gap: var(--pc-pane-spacing);
+  align-items: center;
+}
+
+/* Hints */
+.pc-pane-hint {
+  font-size: 11px;
+  color: #999;
+  margin-top: var(--pc-pane-spacing-sm);
+}
+
+/* Info display (read-only values) */
+.pc-pane-info {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--pc-pane-spacing-sm) 0;
+}
+
+.pc-pane-info-label {
+  color: var(--pc-pane-label-color);
+}
+
+.pc-pane-info-value {
+  font-weight: 500;
+}
+
+/* Toggle buttons (for formatting toolbar style) */
+.pc-pane-toggle {
+  width: var(--pc-pane-button-height);
+  height: var(--pc-pane-button-height);
+  padding: 0;
+  border: 1px solid var(--pc-pane-border-color);
+  border-radius: var(--pc-pane-border-radius);
+  background: #f5f5f5;
+  color: var(--pc-pane-text-color);
+  font-size: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pc-pane-toggle:hover {
+  background: #f0f0f0;
+}
+
+.pc-pane-toggle--active {
+  background: #e0e0e0;
+  border-color: var(--pc-pane-border-color);
+}
+
+/* Textarea */
+.pc-pane-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 8px;
+  border: 1px solid var(--pc-pane-border-color);
+  border-radius: var(--pc-pane-border-radius);
+  font-size: inherit;
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+  background: var(--pc-pane-background);
+  color: var(--pc-pane-text-color);
+}
+
+.pc-pane-textarea:focus {
+  outline: none;
+  border-color: var(--pc-pane-focus-color);
+}
+
+/* Info list (DocumentInfoPane) */
+.pc-pane-info-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pc-pane-spacing-sm);
+}
+
+/* View toggles (ViewSettingsPane) */
+.pc-pane-view-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-pane-spacing-sm);
+}
+
+.pc-pane-view-toggles .pc-pane-toggle {
+  flex: 1 1 auto;
+  min-width: 80px;
+  padding: 6px 8px;
+  width: auto;
+  height: auto;
+}
+
+/* Margins grid (DocumentSettingsPane) */
+.pc-pane-margins-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--pc-pane-spacing);
+  margin-bottom: var(--pc-pane-spacing);
+}
+
+.pc-pane-margins-grid .pc-pane-form-group--inline {
+  justify-content: space-between;
+}
+
+.pc-pane-margins-grid .pc-pane-input--number {
+  width: 60px;
+}
+
+/* Merge data textarea */
+.pc-pane-merge-data-input {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+  font-size: 12px;
+}
+
+/* Formatting pane */
+.pc-pane-formatting .pc-pane-button-group {
+  margin-bottom: var(--pc-pane-spacing);
+}
+
+.pc-pane-formatting .pc-pane-row {
+  gap: var(--pc-pane-spacing);
+}
+
+.pc-pane-formatting .pc-pane-row > div {
+  flex: 1;
+}
+
+/* Active state for formatting buttons */
+.pc-pane-button--active {
+  background-color: #e0e0e0;
+  border-color: var(--pc-pane-focus-color);
+}

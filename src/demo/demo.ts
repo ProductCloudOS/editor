@@ -1,14 +1,41 @@
-import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, SubstitutionField, RepeatingSection, EditingSection, TextAlignment, HorizontalRuler, VerticalRuler } from '../lib';
+import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, EditingSection, HorizontalRuler, VerticalRuler } from '../lib';
+
+// Import library panes
+import {
+  FormattingPane,
+  TextBoxPane,
+  ImagePane,
+  TablePane,
+  SubstitutionFieldPane,
+  RepeatingSectionPane,
+  TableRowLoopPane,
+  HyperlinkPane,
+  DocumentInfoPane,
+  DocumentSettingsPane,
+  ViewSettingsPane,
+  MergeDataPane
+} from '../lib/panes';
+
+// Import panes CSS
+import '../lib/panes/panes.css';
 
 let editor: PCEditor;
-let currentSelectedField: SubstitutionField | null = null;
-let currentSelectedSection: RepeatingSection | null = null;
-let currentSelectedTextBox: TextBoxObject | null = null;
-let currentSelectedTable: TableObject | null = null;
-let currentSelectedImage: ImageObject | null = null;
-let currentSelectedRowLoop: { table: TableObject; loopId: string } | null = null;
 let horizontalRuler: HorizontalRuler | null = null;
 let verticalRuler: VerticalRuler | null = null;
+
+// Library pane instances
+let formattingPane: FormattingPane | null = null;
+let textBoxPane: TextBoxPane | null = null;
+let imagePane: ImagePane | null = null;
+let tablePane: TablePane | null = null;
+let fieldPane: SubstitutionFieldPane | null = null;
+let loopPane: RepeatingSectionPane | null = null;
+let tableRowLoopPane: TableRowLoopPane | null = null;
+let hyperlinkPane: HyperlinkPane | null = null;
+let documentInfoPane: DocumentInfoPane | null = null;
+let documentSettingsPane: DocumentSettingsPane | null = null;
+let viewSettingsPane: ViewSettingsPane | null = null;
+let mergeDataPane: MergeDataPane | null = null;
 
 function initializeEditor(): void {
   const container = document.getElementById('editor');
@@ -34,56 +61,34 @@ function initializeEditor(): void {
     editor.setFlowingText('Welcome to PC Editor!\n\nThis is a document layout engine with flowing text support. Click in the text to position your cursor, then use the toolbar buttons to insert embedded content.\n\nTry inserting an image, text box, or substitution field at the cursor position. You can also use Float Left/Right to position images alongside text.\n\nThe text will automatically reflow around embedded content and across multiple pages as needed.');
     loadDocumentSettings();
     initializeRulers();
+    initializeLibraryPanes();
     updateStatus('Editor initialized');
   });
 }
 
 function setupEditorEventLogging(): void {
   // Selection change - unified event for cursor, text selection, element selection, and repeating section selection
+  // NOTE: Library panes handle their own show/hide/update via editor events.
+  // This handler now just logs and updates status bar.
   editor.on('selection-change', (event: { selection: EditorSelection }) => {
     const selection = event.selection;
 
     // Check if a substitution field is selected
     const selectedField = editor.getSelectedField();
-    updateFieldPane(selectedField);
 
     // Handle repeating section selection
     if (selection.type === 'repeating-section') {
       console.log(`[Editor Event] selection-change: repeating section selected: ${selection.sectionId}`);
       const section = editor.getRepeatingSection(selection.sectionId);
       if (section) {
-        updateLoopPane(section);
         updateStatus(`Loop "${section.fieldPath}" selected`);
       }
-      hideTextBoxPane();
-      hideImagePane();
-      hideFormattingPane();
-      return; // Don't hide loop pane or continue processing
+      return;
     }
 
-    // Hide loop pane for non-section selections
-    hideLoopPane();
-
-    // Check if a text box is selected (embedded object)
-    const selectedTextBox = editor.getSelectedTextBox?.();
-    if (selectedTextBox && !selectedTextBox.editing) {
-      updateTextBoxPane(selectedTextBox);
-    } else {
-      hideTextBoxPane();
-    }
-
-    // Check if an image is selected (embedded object)
-    const selectedImage = editor.getSelectedImage?.();
-    if (selectedImage) {
-      updateImagePane(selectedImage);
-    } else {
-      hideImagePane();
-    }
-
-    // Check if a table is selected or focused
+    // Check if a table is selected or focused (for table toolbar, not pane)
     const selectedTable = editor.getSelectedTable?.() || editor.getFocusedTable?.();
     updateTableTools(selectedTable);
-    updateTablePane(selectedTable);
 
     if (selection.type === 'cursor') {
       console.log(`[Editor Event] selection-change: cursor at position ${selection.position}`);
@@ -92,9 +97,6 @@ function setupEditorEventLogging(): void {
       } else {
         updateStatus(`Cursor at position ${selection.position}`);
       }
-      // Show and update formatting pane for text cursor
-      showFormattingPane();
-      updateFormattingPane();
     } else if (selection.type === 'text') {
       console.log(`[Editor Event] selection-change: text selection from ${selection.start} to ${selection.end}`);
       if (selectedField) {
@@ -102,13 +104,8 @@ function setupEditorEventLogging(): void {
       } else {
         updateStatus(`Text selected: ${selection.end - selection.start} characters`);
       }
-      // Show and update formatting pane for text selection
-      showFormattingPane();
-      updateFormattingPane();
     } else {
       console.log('[Editor Event] selection-change: no selection');
-      // Hide formatting pane when nothing is selected
-      hideFormattingPane();
     }
   });
 
@@ -122,8 +119,6 @@ function setupEditorEventLogging(): void {
   editor.on('document-change', (event: any) => {
     console.log('[Editor Event] document-change', event);
     updateDocumentInfo();
-    // Update list buttons in case list formatting changed (e.g., via Shift+Tab)
-    updateListButtons();
   });
 
   editor.on('document-loaded', (event: any) => {
@@ -171,12 +166,9 @@ function setupEditorEventLogging(): void {
   });
 
   // Unified text editing events
+  // NOTE: Library panes (FormattingPane, TextBoxPane) handle their own show/hide
   editor.on('text-editing-started', (event: { source: 'body' | 'textbox' | 'tablecell' }) => {
     console.log('[Editor Event] text-editing-started', event);
-    // Show formatting pane when editing any text
-    hideTextBoxPane();
-    showFormattingPane();
-    updateFormattingPane();
 
     switch (event.source) {
       case 'body':
@@ -193,8 +185,6 @@ function setupEditorEventLogging(): void {
 
   editor.on('text-editing-ended', (event: { source: 'body' | 'textbox' | 'tablecell' | null }) => {
     console.log('[Editor Event] text-editing-ended', event);
-    // Hide formatting pane when not editing text
-    hideFormattingPane();
   });
 
   // Legacy text box editing events (for backwards compatibility)
@@ -207,18 +197,13 @@ function setupEditorEventLogging(): void {
   });
 
   editor.on('textbox-cursor-changed', () => {
-    // Update formatting pane when cursor moves within text box
-    updateFormattingPane();
+    // Library FormattingPane handles this
+    console.log('[Editor Event] textbox-cursor-changed');
   });
 
   editor.on('tablecell-cursor-changed', () => {
-    // Update formatting pane when cursor moves within table cell
-    updateFormattingPane();
-    // Update table pane with current cell info
-    const focusedTable = editor.getFocusedTable?.();
-    if (focusedTable) {
-      updateTablePane(focusedTable);
-    }
+    // Library FormattingPane and TablePane handle this
+    console.log('[Editor Event] tablecell-cursor-changed');
   });
 
   // Text events
@@ -229,8 +214,6 @@ function setupEditorEventLogging(): void {
 
   editor.on('cursor-changed', (event: any) => {
     console.log('[Editor Event] cursor-changed', event);
-    // Update list buttons when cursor moves to reflect current paragraph's formatting
-    updateListButtons();
   });
 
   // Layout events
@@ -258,7 +241,6 @@ function setupEditorEventLogging(): void {
   editor.on('repeating-section-removed', (event: any) => {
     console.log('[Editor Event] repeating-section-removed', event);
     updateStatus('Loop removed');
-    hideLoopPane();
   });
 
   // Section focus changed (header/body/footer)
@@ -364,26 +346,19 @@ function setupEventHandlers(): void {
     updateStatus(result ? 'Pasted from clipboard' : 'Nothing to paste');
   });
 
+  // Hyperlink controls
+  document.getElementById('add-hyperlink')?.addEventListener('click', addHyperlink);
+  document.getElementById('remove-hyperlink')?.addEventListener('click', removeHyperlink);
+
   // View controls (menu)
   document.getElementById('zoom-in')?.addEventListener('click', () => editor?.zoomIn());
   document.getElementById('zoom-out')?.addEventListener('click', () => editor?.zoomOut());
   document.getElementById('fit-page')?.addEventListener('click', () => editor?.fitToPage());
 
-  // View controls (sidebar pane)
-  document.getElementById('toggle-control-chars-btn')?.addEventListener('click', toggleControlCharacters);
-  document.getElementById('toggle-margin-lines-btn')?.addEventListener('click', toggleMarginLines);
-  document.getElementById('toggle-grid-btn')?.addEventListener('click', toggleGrid);
-  document.getElementById('toggle-rulers-btn')?.addEventListener('click', toggleRulers);
-
-  // Prevent buttons from stealing focus - define early so it's available for all sections
+  // Prevent buttons from stealing focus
   const preventFocusSteal = (e: MouseEvent) => e.preventDefault();
 
-  // Save editing context before focus is stolen (for dropdowns/color pickers that need focus)
-  const saveSelectionBeforeFocusSteal = () => {
-    editor?.saveEditingContext();
-  };
-
-  // Embedded content controls
+  // Embedded content controls (Insert menu)
   document.getElementById('insert-inline-image')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-inline-image')?.addEventListener('click', insertEmbeddedImage);
   document.getElementById('insert-inline-text')?.addEventListener('mousedown', preventFocusSteal);
@@ -398,152 +373,30 @@ function setupEventHandlers(): void {
   document.getElementById('array-picker-overlay')?.addEventListener('click', hideArrayPicker);
   document.getElementById('insert-page-number')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-page-number')?.addEventListener('click', insertPageNumber);
-
-  // Table row loop section controls
-  document.getElementById('apply-table-row-loop')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('apply-table-row-loop')?.addEventListener('click', applyTableRowLoop);
-  document.getElementById('delete-table-row-loop')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('delete-table-row-loop')?.addEventListener('click', deleteTableRowLoop);
-
-  // Document settings controls
-  document.getElementById('apply-margins')?.addEventListener('click', applyMargins);
-  document.getElementById('page-size-select')?.addEventListener('change', updatePageSettings);
-  document.getElementById('page-orientation-select')?.addEventListener('change', updatePageSettings);
+  document.getElementById('create-loop')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('create-loop')?.addEventListener('click', createLoop);
+  document.getElementById('insert-page-break')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('insert-page-break')?.addEventListener('click', insertPageBreak);
 
   // Collapsible sections
   setupCollapsibleSections();
 
-  // Merge data
-  document.getElementById('apply-merge')?.addEventListener('click', applyMergeData);
-
-  // Export
+  // Export/Import (File menu)
   document.getElementById('export-pdf')?.addEventListener('click', exportPDF);
   document.getElementById('import-pdf')?.addEventListener('click', () => {
     document.getElementById('pdf-file-input')?.click();
   });
   document.getElementById('pdf-file-input')?.addEventListener('change', importPDFHandler);
 
-  // Save/Load
+  // Save/Load (File menu)
   document.getElementById('save-document')?.addEventListener('click', saveDocumentHandler);
   document.getElementById('load-document')?.addEventListener('click', () => {
     document.getElementById('file-input')?.click();
   });
   document.getElementById('file-input')?.addEventListener('change', loadDocumentHandler);
 
-  // Formatting controls
-  document.getElementById('format-bold')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('format-bold')?.addEventListener('click', toggleBold);
-  document.getElementById('format-italic')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('format-italic')?.addEventListener('click', toggleItalic);
-  // For controls that need focus (dropdowns, color pickers), save selection on mousedown
-  document.getElementById('format-font-family')?.addEventListener('mousedown', saveSelectionBeforeFocusSteal);
-  document.getElementById('format-font-family')?.addEventListener('change', applyFontFamily);
-  document.getElementById('format-font-size')?.addEventListener('mousedown', saveSelectionBeforeFocusSteal);
-  document.getElementById('format-font-size')?.addEventListener('change', applyFontSize);
-  document.getElementById('format-color')?.addEventListener('mousedown', saveSelectionBeforeFocusSteal);
-  document.getElementById('format-color')?.addEventListener('input', applyTextColor);
-  document.getElementById('format-highlight')?.addEventListener('mousedown', saveSelectionBeforeFocusSteal);
-  document.getElementById('format-highlight')?.addEventListener('input', applyHighlight);
-  document.getElementById('clear-highlight')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('clear-highlight')?.addEventListener('click', clearHighlight);
-
-  // Alignment controls
-  document.getElementById('align-left')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('align-left')?.addEventListener('click', () => setAlignment('left'));
-  document.getElementById('align-center')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('align-center')?.addEventListener('click', () => setAlignment('center'));
-  document.getElementById('align-right')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('align-right')?.addEventListener('click', () => setAlignment('right'));
-  document.getElementById('align-justify')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('align-justify')?.addEventListener('click', () => setAlignment('justify'));
-
-  // List controls
-  document.getElementById('toggle-bullet-list')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('toggle-bullet-list')?.addEventListener('click', toggleBulletList);
-  document.getElementById('toggle-number-list')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('toggle-number-list')?.addEventListener('click', toggleNumberedList);
-  document.getElementById('indent-list')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('indent-list')?.addEventListener('click', indentParagraph);
-  document.getElementById('outdent-list')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('outdent-list')?.addEventListener('click', outdentParagraph);
-
-  // Hyperlink controls
-  document.getElementById('insert-hyperlink')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('insert-hyperlink')?.addEventListener('click', insertOrEditHyperlink);
-  document.getElementById('remove-hyperlink')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('remove-hyperlink')?.addEventListener('click', removeHyperlink);
-  document.getElementById('apply-hyperlink-changes')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('apply-hyperlink-changes')?.addEventListener('click', applyHyperlinkChanges);
-  document.getElementById('remove-hyperlink-btn')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('remove-hyperlink-btn')?.addEventListener('click', removeHyperlink);
-
-  // Field controls
-  document.getElementById('apply-field-changes')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('apply-field-changes')?.addEventListener('click', applyFieldChanges);
-  document.getElementById('field-value-type')?.addEventListener('change', updateFieldFormatGroups);
-
-  // Loop controls
-  document.getElementById('create-loop')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('create-loop')?.addEventListener('click', createLoop);
-  document.getElementById('insert-page-break')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('insert-page-break')?.addEventListener('click', insertPageBreak);
-  document.getElementById('apply-loop-changes')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('apply-loop-changes')?.addEventListener('click', applyLoopChanges);
-  document.getElementById('delete-loop')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('delete-loop')?.addEventListener('click', deleteLoop);
-
-  // Text box controls
-  document.getElementById('apply-textbox-changes')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('apply-textbox-changes')?.addEventListener('click', applyTextBoxChanges);
-  document.getElementById('textbox-position')?.addEventListener('change', (e) => {
-    const offsetGroup = document.getElementById('textbox-offset-group');
-    if (offsetGroup) {
-      offsetGroup.style.display = (e.target as HTMLSelectElement).value === 'relative' ? 'block' : 'none';
-    }
-  });
-
-  // Image pane controls
-  document.getElementById('apply-image-changes')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('apply-image-changes')?.addEventListener('click', applyImageChanges);
-  document.getElementById('image-position')?.addEventListener('change', (e) => {
-    const offsetGroup = document.getElementById('image-offset-group');
-    if (offsetGroup) {
-      offsetGroup.style.display = (e.target as HTMLSelectElement).value === 'relative' ? 'block' : 'none';
-    }
-  });
-  document.getElementById('change-image-btn')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('change-image-btn')?.addEventListener('click', () => {
-    document.getElementById('image-file-picker')?.click();
-  });
-  document.getElementById('image-file-picker')?.addEventListener('change', handleImageFileChange);
-
-  // Table pane controls
-  document.getElementById('table-pane-add-row-before')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-pane-add-row-before')?.addEventListener('click', tablePaneAddRowBefore);
-  document.getElementById('table-pane-add-row-after')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-pane-add-row-after')?.addEventListener('click', tablePaneAddRowAfter);
-  document.getElementById('table-pane-delete-row')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-pane-delete-row')?.addEventListener('click', tablePaneDeleteRow);
-  document.getElementById('table-pane-add-col-before')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-pane-add-col-before')?.addEventListener('click', tablePaneAddColBefore);
-  document.getElementById('table-pane-add-col-after')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-pane-add-col-after')?.addEventListener('click', tablePaneAddColAfter);
-  document.getElementById('table-pane-delete-col')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-pane-delete-col')?.addEventListener('click', tablePaneDeleteCol);
-  document.getElementById('table-pane-merge')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-pane-merge')?.addEventListener('click', tablePaneMergeCells);
-  document.getElementById('table-pane-split')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-pane-split')?.addEventListener('click', tablePaneSplitCell);
-  document.getElementById('table-apply-cell-bg')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-apply-cell-bg')?.addEventListener('click', tablePaneApplyCellBackground);
-  document.getElementById('table-apply-borders')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-apply-borders')?.addEventListener('click', tablePaneApplyBorders);
-  document.getElementById('table-apply-headers')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-apply-headers')?.addEventListener('click', tablePaneApplyHeaders);
-  document.getElementById('table-apply-header-style')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-apply-header-style')?.addEventListener('click', tablePaneApplyHeaderStyle);
-  document.getElementById('table-apply-defaults')?.addEventListener('mousedown', preventFocusSteal);
-  document.getElementById('table-apply-defaults')?.addEventListener('click', tablePaneApplyDefaults);
+  // NOTE: All pane controls (formatting, document settings, merge data, hyperlink, field,
+  // loop, textbox, image, table) are now handled by library panes in src/lib/panes/
 }
 
 function loadSampleDocument(): void {
@@ -1391,50 +1244,7 @@ function clearDocument(): void {
   updateStatus('Document cleared');
 }
 
-function toggleControlCharacters(): void {
-  if (!editor) return;
-
-  const currentState = editor.getShowControlCharacters();
-  editor.setShowControlCharacters(!currentState);
-
-  // Update sidebar button state
-  const sidebarButton = document.getElementById('toggle-control-chars-btn');
-  if (sidebarButton) {
-    sidebarButton.classList.toggle('active', !currentState);
-  }
-
-  updateStatus(`Control characters ${!currentState ? 'shown' : 'hidden'}`);
-}
-
-function toggleMarginLines(): void {
-  if (!editor) return;
-
-  const currentState = editor.getShowMarginLines();
-  editor.setShowMarginLines(!currentState);
-
-  // Update button state
-  const button = document.getElementById('toggle-margin-lines-btn');
-  if (button) {
-    button.classList.toggle('active', !currentState);
-  }
-
-  updateStatus(`Margin lines ${!currentState ? 'shown' : 'hidden'}`);
-}
-
-function toggleGrid(): void {
-  if (!editor) return;
-
-  const currentState = editor.getShowGrid();
-  editor.setShowGrid(!currentState);
-
-  // Update button state
-  const button = document.getElementById('toggle-grid-btn');
-  if (button) {
-    button.classList.toggle('active', !currentState);
-  }
-
-  updateStatus(`Grid ${!currentState ? 'shown' : 'hidden'}`);
-}
+// NOTE: toggleControlCharacters, toggleMarginLines, toggleGrid removed - now handled by ViewSettingsPane
 
 function initializeRulers(): void {
   if (!editor) return;
@@ -1471,6 +1281,182 @@ function initializeRulers(): void {
   });
 }
 
+/**
+ * Initialize library panes - attach them to their respective containers.
+ * The panes will auto-update based on editor events.
+ */
+function initializeLibraryPanes(): void {
+  if (!editor) return;
+
+  // Formatting pane - attaches to the formatting section content area
+  const formattingContainer = document.getElementById('formatting-section');
+  if (formattingContainer) {
+    formattingPane = new FormattingPane('formatting', {
+      onApply: (success) => {
+        if (success) updateStatus('Formatting applied');
+      }
+    });
+    formattingPane.attach({ editor, container: formattingContainer });
+  }
+
+  // Text box pane
+  const textboxContainer = document.getElementById('textbox-properties');
+  const textboxSection = document.getElementById('textbox-section');
+  if (textboxContainer) {
+    textBoxPane = new TextBoxPane('textbox', {
+      onApply: (success) => {
+        if (success) updateStatus('Text box updated');
+      }
+    });
+    textBoxPane.attach({ editor, container: textboxContainer, sectionElement: textboxSection || undefined });
+  }
+
+  // Image pane
+  const imageContainer = document.getElementById('image-properties');
+  const imageSection = document.getElementById('image-section');
+  if (imageContainer) {
+    imagePane = new ImagePane('image', {
+      onApply: (success) => {
+        if (success) updateStatus('Image updated');
+      }
+    });
+    imagePane.attach({ editor, container: imageContainer, sectionElement: imageSection || undefined });
+  }
+
+  // Table pane
+  const tableContainer = document.getElementById('table-properties');
+  const tableSection = document.getElementById('table-section');
+  if (tableContainer) {
+    tablePane = new TablePane('table', {
+      onApply: (success) => {
+        if (success) updateStatus('Table updated');
+      }
+    });
+    tablePane.attach({ editor, container: tableContainer, sectionElement: tableSection || undefined });
+  }
+
+  // Substitution field pane
+  const fieldContainer = document.getElementById('field-properties');
+  const fieldSection = document.getElementById('field-section');
+  if (fieldContainer) {
+    fieldPane = new SubstitutionFieldPane('field', {
+      onApply: (success) => {
+        if (success) updateStatus('Field updated');
+      }
+    });
+    fieldPane.attach({ editor, container: fieldContainer, sectionElement: fieldSection || undefined });
+  }
+
+  // Repeating section pane
+  const loopContainer = document.getElementById('loop-properties');
+  const loopSection = document.getElementById('loop-section');
+  if (loopContainer) {
+    loopPane = new RepeatingSectionPane('loop', {
+      onApply: (success) => {
+        if (success) updateStatus('Loop updated');
+      }
+    });
+    loopPane.attach({ editor, container: loopContainer, sectionElement: loopSection || undefined });
+  }
+
+  // Table row loop pane
+  const tableRowLoopContainer = document.getElementById('table-row-loop-properties');
+  const tableRowLoopSection = document.getElementById('table-row-loop-section');
+  if (tableRowLoopContainer) {
+    tableRowLoopPane = new TableRowLoopPane('table-row-loop', {
+      onApply: (success) => {
+        if (success) updateStatus('Table row loop updated');
+      }
+    });
+    tableRowLoopPane.attach({ editor, container: tableRowLoopContainer, sectionElement: tableRowLoopSection || undefined });
+  }
+
+  // Hyperlink pane
+  const hyperlinkContainer = document.getElementById('hyperlink-properties');
+  const hyperlinkSection = document.getElementById('hyperlink-section');
+  if (hyperlinkContainer) {
+    hyperlinkPane = new HyperlinkPane('hyperlink', {
+      onApply: (success) => {
+        if (success) updateStatus('Hyperlink updated');
+      }
+    });
+    hyperlinkPane.attach({ editor, container: hyperlinkContainer, sectionElement: hyperlinkSection || undefined });
+  }
+
+  // Document info pane (read-only)
+  const docInfoContainer = document.getElementById('doc-info-section');
+  if (docInfoContainer) {
+    documentInfoPane = new DocumentInfoPane('doc-info');
+    documentInfoPane.attach({ editor, container: docInfoContainer });
+  }
+
+  // Document settings pane
+  const docSettingsContainer = document.getElementById('document-settings');
+  if (docSettingsContainer) {
+    documentSettingsPane = new DocumentSettingsPane('doc-settings', {
+      onApply: (success) => {
+        if (success) {
+          updateStatus('Document settings updated');
+          loadDocumentSettings(); // Refresh the inputs
+        }
+      }
+    });
+    documentSettingsPane.attach({ editor, container: docSettingsContainer });
+  }
+
+  // View settings pane - with rulers toggle
+  const viewSettingsContainer = document.getElementById('view-settings');
+  if (viewSettingsContainer) {
+    // Hide the separate rulers toggle button - ViewSettingsPane will handle it
+    const separateRulersBtn = document.querySelector('.view-toggles');
+    if (separateRulersBtn) {
+      (separateRulersBtn as HTMLElement).style.display = 'none';
+    }
+
+    viewSettingsPane = new ViewSettingsPane('view-settings', {
+      onToggleRulers: () => {
+        toggleRulers();
+      },
+      rulersVisible: true
+    });
+    viewSettingsPane.attach({ editor, container: viewSettingsContainer });
+  }
+
+  // Merge data pane with sample data
+  const mergeDataContainer = document.getElementById('merge-data-section');
+  if (mergeDataContainer) {
+    mergeDataPane = new MergeDataPane('merge-data', {
+      initialData: {
+        customerName: 'Jane Smith',
+        date: '2024-01-15',
+        items: [
+          { item: 'Widget Pro', amount: '49.99' },
+          { item: 'Gadget Plus', amount: '79.99' },
+          { item: 'Service Fee', amount: '5.00' }
+        ],
+        contact: {
+          mobile: '+1 (555) 123-4567',
+          address: {
+            street: '123 Main Street',
+            city: 'San Francisco',
+            postcode: 'CA 94102'
+          }
+        }
+      },
+      onApply: (success, error) => {
+        if (success) {
+          updateStatus('Merge data applied');
+        } else if (error) {
+          updateStatus(`Merge error: ${error.message}`, 'error');
+        }
+      }
+    });
+    mergeDataPane.attach({ editor, container: mergeDataContainer });
+  }
+
+  console.log('[Demo] Library panes initialized');
+}
+
 function toggleRulers(): void {
   const rulersVisible = horizontalRuler?.isVisible ?? false;
 
@@ -1482,13 +1468,7 @@ function toggleRulers(): void {
     verticalRuler?.show();
   }
 
-  // Update button state
-  const button = document.getElementById('toggle-rulers-btn');
-  if (button) {
-    button.classList.toggle('active', !rulersVisible);
-  }
-
-  // Also hide/show ruler containers and corner
+  // Hide/show ruler containers and corner
   const horizontalContainer = document.getElementById('horizontal-ruler');
   const verticalContainer = document.getElementById('vertical-ruler');
   const corner = document.querySelector('.ruler-corner') as HTMLElement;
@@ -1550,54 +1530,7 @@ function updateStatus(message: string, type: 'info' | 'error' = 'info'): void {
   }
 }
 
-function applyMargins(): void {
-  if (!editor) return;
-
-  const topInput = document.getElementById('margin-top') as HTMLInputElement;
-  const rightInput = document.getElementById('margin-right') as HTMLInputElement;
-  const bottomInput = document.getElementById('margin-bottom') as HTMLInputElement;
-  const leftInput = document.getElementById('margin-left') as HTMLInputElement;
-
-  if (!topInput || !rightInput || !bottomInput || !leftInput) return;
-
-  const margins = {
-    top: parseFloat(topInput.value),
-    right: parseFloat(rightInput.value),
-    bottom: parseFloat(bottomInput.value),
-    left: parseFloat(leftInput.value)
-  };
-
-  try {
-    editor.updateDocumentSettings({ margins });
-    updateStatus('Margins updated');
-  } catch (error) {
-    updateStatus('Failed to update margins', 'error');
-    console.error('Margin update error:', error);
-  }
-}
-
-function updatePageSettings(): void {
-  if (!editor) return;
-
-  const pageSizeSelect = document.getElementById('page-size-select') as HTMLSelectElement;
-  const pageOrientationSelect = document.getElementById('page-orientation-select') as HTMLSelectElement;
-
-  if (!pageSizeSelect || !pageOrientationSelect) return;
-
-  const settings = {
-    pageSize: pageSizeSelect.value,
-    pageOrientation: pageOrientationSelect.value
-  };
-
-  try {
-    editor.updateDocumentSettings(settings);
-    updateStatus(`Page: ${settings.pageSize} ${settings.pageOrientation}`);
-    updateDocumentInfo();
-  } catch (error) {
-    updateStatus('Failed to update page settings', 'error');
-    console.error('Page settings update error:', error);
-  }
-}
+// NOTE: applyMargins, updatePageSettings removed - now handled by DocumentSettingsPane
 
 function loadDocumentSettings(): void {
   if (!editor) return;
@@ -1799,17 +1732,10 @@ function extractArrayPaths(obj: unknown, prefix: string = ''): string[] {
 }
 
 /**
- * Get the current merge data from the textarea.
+ * Get the current merge data from the MergeDataPane.
  */
 function getMergeData(): Record<string, unknown> | null {
-  const textarea = document.getElementById('merge-data-input') as HTMLTextAreaElement;
-  if (!textarea) return null;
-
-  try {
-    return JSON.parse(textarea.value);
-  } catch {
-    return null;
-  }
+  return mergeDataPane?.getData() ?? null;
 }
 
 /**
@@ -1939,7 +1865,8 @@ function createLoopWithPath(fieldPath: string): void {
   try {
     const section = editor.createRepeatingSection(pendingLoopStart, pendingLoopEnd, fieldPath.trim());
     if (section) {
-      updateLoopPane(section);
+      // Use library pane to show the section
+      loopPane?.showSection(section);
       updateStatus(`Loop created for "${fieldPath.trim()}"`);
     } else {
       updateStatus('Failed to create loop - check boundaries', 'error');
@@ -1980,608 +1907,6 @@ function toggleFieldPicker(): void {
   }
 }
 
-// ============================================
-// Formatting Functions
-// ============================================
-
-/**
- * Update the formatting pane UI to reflect the current selection's formatting.
- */
-function updateFormattingPane(): void {
-  if (!editor) return;
-
-  // Get formatting from whatever text is being edited (body, textbox, or table cell)
-  const formatting = editor.getUnifiedFormattingAtCursor();
-  if (!formatting) return;
-
-  // Update Bold button
-  const boldBtn = document.getElementById('format-bold');
-  if (boldBtn) {
-    if (formatting.fontWeight === 'bold') {
-      boldBtn.classList.add('active');
-    } else {
-      boldBtn.classList.remove('active');
-    }
-  }
-
-  // Update Italic button
-  const italicBtn = document.getElementById('format-italic');
-  if (italicBtn) {
-    if (formatting.fontStyle === 'italic') {
-      italicBtn.classList.add('active');
-    } else {
-      italicBtn.classList.remove('active');
-    }
-  }
-
-  // Update Font Family dropdown
-  const fontFamilySelect = document.getElementById('format-font-family') as HTMLSelectElement;
-  if (fontFamilySelect && formatting.fontFamily) {
-    fontFamilySelect.value = formatting.fontFamily;
-  }
-
-  // Update Font Size dropdown
-  const fontSizeSelect = document.getElementById('format-font-size') as HTMLSelectElement;
-  if (fontSizeSelect && formatting.fontSize) {
-    fontSizeSelect.value = formatting.fontSize.toString();
-  }
-
-  // Update Color picker
-  const colorInput = document.getElementById('format-color') as HTMLInputElement;
-  if (colorInput && formatting.color) {
-    colorInput.value = formatting.color;
-  }
-
-  // Update Highlight picker
-  const highlightInput = document.getElementById('format-highlight') as HTMLInputElement;
-  if (highlightInput && formatting.backgroundColor) {
-    highlightInput.value = formatting.backgroundColor;
-  }
-
-  // Update Alignment buttons
-  const alignment = editor.getUnifiedAlignmentAtCursor();
-  updateAlignmentButtons(alignment);
-
-  // Update List buttons
-  updateListButtons();
-
-  // Update Hyperlink pane
-  updateHyperlinkPane();
-}
-
-function getSelection(): { start: number; end: number } | null {
-  if (!editor) return null;
-
-  // Use unified selection API with fallback to saved context
-  // This handles cases where focus was stolen by dropdowns
-  return editor.getSavedOrCurrentSelection();
-}
-
-function applyFormattingToSelection(formatting: Record<string, any>): void {
-  const selection = getSelection();
-
-  try {
-    if (selection) {
-      // Apply formatting to the selected range
-      editor.applyFormattingWithFallback(selection.start, selection.end, formatting);
-      updateStatus('Formatting applied');
-    } else {
-      // No selection - set pending formatting for next character typed
-      editor.setPendingFormatting(formatting);
-      updateStatus('Formatting set for next character');
-    }
-    // Clear the saved context now that we've used it
-    editor.clearSavedEditingContext();
-    // Update the formatting pane to reflect the new formatting
-    updateFormattingPane();
-    // Restore focus to the editor so selection is preserved
-    editor.enableTextInput();
-  } catch (error) {
-    // If no text is being edited, show error
-    updateStatus('Click in text to apply formatting', 'error');
-    console.error('Formatting error:', error);
-  }
-}
-
-function toggleBold(): void {
-  const btn = document.getElementById('format-bold');
-  const isActive = btn?.classList.contains('active');
-
-  applyFormattingToSelection({
-    fontWeight: isActive ? 'normal' : 'bold'
-  });
-}
-
-function toggleItalic(): void {
-  const btn = document.getElementById('format-italic');
-  const isActive = btn?.classList.contains('active');
-
-  applyFormattingToSelection({
-    fontStyle: isActive ? 'normal' : 'italic'
-  });
-}
-
-function applyFontFamily(): void {
-  const select = document.getElementById('format-font-family') as HTMLSelectElement;
-  if (!select) return;
-
-  applyFormattingToSelection({
-    fontFamily: select.value
-  });
-}
-
-function applyFontSize(): void {
-  const select = document.getElementById('format-font-size') as HTMLSelectElement;
-  if (!select) return;
-
-  applyFormattingToSelection({
-    fontSize: parseInt(select.value, 10)
-  });
-}
-
-function applyTextColor(): void {
-  const input = document.getElementById('format-color') as HTMLInputElement;
-  if (!input) return;
-
-  applyFormattingToSelection({
-    color: input.value
-  });
-}
-
-function applyHighlight(): void {
-  const input = document.getElementById('format-highlight') as HTMLInputElement;
-  if (!input) return;
-
-  applyFormattingToSelection({
-    backgroundColor: input.value
-  });
-}
-
-function clearHighlight(): void {
-  applyFormattingToSelection({
-    backgroundColor: undefined
-  });
-}
-
-// ============================================
-// Alignment Functions
-// ============================================
-
-/**
- * Set the alignment for the current paragraph or selection.
- */
-function setAlignment(alignment: TextAlignment): void {
-  if (!editor) return;
-
-  try {
-    // Use unified alignment API - works for body, textbox, and table cells
-    editor.setUnifiedAlignment(alignment);
-    updateAlignmentButtons(alignment);
-    updateStatus(`Alignment: ${alignment}`);
-  } catch (error) {
-    updateStatus('Failed to set alignment', 'error');
-    console.error('Alignment error:', error);
-  }
-}
-
-/**
- * Update the alignment buttons to show the active alignment.
- */
-function updateAlignmentButtons(alignment: TextAlignment): void {
-  const alignments: TextAlignment[] = ['left', 'center', 'right', 'justify'];
-
-  for (const a of alignments) {
-    const btn = document.getElementById(`align-${a}`);
-    if (btn) {
-      if (a === alignment) {
-        btn.classList.add('active');
-      } else {
-        btn.classList.remove('active');
-      }
-    }
-  }
-}
-
-// ============================================
-// List Functions
-// ============================================
-
-/**
- * Toggle bullet list for the current paragraph.
- */
-function toggleBulletList(): void {
-  if (!editor) return;
-  try {
-    editor.toggleBulletList();
-    updateListButtons();
-    updateStatus('Toggled bullet list');
-  } catch (error) {
-    updateStatus('Failed to toggle bullet list', 'error');
-    console.error('Bullet list error:', error);
-  }
-}
-
-/**
- * Toggle numbered list for the current paragraph.
- */
-function toggleNumberedList(): void {
-  if (!editor) return;
-  try {
-    editor.toggleNumberedList();
-    updateListButtons();
-    updateStatus('Toggled numbered list');
-  } catch (error) {
-    updateStatus('Failed to toggle numbered list', 'error');
-    console.error('Numbered list error:', error);
-  }
-}
-
-/**
- * Indent the current paragraph.
- */
-function indentParagraph(): void {
-  if (!editor) return;
-  try {
-    editor.indentParagraph();
-    updateListButtons();
-    updateStatus('Increased indent');
-  } catch (error) {
-    updateStatus('Failed to indent', 'error');
-    console.error('Indent error:', error);
-  }
-}
-
-/**
- * Outdent the current paragraph.
- */
-function outdentParagraph(): void {
-  if (!editor) return;
-  try {
-    editor.outdentParagraph();
-    updateListButtons();
-    updateStatus('Decreased indent');
-  } catch (error) {
-    updateStatus('Failed to outdent', 'error');
-    console.error('Outdent error:', error);
-  }
-}
-
-/**
- * Update the list buttons to show active state.
- */
-function updateListButtons(): void {
-  if (!editor) return;
-
-  const listFormatting = editor.getListFormatting();
-  const bulletBtn = document.getElementById('toggle-bullet-list');
-  const numberBtn = document.getElementById('toggle-number-list');
-
-  if (bulletBtn) {
-    bulletBtn.classList.toggle('active', listFormatting?.listType === 'bullet');
-  }
-  if (numberBtn) {
-    numberBtn.classList.toggle('active', listFormatting?.listType === 'number');
-  }
-}
-
-// ============================================
-// Hyperlink Functions
-// ============================================
-
-// Track the currently selected hyperlink for the properties pane
-let currentSelectedHyperlink: { id: string; url: string; title?: string; startIndex: number; endIndex: number } | null = null;
-
-/**
- * Insert a new hyperlink or edit an existing one at the cursor.
- */
-function insertOrEditHyperlink(): void {
-  if (!editor) return;
-
-  try {
-    // Check if we're at an existing hyperlink
-    const cursorPos = editor.getCursorPosition();
-    const existingLink = editor.getHyperlinkAt(cursorPos);
-
-    console.log('[insertOrEditHyperlink] cursorPos:', cursorPos, 'existingLink:', existingLink);
-
-    if (existingLink) {
-      // Edit existing hyperlink - show properties pane
-      showHyperlinkPane(existingLink);
-      updateStatus('Editing hyperlink');
-    } else {
-      // Insert new hyperlink - requires text selection
-      // First try the event-tracked selection, then fall back to direct query
-      const selection = editor.getSelection();
-      const textSelection = editor.getTextSelection();
-      console.log('[insertOrEditHyperlink] selection:', selection, 'textSelection:', textSelection);
-
-      // Check if there's a valid text selection
-      const hasTextSelection = (selection?.type === 'text' && selection.start !== selection.end) ||
-                               (textSelection !== null && textSelection.start !== textSelection.end);
-
-      if (!hasTextSelection) {
-        updateStatus('Select text first to insert a hyperlink', 'error');
-        return;
-      }
-
-      // Prompt for URL
-      const url = prompt('Enter URL:', 'https://');
-      if (!url) return;
-
-      const hyperlink = editor.insertHyperlink(url);
-      if (hyperlink) {
-        showHyperlinkPane(hyperlink);
-        updateStatus('Hyperlink inserted');
-      }
-    }
-  } catch (error) {
-    updateStatus('Failed to insert hyperlink', 'error');
-    console.error('Hyperlink error:', error);
-  }
-}
-
-/**
- * Remove the hyperlink at the cursor.
- */
-function removeHyperlink(): void {
-  if (!editor) return;
-
-  try {
-    // Check for hyperlink at cursor or from current selection
-    const cursorPos = editor.getCursorPosition();
-    const hyperlink = currentSelectedHyperlink || editor.getHyperlinkAt(cursorPos);
-
-    if (hyperlink) {
-      editor.removeHyperlink(hyperlink.id);
-      currentSelectedHyperlink = null;
-      hideHyperlinkPane();
-      updateStatus('Hyperlink removed');
-    } else {
-      updateStatus('No hyperlink at cursor', 'error');
-    }
-  } catch (error) {
-    updateStatus('Failed to remove hyperlink', 'error');
-    console.error('Remove hyperlink error:', error);
-  }
-}
-
-/**
- * Apply changes from the hyperlink properties pane.
- */
-function applyHyperlinkChanges(): void {
-  if (!editor || !currentSelectedHyperlink) return;
-
-  try {
-    const urlInput = document.getElementById('hyperlink-url-input') as HTMLInputElement;
-    const titleInput = document.getElementById('hyperlink-title-input') as HTMLInputElement;
-
-    if (!urlInput) return;
-
-    const url = urlInput.value.trim();
-    const title = titleInput?.value.trim() || undefined;
-
-    if (!url) {
-      updateStatus('URL is required', 'error');
-      return;
-    }
-
-    editor.updateHyperlink(currentSelectedHyperlink.id, { url, title });
-    currentSelectedHyperlink.url = url;
-    currentSelectedHyperlink.title = title;
-
-    updateStatus('Hyperlink updated');
-  } catch (error) {
-    updateStatus('Failed to update hyperlink', 'error');
-    console.error('Update hyperlink error:', error);
-  }
-}
-
-/**
- * Show the hyperlink properties pane.
- */
-function showHyperlinkPane(hyperlink: { id: string; url: string; title?: string; startIndex: number; endIndex: number }): void {
-  const section = document.getElementById('hyperlink-section');
-  const urlInput = document.getElementById('hyperlink-url-input') as HTMLInputElement;
-  const titleInput = document.getElementById('hyperlink-title-input') as HTMLInputElement;
-  const rangeHint = document.getElementById('hyperlink-range-hint');
-
-  if (!section) return;
-
-  currentSelectedHyperlink = hyperlink;
-  section.style.display = 'block';
-
-  if (urlInput) {
-    urlInput.value = hyperlink.url;
-  }
-  if (titleInput) {
-    titleInput.value = hyperlink.title || '';
-  }
-  if (rangeHint) {
-    rangeHint.textContent = `Link spans characters ${hyperlink.startIndex} to ${hyperlink.endIndex}`;
-  }
-}
-
-/**
- * Hide the hyperlink properties pane.
- */
-function hideHyperlinkPane(): void {
-  const section = document.getElementById('hyperlink-section');
-  if (section) {
-    section.style.display = 'none';
-  }
-  currentSelectedHyperlink = null;
-}
-
-/**
- * Update hyperlink pane based on cursor position.
- */
-function updateHyperlinkPane(): void {
-  if (!editor) return;
-
-  const cursorPos = editor.getCursorPosition();
-  const hyperlink = editor.getHyperlinkAt(cursorPos);
-
-  if (hyperlink) {
-    showHyperlinkPane(hyperlink);
-  } else {
-    hideHyperlinkPane();
-  }
-}
-
-// ============================================
-// Field Pane Functions
-// ============================================
-
-/**
- * Update the field pane to show/hide based on whether a field is selected.
- */
-function updateFieldPane(field: SubstitutionField | null): void {
-  const fieldSection = document.getElementById('field-section');
-  const fieldNameInput = document.getElementById('field-name-input') as HTMLInputElement;
-  const fieldDefaultInput = document.getElementById('field-default-input') as HTMLInputElement;
-  const fieldPositionHint = document.getElementById('field-position-hint');
-  const fieldValueType = document.getElementById('field-value-type') as HTMLSelectElement;
-  const fieldNumberFormat = document.getElementById('field-number-format') as HTMLSelectElement;
-  const fieldCurrencyFormat = document.getElementById('field-currency-format') as HTMLSelectElement;
-  const fieldDateFormat = document.getElementById('field-date-format') as HTMLSelectElement;
-
-  if (!fieldSection) return;
-
-  if (field) {
-    // Show the field pane and populate with field data
-    fieldSection.style.display = 'block';
-    currentSelectedField = field;
-
-    if (fieldNameInput) {
-      fieldNameInput.value = field.fieldName;
-    }
-    if (fieldDefaultInput) {
-      fieldDefaultInput.value = field.defaultValue || '';
-    }
-    if (fieldPositionHint) {
-      fieldPositionHint.textContent = `Field at position ${field.textIndex}`;
-    }
-
-    // Populate format options
-    if (fieldValueType) {
-      fieldValueType.value = field.formatConfig?.valueType || '';
-    }
-    if (fieldNumberFormat && field.formatConfig?.numberFormat) {
-      fieldNumberFormat.value = field.formatConfig.numberFormat;
-    }
-    if (fieldCurrencyFormat && field.formatConfig?.currencyFormat) {
-      fieldCurrencyFormat.value = field.formatConfig.currencyFormat;
-    }
-    if (fieldDateFormat && field.formatConfig?.dateFormat) {
-      fieldDateFormat.value = field.formatConfig.dateFormat;
-    }
-
-    // Update visibility of format groups
-    updateFieldFormatGroups();
-
-    console.log(`[Field Pane] Showing field: ${field.fieldName} at position ${field.textIndex}`);
-  } else {
-    // Hide the field pane
-    fieldSection.style.display = 'none';
-    currentSelectedField = null;
-  }
-}
-
-/**
- * Update visibility of format-specific option groups based on value type.
- */
-function updateFieldFormatGroups(): void {
-  const valueType = (document.getElementById('field-value-type') as HTMLSelectElement)?.value;
-  const numberGroup = document.getElementById('number-format-group');
-  const currencyGroup = document.getElementById('currency-format-group');
-  const dateGroup = document.getElementById('date-format-group');
-
-  if (numberGroup) numberGroup.style.display = valueType === 'number' ? 'block' : 'none';
-  if (currencyGroup) currencyGroup.style.display = valueType === 'currency' ? 'block' : 'none';
-  if (dateGroup) dateGroup.style.display = valueType === 'date' ? 'block' : 'none';
-}
-
-/**
- * Apply changes to the currently selected field.
- */
-function applyFieldChanges(): void {
-  if (!editor || !currentSelectedField) {
-    updateStatus('No field selected', 'error');
-    return;
-  }
-
-  const fieldNameInput = document.getElementById('field-name-input') as HTMLInputElement;
-  const fieldDefaultInput = document.getElementById('field-default-input') as HTMLInputElement;
-  const fieldValueType = document.getElementById('field-value-type') as HTMLSelectElement;
-  const fieldNumberFormat = document.getElementById('field-number-format') as HTMLSelectElement;
-  const fieldCurrencyFormat = document.getElementById('field-currency-format') as HTMLSelectElement;
-  const fieldDateFormat = document.getElementById('field-date-format') as HTMLSelectElement;
-
-  if (!fieldNameInput) return;
-
-  const newFieldName = fieldNameInput.value.trim();
-  if (!newFieldName) {
-    updateStatus('Field name cannot be empty', 'error');
-    return;
-  }
-
-  const updates: {
-    fieldName?: string;
-    defaultValue?: string;
-    formatConfig?: {
-      valueType?: 'string' | 'number' | 'currency' | 'date' | 'markdown';
-      numberFormat?: string;
-      currencyFormat?: 'USD' | 'EUR' | 'GBP' | 'JPY' | 'custom';
-      dateFormat?: string;
-    };
-  } = {};
-
-  if (newFieldName !== currentSelectedField.fieldName) {
-    updates.fieldName = newFieldName;
-  }
-
-  const newDefaultValue = fieldDefaultInput?.value || undefined;
-  if (newDefaultValue !== currentSelectedField.defaultValue) {
-    updates.defaultValue = newDefaultValue;
-  }
-
-  // Build format config based on value type
-  const valueType = fieldValueType?.value as 'number' | 'currency' | 'date' | '';
-  if (valueType) {
-    const formatConfig: NonNullable<typeof updates.formatConfig> = {
-      valueType: valueType as 'number' | 'currency' | 'date'
-    };
-
-    if (valueType === 'number' && fieldNumberFormat?.value) {
-      formatConfig.numberFormat = fieldNumberFormat.value;
-    } else if (valueType === 'currency' && fieldCurrencyFormat?.value) {
-      formatConfig.currencyFormat = fieldCurrencyFormat.value as 'USD' | 'EUR' | 'GBP' | 'JPY';
-    } else if (valueType === 'date' && fieldDateFormat?.value) {
-      formatConfig.dateFormat = fieldDateFormat.value;
-    }
-
-    updates.formatConfig = formatConfig;
-  } else if (currentSelectedField.formatConfig) {
-    // Clear format config if value type was cleared
-    updates.formatConfig = undefined;
-  }
-
-  if (Object.keys(updates).length === 0) {
-    updateStatus('No changes to apply');
-    return;
-  }
-
-  const success = editor.updateField(currentSelectedField.textIndex, updates);
-
-  if (success) {
-    updateStatus(`Field updated to "${newFieldName}"`);
-    // Update the current field reference
-    currentSelectedField = editor.getFieldAt(currentSelectedField.textIndex);
-  } else {
-    updateStatus('Failed to update field', 'error');
-  }
-}
-
 function setupCollapsibleSections(): void {
   const headers = document.querySelectorAll('.collapsible-header');
 
@@ -2600,28 +1925,6 @@ function setupCollapsibleSections(): void {
       content.classList.toggle('collapsed');
     });
   });
-}
-
-function applyMergeData(): void {
-  if (!editor) return;
-
-  const textarea = document.getElementById('merge-data-input') as HTMLTextAreaElement;
-  if (!textarea) return;
-
-  try {
-    const mergeData = JSON.parse(textarea.value);
-
-    // Apply the merge data to substitute all fields
-    editor.applyMergeData(mergeData);
-    updateStatus('Merge data applied');
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      updateStatus('Invalid JSON in merge data', 'error');
-    } else {
-      updateStatus('Failed to apply merge data', 'error');
-    }
-    console.error('Merge data error:', error);
-  }
 }
 
 /**
@@ -2769,6 +2072,55 @@ function insertPageBreak(): void {
   }
 }
 
+// Hyperlink Functions
+// ============================================
+
+function addHyperlink(): void {
+  if (!editor) return;
+
+  // Check if there's a text selection
+  const selection = editor.getSelection();
+  if (selection.type !== 'text' || selection.start === selection.end) {
+    updateStatus('Select text first to create a hyperlink', 'error');
+    return;
+  }
+
+  // Prompt for URL
+  const url = prompt('Enter URL:', 'https://');
+  if (!url || url === 'https://') {
+    return;
+  }
+
+  try {
+    editor.insertHyperlink(url);
+    updateStatus('Hyperlink added');
+  } catch (error) {
+    updateStatus('Failed to add hyperlink', 'error');
+    console.error('Hyperlink error:', error);
+  }
+}
+
+function removeHyperlink(): void {
+  if (!editor) return;
+
+  // Check if cursor is in a hyperlink
+  const cursorPos = editor.getCursorPosition();
+  const hyperlink = editor.getHyperlinkAt(cursorPos);
+
+  if (!hyperlink) {
+    updateStatus('Place cursor in a hyperlink first', 'error');
+    return;
+  }
+
+  try {
+    editor.removeHyperlink(hyperlink.id);
+    updateStatus('Hyperlink removed');
+  } catch (error) {
+    updateStatus('Failed to remove hyperlink', 'error');
+    console.error('Remove hyperlink error:', error);
+  }
+}
+
 // Loop Pane Functions
 // ============================================
 
@@ -2815,1202 +2167,6 @@ function createLoop(): void {
 
   // Show the array picker modal
   showArrayPicker(startBoundary, endBoundary);
-}
-
-/**
- * Update the loop pane to show the selected section.
- */
-function updateLoopPane(section: RepeatingSection | null): void {
-  const loopSection = document.getElementById('loop-section');
-  const fieldPathInput = document.getElementById('loop-field-path') as HTMLInputElement;
-  const positionHint = document.getElementById('loop-position-hint');
-
-  if (!loopSection) return;
-
-  if (section) {
-    // Show the loop pane and populate with section data
-    loopSection.style.display = 'block';
-    currentSelectedSection = section;
-
-    if (fieldPathInput) {
-      fieldPathInput.value = section.fieldPath;
-    }
-    if (positionHint) {
-      positionHint.textContent = `Loop from position ${section.startIndex} to ${section.endIndex}`;
-    }
-
-    // Hide field pane if it's visible
-    const fieldSection = document.getElementById('field-section');
-    if (fieldSection) {
-      fieldSection.style.display = 'none';
-      currentSelectedField = null;
-    }
-
-    console.log(`[Loop Pane] Showing loop: ${section.fieldPath} (${section.startIndex} - ${section.endIndex})`);
-  } else {
-    hideLoopPane();
-  }
-}
-
-/**
- * Hide the loop pane.
- */
-function hideLoopPane(): void {
-  const loopSection = document.getElementById('loop-section');
-  if (loopSection) {
-    loopSection.style.display = 'none';
-  }
-  currentSelectedSection = null;
-}
-
-/**
- * Apply changes to the currently selected loop.
- */
-function applyLoopChanges(): void {
-  if (!editor || !currentSelectedSection) {
-    updateStatus('No loop selected', 'error');
-    return;
-  }
-
-  const fieldPathInput = document.getElementById('loop-field-path') as HTMLInputElement;
-  if (!fieldPathInput) return;
-
-  const newFieldPath = fieldPathInput.value.trim();
-  if (!newFieldPath) {
-    updateStatus('Field path cannot be empty', 'error');
-    return;
-  }
-
-  if (newFieldPath === currentSelectedSection.fieldPath) {
-    updateStatus('No changes to apply');
-    return;
-  }
-
-  const success = editor.updateRepeatingSectionFieldPath(currentSelectedSection.id, newFieldPath);
-
-  if (success) {
-    updateStatus(`Loop updated to "${newFieldPath}"`);
-    // Update the current section reference
-    currentSelectedSection = editor.getRepeatingSection(currentSelectedSection.id);
-    if (currentSelectedSection) {
-      updateLoopPane(currentSelectedSection);
-    }
-  } else {
-    updateStatus('Failed to update loop', 'error');
-  }
-}
-
-/**
- * Delete the currently selected loop.
- */
-function deleteLoop(): void {
-  if (!editor || !currentSelectedSection) {
-    updateStatus('No loop selected', 'error');
-    return;
-  }
-
-  const success = editor.removeRepeatingSection(currentSelectedSection.id);
-
-  if (success) {
-    hideLoopPane();
-    updateStatus('Loop deleted');
-  } else {
-    updateStatus('Failed to delete loop', 'error');
-  }
-}
-
-/**
- * Update the text box pane when a text box is selected.
- */
-function updateTextBoxPane(textBox: TextBoxObject | null): void {
-  const textboxSection = document.getElementById('textbox-section');
-  const positionSelect = document.getElementById('textbox-position') as HTMLSelectElement;
-  const offsetGroup = document.getElementById('textbox-offset-group');
-  const offsetXInput = document.getElementById('textbox-offset-x') as HTMLInputElement;
-  const offsetYInput = document.getElementById('textbox-offset-y') as HTMLInputElement;
-  const bgColorInput = document.getElementById('textbox-bg-color') as HTMLInputElement;
-  const borderWidthInput = document.getElementById('textbox-border-width') as HTMLInputElement;
-  const borderColorInput = document.getElementById('textbox-border-color') as HTMLInputElement;
-  const borderStyleSelect = document.getElementById('textbox-border-style') as HTMLSelectElement;
-  const paddingInput = document.getElementById('textbox-padding') as HTMLInputElement;
-
-  if (!textboxSection) return;
-
-  if (textBox) {
-    // Show the text box pane and populate with text box data
-    textboxSection.style.display = 'block';
-    currentSelectedTextBox = textBox;
-
-    // Populate position controls
-    if (positionSelect) positionSelect.value = textBox.position || 'inline';
-    if (offsetGroup) {
-      offsetGroup.style.display = textBox.position === 'relative' ? 'block' : 'none';
-    }
-    if (offsetXInput) offsetXInput.value = String(textBox.relativeOffset?.x ?? 0);
-    if (offsetYInput) offsetYInput.value = String(textBox.relativeOffset?.y ?? 0);
-
-    // Populate other controls
-    if (bgColorInput) bgColorInput.value = textBox.backgroundColor || '#ffffff';
-    if (borderWidthInput) borderWidthInput.value = String(textBox.border?.top?.width ?? 1);
-    if (borderColorInput) borderColorInput.value = textBox.border?.top?.color ?? '#cccccc';
-    if (borderStyleSelect) borderStyleSelect.value = textBox.border?.top?.style ?? 'solid';
-    if (paddingInput) paddingInput.value = String(textBox.padding ?? 4);
-
-    console.log(`[TextBox Pane] Showing text box: ${textBox.id}`);
-  } else {
-    hideTextBoxPane();
-  }
-}
-
-/**
- * Hide the text box pane.
- */
-function hideTextBoxPane(): void {
-  const textboxSection = document.getElementById('textbox-section');
-
-  if (textboxSection) {
-    textboxSection.style.display = 'none';
-  }
-
-  currentSelectedTextBox = null;
-}
-
-/**
- * Show the formatting pane.
- */
-function showFormattingPane(): void {
-  const formattingPane = document.getElementById('formatting-pane');
-  if (formattingPane) {
-    formattingPane.style.display = 'block';
-  }
-}
-
-/**
- * Hide the formatting pane.
- */
-function hideFormattingPane(): void {
-  const formattingPane = document.getElementById('formatting-pane');
-  if (formattingPane) {
-    formattingPane.style.display = 'none';
-  }
-}
-
-/**
- * Apply changes to the currently selected text box.
- */
-function applyTextBoxChanges(): void {
-  if (!editor || !currentSelectedTextBox) {
-    updateStatus('No text box selected', 'error');
-    return;
-  }
-
-  const positionSelect = document.getElementById('textbox-position') as HTMLSelectElement;
-  const offsetXInput = document.getElementById('textbox-offset-x') as HTMLInputElement;
-  const offsetYInput = document.getElementById('textbox-offset-y') as HTMLInputElement;
-  const bgColorInput = document.getElementById('textbox-bg-color') as HTMLInputElement;
-  const borderWidthInput = document.getElementById('textbox-border-width') as HTMLInputElement;
-  const borderColorInput = document.getElementById('textbox-border-color') as HTMLInputElement;
-  const borderStyleSelect = document.getElementById('textbox-border-style') as HTMLSelectElement;
-  const paddingInput = document.getElementById('textbox-padding') as HTMLInputElement;
-
-  // Apply position changes
-  if (positionSelect) {
-    currentSelectedTextBox.position = positionSelect.value as 'inline' | 'block' | 'relative';
-  }
-
-  // Apply offset for relative positioning
-  if (positionSelect?.value === 'relative' && offsetXInput && offsetYInput) {
-    currentSelectedTextBox.relativeOffset = {
-      x: parseInt(offsetXInput.value) || 0,
-      y: parseInt(offsetYInput.value) || 0
-    };
-  }
-
-  // Apply changes to the text box
-  if (bgColorInput) {
-    currentSelectedTextBox.backgroundColor = bgColorInput.value;
-  }
-
-  if (borderWidthInput || borderColorInput || borderStyleSelect) {
-    const width = borderWidthInput ? parseInt(borderWidthInput.value) : 1;
-    const color = borderColorInput ? borderColorInput.value : '#cccccc';
-    const style = (borderStyleSelect ? borderStyleSelect.value : 'solid') as 'solid' | 'dashed' | 'dotted' | 'none';
-
-    // Apply to all sides
-    const borderSide = { width, color, style };
-    currentSelectedTextBox.border = {
-      top: { ...borderSide },
-      right: { ...borderSide },
-      bottom: { ...borderSide },
-      left: { ...borderSide }
-    };
-  }
-
-  if (paddingInput) {
-    currentSelectedTextBox.padding = parseInt(paddingInput.value);
-  }
-
-  // Re-render
-  editor.render();
-  updateStatus('Text box updated');
-}
-
-// ============================================
-// Image Pane Functions
-// ============================================
-
-/**
- * Update the image pane when an image is selected.
- */
-function updateImagePane(image: ImageObject | null): void {
-  const imageSection = document.getElementById('image-section');
-  const positionSelect = document.getElementById('image-position') as HTMLSelectElement;
-  const offsetGroup = document.getElementById('image-offset-group');
-  const offsetXInput = document.getElementById('image-offset-x') as HTMLInputElement;
-  const offsetYInput = document.getElementById('image-offset-y') as HTMLInputElement;
-  const fitModeSelect = document.getElementById('image-fit-mode') as HTMLSelectElement;
-  const resizeModeSelect = document.getElementById('image-resize-mode') as HTMLSelectElement;
-  const altTextInput = document.getElementById('image-alt-text') as HTMLInputElement;
-
-  if (!imageSection) return;
-
-  if (image) {
-    // Show the image pane and populate with image data
-    imageSection.style.display = 'block';
-    currentSelectedImage = image;
-
-    // Populate position controls
-    if (positionSelect) positionSelect.value = image.position || 'inline';
-    if (offsetGroup) {
-      offsetGroup.style.display = image.position === 'relative' ? 'block' : 'none';
-    }
-    if (offsetXInput) offsetXInput.value = String(image.relativeOffset?.x ?? 0);
-    if (offsetYInput) offsetYInput.value = String(image.relativeOffset?.y ?? 0);
-
-    // Populate other controls
-    if (fitModeSelect) fitModeSelect.value = image.fit || 'contain';
-    if (resizeModeSelect) resizeModeSelect.value = image.resizeMode || 'locked-aspect-ratio';
-    if (altTextInput) altTextInput.value = image.alt || '';
-
-    console.log(`[Image Pane] Showing image: ${image.id}`);
-  } else {
-    hideImagePane();
-  }
-}
-
-/**
- * Hide the image pane.
- */
-function hideImagePane(): void {
-  const imageSection = document.getElementById('image-section');
-
-  if (imageSection) {
-    imageSection.style.display = 'none';
-  }
-
-  currentSelectedImage = null;
-}
-
-/**
- * Apply changes to the currently selected image.
- */
-function applyImageChanges(): void {
-  if (!editor || !currentSelectedImage) {
-    updateStatus('No image selected', 'error');
-    return;
-  }
-
-  const positionSelect = document.getElementById('image-position') as HTMLSelectElement;
-  const offsetXInput = document.getElementById('image-offset-x') as HTMLInputElement;
-  const offsetYInput = document.getElementById('image-offset-y') as HTMLInputElement;
-  const fitModeSelect = document.getElementById('image-fit-mode') as HTMLSelectElement;
-  const resizeModeSelect = document.getElementById('image-resize-mode') as HTMLSelectElement;
-  const altTextInput = document.getElementById('image-alt-text') as HTMLInputElement;
-
-  // Apply position changes
-  if (positionSelect) {
-    currentSelectedImage.position = positionSelect.value as 'inline' | 'block' | 'relative';
-  }
-
-  // Apply offset for relative positioning
-  if (positionSelect?.value === 'relative' && offsetXInput && offsetYInput) {
-    currentSelectedImage.relativeOffset = {
-      x: parseInt(offsetXInput.value) || 0,
-      y: parseInt(offsetYInput.value) || 0
-    };
-  }
-
-  // Apply changes to the image
-  if (fitModeSelect) {
-    currentSelectedImage.fit = fitModeSelect.value as 'contain' | 'cover' | 'fill' | 'none' | 'tile';
-  }
-
-  if (resizeModeSelect) {
-    currentSelectedImage.resizeMode = resizeModeSelect.value as 'free' | 'locked-aspect-ratio';
-  }
-
-  if (altTextInput) {
-    currentSelectedImage.alt = altTextInput.value;
-  }
-
-  // Re-render
-  editor.render();
-  updateStatus('Image updated');
-}
-
-/**
- * Handle image file selection from the file picker.
- */
-function handleImageFileChange(event: Event): void {
-  if (!editor || !currentSelectedImage) {
-    updateStatus('No image selected', 'error');
-    return;
-  }
-
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-
-  if (!file) return;
-
-  // Read the file as a data URL
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const dataUrl = e.target?.result as string;
-    if (dataUrl && currentSelectedImage) {
-      // Use reasonable max dimensions for auto-sizing
-      // (roughly 80% of A4 content width and 50% of content height)
-      currentSelectedImage.setSource(dataUrl, {
-        maxWidth: 400,
-        maxHeight: 400
-      });
-
-      editor.render();
-      updateStatus('Image source changed');
-    }
-  };
-  reader.onerror = () => {
-    updateStatus('Failed to read image file', 'error');
-  };
-  reader.readAsDataURL(file);
-
-  // Clear the input for future selections
-  input.value = '';
-}
-
-// ============================================
-// Table Tools Functions
-// ============================================
-
-/**
- * Update the current selected table reference.
- */
-function updateTableTools(table: TableObject | null): void {
-  currentSelectedTable = table;
-}
-
-/**
- * Add a row to the current table.
- */
-function tableAddRow(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  const insertIndex = focusedCell ? focusedCell.row + 1 : currentSelectedTable.rowCount;
-
-  editor.tableInsertRow(currentSelectedTable, insertIndex);
-  updateStatus(`Added row at index ${insertIndex}`);
-}
-
-/**
- * Add a column to the current table.
- */
-function tableAddColumn(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  const insertIndex = focusedCell ? focusedCell.col + 1 : currentSelectedTable.columnCount;
-
-  editor.tableInsertColumn(currentSelectedTable, insertIndex);
-  updateStatus(`Added column at index ${insertIndex}`);
-}
-
-/**
- * Merge selected cells in the current table.
- */
-function tableMergeCells(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  // If no range selected, try to create one from focused cell
-  const focusedCell = currentSelectedTable.focusedCell;
-  if (!currentSelectedTable.selectedRange && focusedCell) {
-    // For now, just show instructions - need cell range selection UI
-    updateStatus('Select a range of cells first (click and drag)');
-    return;
-  }
-
-  // Table operations are automatically tracked for undo via ObjectMutationObserver
-  const result = currentSelectedTable.mergeCells();
-  if (result.success) {
-    updateStatus('Cells merged');
-  } else {
-    updateStatus(`Merge failed: ${result.error}`, 'error');
-  }
-}
-
-/**
- * Split the currently focused merged cell.
- */
-function tableSplitCell(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  if (!focusedCell) {
-    updateStatus('Select a merged cell to split');
-    return;
-  }
-
-  // Table operations are automatically tracked for undo via ObjectMutationObserver
-  const result = currentSelectedTable.splitCell(focusedCell.row, focusedCell.col);
-  if (result.success) {
-    updateStatus('Cell split');
-  } else {
-    updateStatus(`Split failed: ${result.error}`, 'error');
-  }
-}
-
-/**
- * Toggle header status on the current row.
- */
-function tableToggleHeader(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  if (!focusedCell) {
-    updateStatus('Select a row to toggle header');
-    return;
-  }
-
-  const row = currentSelectedTable.rows[focusedCell.row];
-  if (row) {
-    row.isHeader = !row.isHeader;
-
-    // Update visual styling for header rows
-    for (const cell of row.cells) {
-      if (row.isHeader) {
-        cell.backgroundColor = '#f0f0f0';
-      } else {
-        cell.backgroundColor = '#ffffff';
-      }
-    }
-
-    editor.render();
-    updateStatus(row.isHeader ? 'Row marked as header' : 'Row unmarked as header');
-  }
-}
-
-/**
- * Create a row loop from the selected cell range.
- */
-function tableCreateRowLoop(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  // Get the selected range or focused cell
-  const range = currentSelectedTable.selectedRange;
-  const focusedCell = currentSelectedTable.focusedCell;
-
-  if (!range && !focusedCell) {
-    updateStatus('Select rows in the table first');
-    return;
-  }
-
-  // Determine the row range
-  let startRow: number;
-  let endRow: number;
-
-  if (range) {
-    startRow = range.start.row;
-    endRow = range.end.row;
-  } else if (focusedCell) {
-    // Use just the focused row
-    startRow = focusedCell.row;
-    endRow = focusedCell.row;
-  } else {
-    return;
-  }
-
-  // Prompt for field path
-  const fieldPath = prompt('Enter the array field path (e.g., "items"):', 'items');
-  if (!fieldPath) {
-    updateStatus('Row loop creation cancelled');
-    return;
-  }
-
-  // Create the row loop
-  const loop = currentSelectedTable.createRowLoop(startRow, endRow, fieldPath);
-  if (loop) {
-    currentSelectedRowLoop = { table: currentSelectedTable, loopId: loop.id };
-    showTableRowLoopSection(loop);
-    editor.render();
-    updateStatus(`Row loop created for rows ${startRow}-${endRow} with field path "${fieldPath}"`);
-  } else {
-    updateStatus('Failed to create row loop (check for overlaps or header rows)', 'error');
-  }
-}
-
-/**
- * Apply changes to the current row loop's field path.
- */
-function applyTableRowLoop(): void {
-  if (!currentSelectedRowLoop || !editor) return;
-
-  const fieldPathInput = document.getElementById('table-row-loop-field-path') as HTMLInputElement;
-  const newFieldPath = fieldPathInput?.value?.trim();
-
-  if (!newFieldPath) {
-    updateStatus('Field path cannot be empty', 'error');
-    return;
-  }
-
-  const success = currentSelectedRowLoop.table.updateRowLoopFieldPath(currentSelectedRowLoop.loopId, newFieldPath);
-  if (success) {
-    editor.render();
-    updateStatus(`Row loop field path updated to "${newFieldPath}"`);
-  } else {
-    updateStatus('Failed to update row loop', 'error');
-  }
-}
-
-/**
- * Delete the current row loop.
- */
-function deleteTableRowLoop(): void {
-  if (!currentSelectedRowLoop || !editor) return;
-
-  const success = currentSelectedRowLoop.table.removeRowLoop(currentSelectedRowLoop.loopId);
-  if (success) {
-    hideTableRowLoopSection();
-    currentSelectedRowLoop = null;
-    editor.render();
-    updateStatus('Row loop deleted');
-  } else {
-    updateStatus('Failed to delete row loop', 'error');
-  }
-}
-
-/**
- * Show the table row loop section in the sidebar.
- */
-function showTableRowLoopSection(loop: { id: string; fieldPath: string; startRowIndex: number; endRowIndex: number }): void {
-  const section = document.getElementById('table-row-loop-section');
-  if (section) {
-    section.style.display = 'block';
-  }
-
-  const fieldPathInput = document.getElementById('table-row-loop-field-path') as HTMLInputElement;
-  if (fieldPathInput) {
-    fieldPathInput.value = loop.fieldPath;
-  }
-
-  const rangeHint = document.getElementById('table-row-loop-range-hint');
-  if (rangeHint) {
-    rangeHint.textContent = `Rows ${loop.startRowIndex} - ${loop.endRowIndex}`;
-  }
-}
-
-/**
- * Hide the table row loop section in the sidebar.
- */
-function hideTableRowLoopSection(): void {
-  const section = document.getElementById('table-row-loop-section');
-  if (section) {
-    section.style.display = 'none';
-  }
-}
-
-// ============================================
-// Table Pane Functions
-// ============================================
-
-/**
- * Update the table pane when a table is selected or focused.
- */
-function updateTablePane(table: TableObject | null): void {
-  const tableSection = document.getElementById('table-section');
-  if (!tableSection) return;
-
-  if (table) {
-    tableSection.style.display = 'block';
-    currentSelectedTable = table;
-
-    // Update structure info
-    const rowCountEl = document.getElementById('table-row-count');
-    const colCountEl = document.getElementById('table-col-count');
-    if (rowCountEl) rowCountEl.textContent = String(table.rowCount);
-    if (colCountEl) colCountEl.textContent = String(table.columnCount);
-
-    // Update cell selection info
-    updateTableCellSelectionInfo(table);
-
-    // Update header counts
-    const headerRowInput = document.getElementById('table-header-row-count') as HTMLInputElement;
-    const headerColInput = document.getElementById('table-header-col-count') as HTMLInputElement;
-    if (headerRowInput) headerRowInput.value = String(table.headerRowCount);
-    if (headerColInput) headerColInput.value = String(table.headerColumnCount);
-
-    // Update defaults
-    const paddingInput = document.getElementById('table-default-padding') as HTMLInputElement;
-    const borderColorInput = document.getElementById('table-default-border-color') as HTMLInputElement;
-    if (paddingInput) paddingInput.value = String(table.defaultCellPadding);
-    if (borderColorInput) borderColorInput.value = table.defaultBorderColor;
-
-    // Update cell-specific formatting if a cell is selected
-    const focusedCell = table.focusedCell;
-    if (focusedCell) {
-      const cell = table.getCell(focusedCell.row, focusedCell.col);
-      if (cell) {
-        // Update background color
-        const cellBgInput = document.getElementById('table-cell-bg-color') as HTMLInputElement;
-        if (cellBgInput) cellBgInput.value = cell.backgroundColor || '#ffffff';
-
-        // Update border controls from cell's current borders
-        const border = cell.border;
-        const topCheck = document.getElementById('table-border-top') as HTMLInputElement;
-        const rightCheck = document.getElementById('table-border-right') as HTMLInputElement;
-        const bottomCheck = document.getElementById('table-border-bottom') as HTMLInputElement;
-        const leftCheck = document.getElementById('table-border-left') as HTMLInputElement;
-        const widthInput = document.getElementById('table-border-width') as HTMLInputElement;
-        const colorInput = document.getElementById('table-border-color') as HTMLInputElement;
-        const styleSelect = document.getElementById('table-border-style') as HTMLSelectElement;
-
-        // Check which borders are active (not 'none')
-        if (topCheck) topCheck.checked = border.top.style !== 'none';
-        if (rightCheck) rightCheck.checked = border.right.style !== 'none';
-        if (bottomCheck) bottomCheck.checked = border.bottom.style !== 'none';
-        if (leftCheck) leftCheck.checked = border.left.style !== 'none';
-
-        // Use the first active border's settings for width/color/style
-        const activeBorder = border.top.style !== 'none' ? border.top :
-                            border.right.style !== 'none' ? border.right :
-                            border.bottom.style !== 'none' ? border.bottom :
-                            border.left.style !== 'none' ? border.left : null;
-        if (activeBorder) {
-          if (widthInput) widthInput.value = String(activeBorder.width);
-          if (colorInput) colorInput.value = activeBorder.color;
-          if (styleSelect) styleSelect.value = activeBorder.style;
-        }
-      }
-    }
-  } else {
-    hideTablePane();
-  }
-}
-
-/**
- * Update the cell selection info display.
- */
-function updateTableCellSelectionInfo(table: TableObject): void {
-  const infoEl = document.getElementById('table-cell-selection-info');
-  if (!infoEl) return;
-
-  const focusedCell = table.focusedCell;
-  const selectedRange = table.selectedRange;
-
-  if (selectedRange) {
-    const rows = selectedRange.end.row - selectedRange.start.row + 1;
-    const cols = selectedRange.end.col - selectedRange.start.col + 1;
-    infoEl.textContent = `${rows}x${cols} cells selected`;
-  } else if (focusedCell) {
-    infoEl.textContent = `Row ${focusedCell.row + 1}, Col ${focusedCell.col + 1}`;
-  } else {
-    infoEl.textContent = 'No cell selected';
-  }
-}
-
-/**
- * Hide the table pane.
- */
-function hideTablePane(): void {
-  const tableSection = document.getElementById('table-section');
-  if (tableSection) {
-    tableSection.style.display = 'none';
-  }
-}
-
-// Table pane action handlers
-
-/**
- * Get the current header styling from the pane controls.
- */
-function getHeaderStyling(): { bgColor: string; bold: boolean } {
-  const bgColorInput = document.getElementById('table-header-bg-color') as HTMLInputElement;
-  const boldCheck = document.getElementById('table-header-bold') as HTMLInputElement;
-  return {
-    bgColor: bgColorInput?.value || '#f0f0f0',
-    bold: boldCheck?.checked ?? true
-  };
-}
-
-/**
- * Apply header styling to a cell.
- */
-function applyHeaderStylingToCell(cell: import('../lib').TableCell, styling: { bgColor: string; bold: boolean }): void {
-  cell.backgroundColor = styling.bgColor;
-  if (styling.bold) {
-    const text = cell.flowingContent.getText();
-    if (text.length > 0) {
-      cell.flowingContent.applyFormatting(0, text.length, { fontWeight: 'bold' });
-    }
-  }
-}
-
-/**
- * Copy cell styling (background, border, padding) from source to target.
- */
-function copyCellStyling(source: import('../lib').TableCell, target: import('../lib').TableCell): void {
-  target.backgroundColor = source.backgroundColor;
-  target.padding = { ...source.padding };
-  target.border = {
-    top: { ...source.border.top },
-    right: { ...source.border.right },
-    bottom: { ...source.border.bottom },
-    left: { ...source.border.left }
-  };
-}
-
-/**
- * Apply styling to new cells in a row based on header status or source row.
- */
-function styleNewRowCells(table: TableObject, rowIndex: number, sourceRowIndex?: number): void {
-  const row = table.rows[rowIndex];
-  if (!row) return;
-
-  const styling = getHeaderStyling();
-  const headerColIndices = table.getHeaderColumnIndices();
-
-  // If we have a source row, copy styling from corresponding cells
-  if (sourceRowIndex !== undefined && sourceRowIndex >= 0 && sourceRowIndex < table.rows.length) {
-    const sourceRow = table.rows[sourceRowIndex];
-    for (let colIdx = 0; colIdx < row.cells.length && colIdx < sourceRow.cells.length; colIdx++) {
-      const sourceCell = sourceRow.getCell(colIdx);
-      const targetCell = row.getCell(colIdx);
-      if (sourceCell && targetCell) {
-        copyCellStyling(sourceCell, targetCell);
-      }
-    }
-  } else if (row.isHeader) {
-    // If this is a header row with no source, apply header styling
-    for (const cell of row.cells) {
-      applyHeaderStylingToCell(cell, styling);
-    }
-  } else {
-    // Otherwise, only style cells in header columns
-    for (const colIdx of headerColIndices) {
-      const cell = row.getCell(colIdx);
-      if (cell) {
-        applyHeaderStylingToCell(cell, styling);
-      }
-    }
-  }
-}
-
-/**
- * Apply styling to new cells in a column based on header status or source column.
- */
-function styleNewColumnCells(table: TableObject, colIndex: number, sourceColIndex?: number): void {
-  const col = table.columns[colIndex];
-  if (!col) return;
-
-  const styling = getHeaderStyling();
-
-  for (let rowIdx = 0; rowIdx < table.rows.length; rowIdx++) {
-    const row = table.rows[rowIdx];
-    const targetCell = row.getCell(colIndex);
-    if (!targetCell) continue;
-
-    // If we have a source column, copy styling from corresponding cell
-    if (sourceColIndex !== undefined && sourceColIndex >= 0 && sourceColIndex < table.columns.length) {
-      const sourceCell = row.getCell(sourceColIndex);
-      if (sourceCell) {
-        copyCellStyling(sourceCell, targetCell);
-        continue;
-      }
-    }
-
-    // Otherwise, style if this is a header column or if the row is a header row
-    if (col.isHeader || row.isHeader) {
-      applyHeaderStylingToCell(targetCell, styling);
-    }
-  }
-}
-
-function tablePaneAddRowBefore(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  let insertIndex = focusedCell ? focusedCell.row : 0;
-
-  // Ensure we don't insert before header rows - find first non-header row
-  const headerRowCount = currentSelectedTable.headerRowCount;
-  if (insertIndex < headerRowCount) {
-    insertIndex = headerRowCount;
-  }
-
-  // Source row is the current row (which shifts down after insert)
-  const sourceRowIndex = focusedCell ? insertIndex + 1 : undefined;
-
-  // Table operations are automatically tracked for undo via ObjectMutationObserver
-  currentSelectedTable.insertRow(insertIndex);
-  styleNewRowCells(currentSelectedTable, insertIndex, sourceRowIndex);
-  updateTablePane(currentSelectedTable);
-  updateStatus(`Added row before index ${insertIndex}`);
-}
-
-function tablePaneAddRowAfter(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  const insertIndex = focusedCell ? focusedCell.row + 1 : currentSelectedTable.rowCount;
-
-  // Source row is the current row, but don't use header rows as styling sources
-  let sourceRowIndex: number | undefined;
-  if (focusedCell) {
-    const sourceRow = currentSelectedTable.rows[focusedCell.row];
-    if (sourceRow && !sourceRow.isHeader) {
-      sourceRowIndex = focusedCell.row;
-    }
-  }
-
-  // Table operations are automatically tracked for undo via ObjectMutationObserver
-  currentSelectedTable.insertRow(insertIndex);
-  styleNewRowCells(currentSelectedTable, insertIndex, sourceRowIndex);
-  updateTablePane(currentSelectedTable);
-  updateStatus(`Added row after index ${insertIndex - 1}`);
-}
-
-function tablePaneDeleteRow(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  if (!focusedCell) {
-    updateStatus('Select a cell in the row to delete');
-    return;
-  }
-
-  if (currentSelectedTable.rowCount <= 1) {
-    updateStatus('Cannot delete the last row');
-    return;
-  }
-
-  // Prevent deleting header rows
-  const row = currentSelectedTable.rows[focusedCell.row];
-  if (row?.isHeader) {
-    updateStatus('Cannot delete header rows');
-    return;
-  }
-
-  editor.tableRemoveRow(currentSelectedTable, focusedCell.row);
-  updateTablePane(currentSelectedTable);
-  updateStatus(`Deleted row ${focusedCell.row + 1}`);
-}
-
-function tablePaneAddColBefore(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  let insertIndex = focusedCell ? focusedCell.col : 0;
-
-  // Ensure we don't insert before header columns - find first non-header column
-  const headerColCount = currentSelectedTable.headerColumnCount;
-  if (insertIndex < headerColCount) {
-    insertIndex = headerColCount;
-  }
-
-  // Source column is the current column (which shifts right after insert)
-  const sourceColIndex = focusedCell ? insertIndex + 1 : undefined;
-
-  // Table operations are automatically tracked for undo via ObjectMutationObserver
-  currentSelectedTable.insertColumn(insertIndex);
-  styleNewColumnCells(currentSelectedTable, insertIndex, sourceColIndex);
-  updateTablePane(currentSelectedTable);
-  updateStatus(`Added column before index ${insertIndex}`);
-}
-
-function tablePaneAddColAfter(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  const insertIndex = focusedCell ? focusedCell.col + 1 : currentSelectedTable.columnCount;
-  // Source column is the current column (before the new column)
-  const sourceColIndex = focusedCell ? focusedCell.col : undefined;
-
-  // Table operations are automatically tracked for undo via ObjectMutationObserver
-  currentSelectedTable.insertColumn(insertIndex);
-  styleNewColumnCells(currentSelectedTable, insertIndex, sourceColIndex);
-  updateTablePane(currentSelectedTable);
-  updateStatus(`Added column after index ${insertIndex - 1}`);
-}
-
-function tablePaneDeleteCol(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  if (!focusedCell) {
-    updateStatus('Select a cell in the column to delete');
-    return;
-  }
-
-  if (currentSelectedTable.columnCount <= 1) {
-    updateStatus('Cannot delete the last column');
-    return;
-  }
-
-  // Prevent deleting header columns
-  const col = currentSelectedTable.columns[focusedCell.col];
-  if (col?.isHeader) {
-    updateStatus('Cannot delete header columns');
-    return;
-  }
-
-  editor.tableRemoveColumn(currentSelectedTable, focusedCell.col);
-  updateTablePane(currentSelectedTable);
-  updateStatus(`Deleted column ${focusedCell.col + 1}`);
-}
-
-function tablePaneMergeCells(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  // Table operations are automatically tracked for undo via ObjectMutationObserver
-  const result = currentSelectedTable.mergeCells();
-  if (result.success) {
-    updateTablePane(currentSelectedTable);
-    updateStatus('Cells merged');
-  } else {
-    updateStatus(`Merge failed: ${result.error}`, 'error');
-  }
-}
-
-function tablePaneSplitCell(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  if (!focusedCell) {
-    updateStatus('Select a merged cell to split');
-    return;
-  }
-
-  // Table operations are automatically tracked for undo via ObjectMutationObserver
-  const result = currentSelectedTable.splitCell(focusedCell.row, focusedCell.col);
-  if (result.success) {
-    updateTablePane(currentSelectedTable);
-    updateStatus('Cell split');
-  } else {
-    updateStatus(`Split failed: ${result.error}`, 'error');
-  }
-}
-
-function tablePaneApplyCellBackground(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  const selectedRange = currentSelectedTable.selectedRange;
-  const colorInput = document.getElementById('table-cell-bg-color') as HTMLInputElement;
-  const color = colorInput?.value || '#ffffff';
-
-  if (selectedRange) {
-    // Apply to all cells in range
-    for (let r = selectedRange.start.row; r <= selectedRange.end.row; r++) {
-      for (let c = selectedRange.start.col; c <= selectedRange.end.col; c++) {
-        const cell = currentSelectedTable.getCell(r, c);
-        if (cell) cell.backgroundColor = color;
-      }
-    }
-    updateStatus('Background applied to selected cells');
-  } else if (focusedCell) {
-    const cell = currentSelectedTable.getCell(focusedCell.row, focusedCell.col);
-    if (cell) cell.backgroundColor = color;
-    updateStatus('Background applied to cell');
-  } else {
-    updateStatus('Select a cell first');
-    return;
-  }
-
-  editor.render();
-}
-
-function tablePaneApplyBorders(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const focusedCell = currentSelectedTable.focusedCell;
-  const selectedRange = currentSelectedTable.selectedRange;
-
-  const widthInput = document.getElementById('table-border-width') as HTMLInputElement;
-  const colorInput = document.getElementById('table-border-color') as HTMLInputElement;
-  const styleSelect = document.getElementById('table-border-style') as HTMLSelectElement;
-  const topCheck = document.getElementById('table-border-top') as HTMLInputElement;
-  const rightCheck = document.getElementById('table-border-right') as HTMLInputElement;
-  const bottomCheck = document.getElementById('table-border-bottom') as HTMLInputElement;
-  const leftCheck = document.getElementById('table-border-left') as HTMLInputElement;
-
-  const borderSide = {
-    width: parseInt(widthInput?.value || '1'),
-    color: colorInput?.value || '#000000',
-    style: (styleSelect?.value || 'solid') as 'solid' | 'dashed' | 'dotted' | 'none'
-  };
-
-  const noBorder = { width: 0, color: 'transparent', style: 'none' as const };
-
-  const applyToCell = (cell: import('../lib').TableCell) => {
-    const border = cell.border;
-    // Apply border or remove it based on checkbox state
-    border.top = topCheck?.checked ? { ...borderSide } : { ...noBorder };
-    border.right = rightCheck?.checked ? { ...borderSide } : { ...noBorder };
-    border.bottom = bottomCheck?.checked ? { ...borderSide } : { ...noBorder };
-    border.left = leftCheck?.checked ? { ...borderSide } : { ...noBorder };
-    cell.border = border;
-  };
-
-  if (selectedRange) {
-    for (let r = selectedRange.start.row; r <= selectedRange.end.row; r++) {
-      for (let c = selectedRange.start.col; c <= selectedRange.end.col; c++) {
-        const cell = currentSelectedTable.getCell(r, c);
-        if (cell) applyToCell(cell);
-      }
-    }
-    updateStatus('Borders applied to selected cells');
-  } else if (focusedCell) {
-    const cell = currentSelectedTable.getCell(focusedCell.row, focusedCell.col);
-    if (cell) applyToCell(cell);
-    updateStatus('Borders applied to cell');
-  } else {
-    updateStatus('Select a cell first');
-    return;
-  }
-
-  editor.render();
-}
-
-function tablePaneApplyHeaders(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const headerRowInput = document.getElementById('table-header-row-count') as HTMLInputElement;
-  const headerColInput = document.getElementById('table-header-col-count') as HTMLInputElement;
-
-  const headerRowCount = parseInt(headerRowInput?.value || '0');
-  const headerColCount = parseInt(headerColInput?.value || '0');
-
-  // Get the current header styling settings
-  const styling = getHeaderStyling();
-
-  // Apply header row/column counts
-  currentSelectedTable.setHeaderRowCount(headerRowCount);
-  currentSelectedTable.setHeaderColumnCount(headerColCount);
-
-  // Apply styling to all header cells (both rows and columns)
-  for (let rowIdx = 0; rowIdx < currentSelectedTable.rows.length; rowIdx++) {
-    const row = currentSelectedTable.rows[rowIdx];
-    for (let colIdx = 0; colIdx < row.cells.length; colIdx++) {
-      const cell = row.getCell(colIdx);
-      if (!cell) continue;
-
-      const isHeader = currentSelectedTable.isHeaderCell(rowIdx, colIdx);
-      if (isHeader) {
-        // Apply header styling
-        applyHeaderStylingToCell(cell, styling);
-      } else {
-        // Reset to normal styling (white background, normal weight)
-        cell.backgroundColor = '#ffffff';
-        const text = cell.flowingContent.getText();
-        if (text.length > 0) {
-          cell.flowingContent.applyFormatting(0, text.length, { fontWeight: 'normal' });
-        }
-      }
-    }
-  }
-
-  editor.render();
-  updateStatus(`Set ${headerRowCount} header rows and ${headerColCount} header columns`);
-}
-
-function tablePaneApplyHeaderStyle(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const bgColorInput = document.getElementById('table-header-bg-color') as HTMLInputElement;
-  const boldCheck = document.getElementById('table-header-bold') as HTMLInputElement;
-
-  const bgColor = bgColorInput?.value || '#f0f0f0';
-  const bold = boldCheck?.checked ?? true;
-
-  // Apply to header rows
-  for (const row of currentSelectedTable.rows) {
-    if (row.isHeader) {
-      for (const cell of row.cells) {
-        cell.backgroundColor = bgColor;
-        if (bold) {
-          // Apply bold formatting to all text in the cell
-          const text = cell.flowingContent.getText();
-          if (text.length > 0) {
-            cell.flowingContent.applyFormatting(0, text.length, { fontWeight: 'bold' });
-          }
-        }
-      }
-    }
-  }
-
-  // Apply to header columns
-  const headerColIndices = currentSelectedTable.getHeaderColumnIndices();
-  for (const colIdx of headerColIndices) {
-    for (const row of currentSelectedTable.rows) {
-      if (!row.isHeader) {  // Skip header rows (already styled above)
-        const cell = row.getCell(colIdx);
-        if (cell) {
-          cell.backgroundColor = bgColor;
-          if (bold) {
-            const text = cell.flowingContent.getText();
-            if (text.length > 0) {
-              cell.flowingContent.applyFormatting(0, text.length, { fontWeight: 'bold' });
-            }
-          }
-        }
-      }
-    }
-  }
-
-  editor.render();
-  updateStatus('Header styling applied');
-}
-
-function tablePaneApplyDefaults(): void {
-  if (!currentSelectedTable || !editor) return;
-
-  const paddingInput = document.getElementById('table-default-padding') as HTMLInputElement;
-  const borderColorInput = document.getElementById('table-default-border-color') as HTMLInputElement;
-
-  const padding = parseInt(paddingInput?.value || '4');
-  const borderColor = borderColorInput?.value || '#000000';
-
-  currentSelectedTable.defaultCellPadding = padding;
-  currentSelectedTable.defaultBorderColor = borderColor;
-
-  // Apply to all existing cells and mark them for reflow
-  for (const row of currentSelectedTable.rows) {
-    for (const cell of row.cells) {
-      cell.padding = { top: padding, right: padding, bottom: padding, left: padding };
-      const border = cell.border;
-      border.top.color = borderColor;
-      border.right.color = borderColor;
-      border.bottom.color = borderColor;
-      border.left.color = borderColor;
-      cell.border = border;
-      // Mark cell for reflow since padding affects text layout
-      cell.markReflowDirty();
-    }
-  }
-
-  // Mark table layout as dirty so it recalculates size
-  currentSelectedTable.markLayoutDirty();
-
-  editor.render();
-  updateStatus('Table defaults applied to all cells');
 }
 
 // Initialize when DOM is ready
