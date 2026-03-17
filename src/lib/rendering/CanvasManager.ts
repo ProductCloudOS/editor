@@ -1431,6 +1431,11 @@ export class CanvasManager extends EventEmitter {
     return { size: newSize, position: newPos };
   }
 
+  // Custom text cursor as a black I-beam SVG data URI.
+  // The native 'text' cursor can render as white on Windows browsers,
+  // making it invisible over the white canvas background.
+  private static readonly TEXT_CURSOR = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='20' viewBox='0 0 16 20'%3E%3Cpath d='M5 1h2v1h2V1h2v2h-2v6h2v2h-2v6h2v2h-2v-1H7v1H5v-2h2v-6H5V9h2V3H5z' fill='%23000'/%3E%3C/svg%3E\") 8 10, text";
+
   private updateCursor(point: Point, pageId: string): void {
     const canvas = this.canvases.get(pageId);
     if (!canvas) return;
@@ -1476,25 +1481,29 @@ export class CanvasManager extends EventEmitter {
           canvas.style.cursor = 'move';
           return;
         }
-        // Show text cursor for text boxes
-        if (object instanceof TextBoxObject) {
-          canvas.style.cursor = 'text';
-          return;
+        // Show text cursor for objects in edit mode, arrow otherwise
+        if (object instanceof TextBoxObject && this.editingTextBox === object) {
+          canvas.style.cursor = CanvasManager.TEXT_CURSOR;
+        } else if (object instanceof TableObject && this._focusedControl === object) {
+          canvas.style.cursor = CanvasManager.TEXT_CURSOR;
+        } else {
+          canvas.style.cursor = 'default';
         }
+        return;
       }
     }
 
     // Check for table cells (show text cursor)
     const tableCellHit = hitTestManager.queryByType(pageIndex, point, 'table-cell');
     if (tableCellHit && tableCellHit.data.type === 'table-cell') {
-      canvas.style.cursor = 'text';
+      canvas.style.cursor = CanvasManager.TEXT_CURSOR;
       return;
     }
 
     // Check for text regions (body, header, footer - show text cursor)
     const textRegionHit = hitTestManager.queryByType(pageIndex, point, 'text-region');
     if (textRegionHit && textRegionHit.data.type === 'text-region') {
-      canvas.style.cursor = 'text';
+      canvas.style.cursor = CanvasManager.TEXT_CURSOR;
       return;
     }
 
@@ -1502,17 +1511,17 @@ export class CanvasManager extends EventEmitter {
     // This catches cases where text region hit targets may not cover empty space
     const bodyRegion = this.regionManager.getBodyRegion();
     if (bodyRegion && bodyRegion.containsPointInRegion(point, pageIndex)) {
-      canvas.style.cursor = 'text';
+      canvas.style.cursor = CanvasManager.TEXT_CURSOR;
       return;
     }
     const headerRegion = this.regionManager.getHeaderRegion();
     if (headerRegion && headerRegion.containsPointInRegion(point, pageIndex)) {
-      canvas.style.cursor = 'text';
+      canvas.style.cursor = CanvasManager.TEXT_CURSOR;
       return;
     }
     const footerRegion = this.regionManager.getFooterRegion();
     if (footerRegion && footerRegion.containsPointInRegion(point, pageIndex)) {
-      canvas.style.cursor = 'text';
+      canvas.style.cursor = CanvasManager.TEXT_CURSOR;
       return;
     }
 
