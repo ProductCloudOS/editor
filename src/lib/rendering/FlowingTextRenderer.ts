@@ -5,6 +5,7 @@ import {
   FlowedSubstitutionField,
   FlowedEmbeddedObject,
   RepeatingSection,
+  ConditionalSection,
   DEFAULT_FORMATTING,
   TextPositionCalculator,
   EditableTextRegion,
@@ -37,6 +38,12 @@ const LOOP_INDICATOR_COLOR = '#6B46C1'; // Purple
 const LOOP_LABEL_PADDING = 4;
 const LOOP_LABEL_RADIUS = 4;
 const LOOP_LINE_DASH = [4, 4];
+
+// Conditional section indicator styling
+const COND_INDICATOR_COLOR = '#D97706'; // Orange
+const COND_LABEL_PADDING = 4;
+const COND_LABEL_RADIUS = 4;
+const COND_LINE_DASH = [4, 4];
 
 // Hyperlink styling
 const DEFAULT_HYPERLINK_COLOR = '#0066CC'; // Blue
@@ -3411,6 +3418,292 @@ export class FlowingTextRenderer extends EventEmitter {
       }
 
       // Check if click is on the Loop label
+      if (startInfo) {
+        const labelY = startInfo.y - 10;
+        const labelHeight = 18;
+
+        if (
+          point.x >= labelX &&
+          point.x <= labelX + labelWidth &&
+          point.y >= labelY &&
+          point.y <= labelY + labelHeight
+        ) {
+          return section;
+        }
+      }
+
+      // Check if click is on the vertical connector line
+      let verticalStartY: number;
+      let verticalEndY: number;
+
+      if (startInfo) {
+        verticalStartY = startInfo.y;
+      } else {
+        verticalStartY = contentBounds.y;
+      }
+
+      if (endInfo) {
+        verticalEndY = endInfo.y;
+      } else if (sectionSpansThisPage) {
+        verticalEndY = contentBounds.y + flowedPage.height;
+      } else {
+        continue;
+      }
+
+      if (
+        Math.abs(point.x - connectorX) <= hitRadius &&
+        point.y >= verticalStartY &&
+        point.y <= verticalEndY
+      ) {
+        return section;
+      }
+    }
+
+    return null;
+  }
+
+  // ============================================
+  // Conditional Section Indicators
+  // ============================================
+
+  /**
+   * Render conditional section indicators for a page.
+   */
+  renderConditionalSectionIndicators(
+    sections: ConditionalSection[],
+    pageIndex: number,
+    ctx: CanvasRenderingContext2D,
+    contentBounds: Rect,
+    flowedPage: FlowedPage,
+    pageBounds: Rect,
+    selectedSectionId: string | null = null
+  ): void {
+    for (const section of sections) {
+      this.renderConditionalIndicator(
+        section,
+        pageIndex,
+        ctx,
+        contentBounds,
+        flowedPage,
+        pageBounds,
+        section.id === selectedSectionId
+      );
+    }
+  }
+
+  /**
+   * Render a single conditional section indicator.
+   */
+  private renderConditionalIndicator(
+    section: ConditionalSection,
+    pageIndex: number,
+    ctx: CanvasRenderingContext2D,
+    contentBounds: Rect,
+    flowedPage: FlowedPage,
+    _pageBounds: Rect,
+    isSelected: boolean = false
+  ): void {
+    const startInfo = this.findLineYForTextIndex(flowedPage, section.startIndex, contentBounds);
+    const endInfo = this.findLineYForTextIndex(flowedPage, section.endIndex, contentBounds);
+
+    const sectionOverlapsPage = section.startIndex < flowedPage.endIndex &&
+                                 section.endIndex > flowedPage.startIndex;
+
+    if (!sectionOverlapsPage) {
+      return;
+    }
+
+    const hasStart = startInfo !== null;
+    const hasEnd = endInfo !== null;
+    const startsBeforePage = section.startIndex < flowedPage.startIndex;
+    const endsAfterPage = section.endIndex > flowedPage.endIndex;
+
+    ctx.save();
+    ctx.strokeStyle = COND_INDICATOR_COLOR;
+    ctx.fillStyle = COND_INDICATOR_COLOR;
+    ctx.lineWidth = 1;
+
+    // Position on the right side of the content area
+    const labelWidth = 22;
+    const labelX = contentBounds.x + contentBounds.width + 5;
+    const connectorX = labelX + labelWidth / 2;
+
+    // Draw start indicator lines
+    if (hasStart) {
+      const startY = startInfo.y;
+
+      ctx.setLineDash(COND_LINE_DASH);
+      ctx.beginPath();
+      ctx.moveTo(contentBounds.x, startY);
+      ctx.lineTo(contentBounds.x + contentBounds.width, startY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.beginPath();
+      ctx.moveTo(contentBounds.x + contentBounds.width, startY);
+      ctx.lineTo(labelX, startY);
+      ctx.stroke();
+    } else if (startsBeforePage) {
+      const topY = contentBounds.y;
+
+      ctx.setLineDash(COND_LINE_DASH);
+      ctx.beginPath();
+      ctx.moveTo(contentBounds.x, topY);
+      ctx.lineTo(contentBounds.x + contentBounds.width, topY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.beginPath();
+      ctx.moveTo(connectorX, topY);
+      ctx.lineTo(contentBounds.x + contentBounds.width, topY);
+      ctx.stroke();
+    }
+
+    // Draw end indicator
+    if (hasEnd) {
+      const endY = endInfo.y;
+
+      ctx.setLineDash(COND_LINE_DASH);
+      ctx.beginPath();
+      ctx.moveTo(contentBounds.x, endY);
+      ctx.lineTo(contentBounds.x + contentBounds.width, endY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.beginPath();
+      ctx.moveTo(connectorX, endY);
+      ctx.lineTo(contentBounds.x + contentBounds.width, endY);
+      ctx.stroke();
+    } else if (endsAfterPage) {
+      const bottomY = contentBounds.y + contentBounds.height;
+
+      ctx.setLineDash(COND_LINE_DASH);
+      ctx.beginPath();
+      ctx.moveTo(contentBounds.x, bottomY);
+      ctx.lineTo(contentBounds.x + contentBounds.width, bottomY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.beginPath();
+      ctx.moveTo(connectorX, bottomY);
+      ctx.lineTo(contentBounds.x + contentBounds.width, bottomY);
+      ctx.stroke();
+    }
+
+    // Draw vertical connector line
+    let verticalStartY: number;
+    let verticalEndY: number;
+
+    if (hasStart) {
+      verticalStartY = startInfo.y;
+    } else if (startsBeforePage) {
+      verticalStartY = contentBounds.y;
+    } else {
+      verticalStartY = contentBounds.y;
+    }
+
+    if (hasEnd) {
+      verticalEndY = endInfo.y;
+    } else if (endsAfterPage) {
+      verticalEndY = contentBounds.y + contentBounds.height;
+    } else {
+      verticalEndY = verticalStartY;
+    }
+
+    if (verticalEndY > verticalStartY) {
+      ctx.beginPath();
+      ctx.moveTo(connectorX, verticalStartY);
+      ctx.lineTo(connectorX, verticalEndY);
+      ctx.stroke();
+    }
+
+    // Draw "If" label
+    if (hasStart) {
+      const startY = startInfo.y;
+      this.drawCondLabel(ctx, labelX, startY - 10, 'If', isSelected);
+    }
+
+    // Update visual state
+    section.visualState = {
+      startPageIndex: hasStart ? pageIndex : -1,
+      startY: hasStart ? startInfo.y : 0,
+      endPageIndex: hasEnd ? pageIndex : -1,
+      endY: hasEnd ? endInfo.y : 0,
+      spansMultiplePages: !hasStart || !hasEnd
+    };
+
+    ctx.restore();
+  }
+
+  /**
+   * Draw the "If" label in a rounded rectangle.
+   */
+  private drawCondLabel(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    text: string,
+    isSelected: boolean = false
+  ): void {
+    ctx.save();
+
+    ctx.font = '10px Arial';
+    const metrics = ctx.measureText(text);
+    const textWidth = metrics.width;
+    const textHeight = 10;
+
+    const boxWidth = textWidth + COND_LABEL_PADDING * 2;
+    const boxHeight = textHeight + COND_LABEL_PADDING * 2;
+
+    ctx.beginPath();
+    this.roundRect(ctx, x, y, boxWidth, boxHeight, COND_LABEL_RADIUS);
+
+    if (isSelected) {
+      ctx.fillStyle = COND_INDICATOR_COLOR;
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+    } else {
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = COND_INDICATOR_COLOR;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.fillStyle = COND_INDICATOR_COLOR;
+    }
+
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x + COND_LABEL_PADDING, y + boxHeight / 2);
+
+    ctx.restore();
+  }
+
+  /**
+   * Get a conditional section at a point (for click detection).
+   */
+  getConditionalSectionAtPoint(
+    point: Point,
+    sections: ConditionalSection[],
+    _pageIndex: number,
+    _pageBounds: Rect,
+    contentBounds: Rect,
+    flowedPage: FlowedPage
+  ): ConditionalSection | null {
+    const labelWidth = 22;
+    const labelX = contentBounds.x + contentBounds.width + 5;
+    const connectorX = labelX + labelWidth / 2;
+    const hitRadius = 10;
+
+    for (const section of sections) {
+      const startInfo = this.findLineYForTextIndex(flowedPage, section.startIndex, contentBounds);
+      const endInfo = this.findLineYForTextIndex(flowedPage, section.endIndex, contentBounds);
+      const sectionSpansThisPage = section.startIndex < flowedPage.startIndex &&
+                                    section.endIndex > flowedPage.endIndex;
+
+      if (!startInfo && !endInfo && !sectionSpansThisPage) {
+        continue;
+      }
+
+      // Check if click is on the "If" label
       if (startInfo) {
         const labelY = startInfo.y - 10;
         const labelHeight = 18;

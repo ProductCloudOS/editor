@@ -41,6 +41,7 @@ export class CanvasManager extends EventEmitter {
   private isSelectingText: boolean = false;
   private textSelectionStartPageId: string | null = null;
   private selectedSectionId: string | null = null;
+  private selectedConditionalSectionId: string | null = null;
   private _activeSection: EditingSection = 'body';
   private lastClickTime: number = 0;
   private lastClickPosition: Point | null = null;
@@ -246,6 +247,25 @@ export class CanvasManager extends EventEmitter {
             flowedPages[pageIndex],
             pageBounds,
             this.selectedSectionId
+          );
+        }
+      }
+
+      // Render conditional section indicators (only in body)
+      const condSections = bodyFlowingContent?.getConditionalSections() ?? [];
+      if (condSections.length > 0) {
+        const flowedPages = this.flowingTextRenderer.getFlowedPagesForPage(this.document.pages[0].id);
+        if (flowedPages && flowedPages[pageIndex]) {
+          const pageDimensions = page.getPageDimensions();
+          const pageBounds: Rect = { x: 0, y: 0, width: pageDimensions.width, height: pageDimensions.height };
+          this.flowingTextRenderer.renderConditionalSectionIndicators(
+            condSections,
+            pageIndex,
+            ctx,
+            contentRect,
+            flowedPages[pageIndex],
+            pageBounds,
+            this.selectedConditionalSectionId
           );
         }
       }
@@ -1224,6 +1244,76 @@ export class CanvasManager extends EventEmitter {
       }
     }
 
+    // Check if we clicked on a conditional section indicator
+    if (bodyFlowingContent) {
+      const condSections = bodyFlowingContent.getConditionalSections();
+      if (condSections.length > 0 && page) {
+        const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+        const flowedPages = this.flowingTextRenderer.getFlowedPagesForPage(this.document.pages[0].id);
+        if (flowedPages && flowedPages[pageIndex]) {
+          const contentBounds = page.getContentBounds();
+          const contentRect: Rect = {
+            x: contentBounds.position.x,
+            y: contentBounds.position.y,
+            width: contentBounds.size.width,
+            height: contentBounds.size.height
+          };
+          const pageDimensions = page.getPageDimensions();
+          const pageBounds: Rect = { x: 0, y: 0, width: pageDimensions.width, height: pageDimensions.height };
+
+          const clickedCondSection = this.flowingTextRenderer.getConditionalSectionAtPoint(
+            point,
+            condSections,
+            pageIndex,
+            pageBounds,
+            contentRect,
+            flowedPages[pageIndex]
+          );
+
+          if (clickedCondSection) {
+            this.clearSelection();
+            this.selectedConditionalSectionId = clickedCondSection.id;
+            this.render();
+            this.emit('conditional-section-clicked', { section: clickedCondSection });
+            return;
+          }
+        }
+      }
+    }
+
+    // Check if we clicked on a table row loop label
+    const clickedPageIdx = this.document.pages.findIndex(p => p.id === pageId);
+    const bodyContent = this.document.bodyFlowingContent;
+    if (bodyContent) {
+      const embeddedObjects = bodyContent.getEmbeddedObjects();
+      for (const [, obj] of embeddedObjects.entries()) {
+        if (obj instanceof TableObject && obj.renderedPosition && obj.renderedPageIndex === clickedPageIdx) {
+          // Convert to table-local coordinates
+          const localPoint = {
+            x: point.x - obj.renderedPosition.x,
+            y: point.y - obj.renderedPosition.y
+          };
+          const clickedLoop = obj.getRowLoopAtPoint(localPoint);
+          if (clickedLoop) {
+            // Select this loop
+            obj.selectRowLoop(clickedLoop.id);
+            this.render();
+            this.emit('table-row-loop-clicked', { table: obj, loop: clickedLoop });
+            return;
+          }
+
+          // Check for row conditional click
+          const clickedCond = obj.getRowConditionalAtPoint(localPoint);
+          if (clickedCond) {
+            obj.selectRowConditional(clickedCond.id);
+            this.render();
+            this.emit('table-row-conditional-clicked', { table: obj, conditional: clickedCond });
+            return;
+          }
+        }
+      }
+    }
+
     // If no regular element was clicked, try flowing text using unified region click handler
     const ctx = this.contexts.get(pageId);
     const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
@@ -1710,6 +1800,7 @@ export class CanvasManager extends EventEmitter {
 
     this.selectedElements.clear();
     this.selectedSectionId = null;
+    this.selectedConditionalSectionId = null;
     Logger.log('[pc-editor:CanvasManager] About to render after clearing selection...');
     this.render();
     this.updateResizeHandleHitTargets();

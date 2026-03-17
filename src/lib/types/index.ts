@@ -57,6 +57,7 @@ export interface FlowingTextContentData {
   paragraphFormatting?: ParagraphFormattingData[];
   substitutionFields?: SubstitutionFieldData[];
   repeatingSections?: RepeatingSectionData[];
+  conditionalSections?: ConditionalSectionData[];
   embeddedObjects?: EmbeddedObjectReference[];
   hyperlinks?: HyperlinkSerializedData[];
 }
@@ -101,6 +102,7 @@ export type EditorSelection =
   | { type: 'cursor'; position: number; section: EditingSection }
   | { type: 'text'; start: number; end: number; section: EditingSection }
   | { type: 'repeating-section'; sectionId: string }
+  | { type: 'conditional-section'; sectionId: string }
   | { type: 'none' };
 
 export interface SelectionEvent extends EditorEvent {
@@ -196,6 +198,16 @@ export interface SubstitutionFieldData {
 export interface RepeatingSectionData {
   id: string;
   fieldPath: string;
+  startIndex: number;
+  endIndex: number;
+}
+
+/**
+ * Serialized conditional section.
+ */
+export interface ConditionalSectionData {
+  id: string;
+  predicate: string;
   startIndex: number;
   endIndex: number;
 }

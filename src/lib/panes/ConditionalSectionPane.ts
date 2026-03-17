@@ -1,24 +1,24 @@
 /**
- * RepeatingSectionPane - Edit repeating section (loop) properties.
+ * ConditionalSectionPane - Edit conditional section properties.
  *
  * Shows:
- * - Field path (array property in merge data)
+ * - Predicate input (boolean expression in merge data)
  * - Position information
  *
  * Uses the PCEditor public API:
- * - editor.getRepeatingSection()
- * - editor.updateRepeatingSectionFieldPath()
- * - editor.removeRepeatingSection()
+ * - editor.getConditionalSection()
+ * - editor.updateConditionalSectionPredicate()
+ * - editor.removeConditionalSection()
  */
 
 import { BasePane } from './BasePane';
 import type { PaneAttachOptions } from './types';
-import type { RepeatingSection } from '../text';
+import type { ConditionalSection } from '../text';
 
 /**
- * Options for RepeatingSectionPane.
+ * Options for ConditionalSectionPane.
  */
-export interface RepeatingSectionPaneOptions {
+export interface ConditionalSectionPaneOptions {
   className?: string;
   /**
    * Callback when section changes are applied.
@@ -30,15 +30,15 @@ export interface RepeatingSectionPaneOptions {
   onRemove?: (success: boolean) => void;
 }
 
-export class RepeatingSectionPane extends BasePane {
-  private fieldPathInput: HTMLInputElement | null = null;
+export class ConditionalSectionPane extends BasePane {
+  private predicateInput: HTMLInputElement | null = null;
   private positionHint: HTMLElement | null = null;
-  private currentSection: RepeatingSection | null = null;
+  private currentSection: ConditionalSection | null = null;
   private onApplyCallback?: (success: boolean, error?: Error) => void;
   private onRemoveCallback?: (success: boolean) => void;
 
-  constructor(id: string = 'repeating-section', options: RepeatingSectionPaneOptions = {}) {
-    super(id, { className: 'pc-pane-repeating-section', ...options });
+  constructor(id: string = 'conditional-section', options: ConditionalSectionPaneOptions = {}) {
+    super(id, { className: 'pc-pane-conditional-section', ...options });
     this.onApplyCallback = options.onApply;
     this.onRemoveCallback = options.onRemove;
   }
@@ -47,16 +47,16 @@ export class RepeatingSectionPane extends BasePane {
     super.attach(options);
 
     if (this.editor) {
-      // Listen for repeating section selection
+      // Listen for conditional section selection
       const selectionHandler = (event: { selection?: { type?: string; sectionId?: string } }) => {
         const sel = event.selection || event as any;
-        if (sel.type === 'repeating-section' && sel.sectionId) {
-          const section = this.editor?.getRepeatingSection(sel.sectionId);
+        if (sel.type === 'conditional-section' && sel.sectionId) {
+          const section = this.editor?.getConditionalSection(sel.sectionId);
           if (section) {
             this.showSection(section);
           }
         } else {
-          // Selection changed away from repeating section — hide pane
+          // Selection changed away from conditional section — hide pane
           this.hideSection();
         }
       };
@@ -66,11 +66,11 @@ export class RepeatingSectionPane extends BasePane {
       };
 
       this.editor.on('selection-change', selectionHandler);
-      this.editor.on('repeating-section-removed', removedHandler);
+      this.editor.on('conditional-section-removed', removedHandler);
 
       this.eventCleanup.push(() => {
         this.editor?.off('selection-change', selectionHandler);
-        this.editor?.off('repeating-section-removed', removedHandler);
+        this.editor?.off('conditional-section-removed', removedHandler);
       });
     }
   }
@@ -78,10 +78,10 @@ export class RepeatingSectionPane extends BasePane {
   protected createContent(): HTMLElement {
     const container = document.createElement('div');
 
-    // Field path input
-    this.fieldPathInput = this.createTextInput({ placeholder: 'items' });
-    container.appendChild(this.createFormGroup('Array Field Path:', this.fieldPathInput, {
-      hint: 'Path to array in merge data (e.g., "items" or "contact.addresses")'
+    // Predicate input
+    this.predicateInput = this.createTextInput({ placeholder: 'isActive' });
+    container.appendChild(this.createFormGroup('Condition:', this.predicateInput, {
+      hint: 'Boolean expression evaluated against merge data (e.g., "isActive", "count > 0")'
     }));
 
     // Apply button
@@ -90,7 +90,7 @@ export class RepeatingSectionPane extends BasePane {
     container.appendChild(applyBtn);
 
     // Remove button
-    const removeBtn = this.createButton('Remove Loop', { variant: 'danger' });
+    const removeBtn = this.createButton('Remove Condition', { variant: 'danger' });
     removeBtn.style.marginTop = '0.5rem';
     this.addButtonListener(removeBtn, () => this.removeSection());
     container.appendChild(removeBtn);
@@ -105,14 +105,14 @@ export class RepeatingSectionPane extends BasePane {
   /**
    * Show the pane with the given section.
    */
-  showSection(section: RepeatingSection): void {
+  showSection(section: ConditionalSection): void {
     this.currentSection = section;
 
-    if (this.fieldPathInput) {
-      this.fieldPathInput.value = section.fieldPath;
+    if (this.predicateInput) {
+      this.predicateInput.value = section.predicate;
     }
     if (this.positionHint) {
-      this.positionHint.textContent = `Loop from position ${section.startIndex} to ${section.endIndex}`;
+      this.positionHint.textContent = `Condition from position ${section.startIndex} to ${section.endIndex}`;
     }
 
     this.show();
@@ -132,22 +132,21 @@ export class RepeatingSectionPane extends BasePane {
       return;
     }
 
-    const fieldPath = this.fieldPathInput?.value.trim();
-    if (!fieldPath) {
-      this.onApplyCallback?.(false, new Error('Field path cannot be empty'));
+    const predicate = this.predicateInput?.value.trim();
+    if (!predicate) {
+      this.onApplyCallback?.(false, new Error('Predicate cannot be empty'));
       return;
     }
 
-    if (fieldPath === this.currentSection.fieldPath) {
+    if (predicate === this.currentSection.predicate) {
       return; // No changes
     }
 
     try {
-      const success = this.editor.updateRepeatingSectionFieldPath(this.currentSection.id, fieldPath);
+      const success = this.editor.updateConditionalSectionPredicate(this.currentSection.id, predicate);
 
       if (success) {
-        // Update the current section reference
-        this.currentSection = this.editor.getRepeatingSection(this.currentSection.id) || null;
+        this.currentSection = this.editor.getConditionalSection(this.currentSection.id) || null;
         if (this.currentSection) {
           this.showSection(this.currentSection);
         }
@@ -164,7 +163,7 @@ export class RepeatingSectionPane extends BasePane {
     if (!this.editor || !this.currentSection) return;
 
     try {
-      this.editor.removeRepeatingSection(this.currentSection.id);
+      this.editor.removeConditionalSection(this.currentSection.id);
       this.hideSection();
       this.onRemoveCallback?.(true);
     } catch {
@@ -175,7 +174,7 @@ export class RepeatingSectionPane extends BasePane {
   /**
    * Get the currently selected section.
    */
-  getCurrentSection(): RepeatingSection | null {
+  getCurrentSection(): ConditionalSection | null {
     return this.currentSection;
   }
 

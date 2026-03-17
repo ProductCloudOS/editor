@@ -23,6 +23,7 @@ All optional modules:
   - [HyperlinkPane](#hyperlinkpane)
   - [SubstitutionFieldPane](#substitutionfieldpane)
   - [RepeatingSectionPane](#repeatingsectionpane)
+  - [ConditionalSectionPane](#conditionalsectionpane)
   - [TableRowLoopPane](#tablerowlooppane)
   - [TextBoxPane](#textboxpane)
   - [ImagePane](#imagepane)
@@ -397,6 +398,39 @@ loopPane.hideSection();
 - Apply Changes button
 - Remove Loop button
 - Position hint
+
+### ConditionalSectionPane
+
+Edit conditional section properties. Automatically shows when a conditional section indicator is clicked.
+
+```typescript
+import { ConditionalSectionPane } from '@productcloudos/editor';
+
+const conditionalPane = new ConditionalSectionPane('conditional', {
+  onApply: (success, error) => {
+    if (success) updateStatus('Condition updated');
+  },
+  onRemove: (success) => {
+    if (success) updateStatus('Condition removed');
+  }
+});
+
+conditionalPane.attach({ editor, container: conditionalContainer });
+
+// Manually show for a section
+conditionalPane.showSection(section);
+
+// Hide
+conditionalPane.hideSection();
+```
+
+**Features:**
+- Predicate expression input
+- Apply Changes button
+- Remove Condition button
+- Position hint
+
+See [Predicate Expressions](./predicate-expressions.md) for the full syntax reference.
 
 ### TableRowLoopPane
 

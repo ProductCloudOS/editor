@@ -174,8 +174,8 @@ button.active:hover {
 }
 
 .sidebar, .properties-panel {
-    width: 280px;
-    min-width: 200px;
+    width: var(--pc-pane-min-width, 300px);
+    min-width: var(--pc-pane-min-width, 300px);
     max-width: 600px;
     background-color: white;
     padding: 1rem;
@@ -765,26 +765,7 @@ canvas {
 }
 
 /* Loop Section Styles */
-#loop-section {
-    border-color: #6B46C1;
-}
-
-#loop-section .collapsible-header {
-    background-color: #f3e8ff;
-}
-
-#loop-section .collapsible-header:hover {
-    background-color: #e9d5ff;
-}
-
-#apply-loop-changes {
-    width: 100%;
-    background-color: #6B46C1;
-}
-
-#apply-loop-changes:hover {
-    background-color: #553c9a;
-}
+/* Loop section uses standard pane colors (no custom overrides) */
 
 /* Field Picker Dropdown */
 /* Field Picker Modal */

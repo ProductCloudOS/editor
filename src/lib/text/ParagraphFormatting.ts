@@ -298,7 +298,7 @@ export class ParagraphFormattingManager extends EventEmitter {
   /**
    * Get paragraph boundaries within a text range.
    */
-  private getParagraphBoundariesInRange(start: number, end: number, content: string): number[] {
+  getParagraphBoundariesInRange(start: number, end: number, content: string): number[] {
     const boundaries: number[] = [];
 
     // Include the paragraph containing 'start'

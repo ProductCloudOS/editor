@@ -50,7 +50,7 @@ export class MergeDataPane extends BasePane {
     const container = document.createElement('div');
 
     // Textarea for JSON
-    const textareaGroup = this.createFormGroup('JSON Data', this.createTextarea());
+    const textareaGroup = this.createFormGroup('JSON Data:', this.createTextarea());
     container.appendChild(textareaGroup);
 
     // Error hint (hidden by default)

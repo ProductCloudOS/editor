@@ -143,8 +143,8 @@ export class TablePane extends BasePane {
     const headerRow = this.createRow();
     this.headerRowInput = this.createNumberInput({ min: 0, max: 10, value: 0 });
     this.headerColInput = this.createNumberInput({ min: 0, max: 10, value: 0 });
-    headerRow.appendChild(this.createFormGroup('Header Rows', this.headerRowInput, { inline: true }));
-    headerRow.appendChild(this.createFormGroup('Header Cols', this.headerColInput, { inline: true }));
+    headerRow.appendChild(this.createFormGroup('Header Rows:', this.headerRowInput, { inline: true }));
+    headerRow.appendChild(this.createFormGroup('Header Cols:', this.headerColInput, { inline: true }));
     headersSection.appendChild(headerRow);
 
     const applyHeadersBtn = this.createButton('Apply Headers');
@@ -157,8 +157,8 @@ export class TablePane extends BasePane {
     const defaultsRow = this.createRow();
     this.defaultPaddingInput = this.createNumberInput({ min: 0, max: 20, value: 8 });
     this.defaultBorderColorInput = this.createColorInput('#cccccc');
-    defaultsRow.appendChild(this.createFormGroup('Padding', this.defaultPaddingInput, { inline: true }));
-    defaultsRow.appendChild(this.createFormGroup('Border', this.defaultBorderColorInput, { inline: true }));
+    defaultsRow.appendChild(this.createFormGroup('Padding:', this.defaultPaddingInput, { inline: true }));
+    defaultsRow.appendChild(this.createFormGroup('Border:', this.defaultBorderColorInput, { inline: true }));
     defaultsSection.appendChild(defaultsRow);
 
     const applyDefaultsBtn = this.createButton('Apply Defaults');
@@ -186,7 +186,7 @@ export class TablePane extends BasePane {
 
     // Background
     this.cellBgColorInput = this.createColorInput('#ffffff');
-    cellSection.appendChild(this.createFormGroup('Background', this.cellBgColorInput));
+    cellSection.appendChild(this.createFormGroup('Background:', this.cellBgColorInput));
 
     // Border checkboxes
     const borderChecks = document.createElement('div');
@@ -219,14 +219,14 @@ export class TablePane extends BasePane {
     if (checkLabels[2]) checkLabels[2].replaceChild(this.borderBottomCheck, checkLabels[2].querySelector('input')!);
     if (checkLabels[3]) checkLabels[3].replaceChild(this.borderLeftCheck, checkLabels[3].querySelector('input')!);
 
-    cellSection.appendChild(this.createFormGroup('Borders', borderChecks));
+    cellSection.appendChild(this.createFormGroup('Borders:', borderChecks));
 
     // Border properties
     const borderPropsRow = this.createRow();
     this.borderWidthInput = this.createNumberInput({ min: 0, max: 5, value: 1 });
     this.borderColorInput = this.createColorInput('#cccccc');
-    borderPropsRow.appendChild(this.createFormGroup('Width', this.borderWidthInput, { inline: true }));
-    borderPropsRow.appendChild(this.createFormGroup('Color', this.borderColorInput, { inline: true }));
+    borderPropsRow.appendChild(this.createFormGroup('Width:', this.borderWidthInput, { inline: true }));
+    borderPropsRow.appendChild(this.createFormGroup('Color:', this.borderColorInput, { inline: true }));
     cellSection.appendChild(borderPropsRow);
 
     this.borderStyleSelect = this.createSelect([
@@ -235,7 +235,7 @@ export class TablePane extends BasePane {
       { value: 'dotted', label: 'Dotted' },
       { value: 'none', label: 'None' }
     ], 'solid');
-    cellSection.appendChild(this.createFormGroup('Style', this.borderStyleSelect));
+    cellSection.appendChild(this.createFormGroup('Style:', this.borderStyleSelect));
 
     const applyCellBtn = this.createButton('Apply to Cell(s)', { variant: 'primary' });
     this.addButtonListener(applyCellBtn, () => this.applyCellFormatting());

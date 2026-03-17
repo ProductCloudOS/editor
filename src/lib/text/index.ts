@@ -11,6 +11,8 @@ export type {
   FlowedEmbeddedObject,
   RepeatingSection,
   RepeatingSectionVisualState,
+  ConditionalSection,
+  ConditionalSectionVisualState,
   ObjectPosition,
   TextAlignment,
   ParagraphFormatting,
@@ -37,6 +39,8 @@ export { SubstitutionFieldManager } from './SubstitutionFieldManager';
 export { EmbeddedObjectManager } from './EmbeddedObjectManager';
 export type { EmbeddedObjectEntry } from './EmbeddedObjectManager';
 export { RepeatingSectionManager } from './RepeatingSectionManager';
+export { ConditionalSectionManager } from './ConditionalSectionManager';
+export { PredicateEvaluator } from './PredicateEvaluator';
 export { TextMeasurer } from './TextMeasurer';
 export type { EmbeddedMeasurement } from './TextMeasurer';
 export { TextLayout } from './TextLayout';

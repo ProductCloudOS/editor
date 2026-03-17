@@ -342,5 +342,28 @@ export interface RepeatingSection {
   visualState?: RepeatingSectionVisualState;  // Computed during render
 }
 
+/**
+ * Visual state of a conditional section, computed during render.
+ */
+export interface ConditionalSectionVisualState {
+  startPageIndex: number;
+  startY: number;
+  endPageIndex: number;
+  endY: number;
+  spansMultiplePages: boolean;
+}
+
+/**
+ * A conditional section that shows or hides content based on a predicate.
+ * Starts and ends at paragraph boundaries.
+ */
+export interface ConditionalSection {
+  id: string;
+  predicate: string;             // e.g., "isActive", "status == \"approved\""
+  startIndex: number;            // Text index at paragraph start
+  endIndex: number;              // Text index at closing paragraph start
+  visualState?: ConditionalSectionVisualState;  // Computed during render
+}
+
 // Re-export ObjectPosition for convenience
 export type { ObjectPosition };

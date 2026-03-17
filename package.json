@@ -1,6 +1,6 @@
 {
   "name": "@productcloudos/editor",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Browser-based WYSIWYG document editor library for creating pixel-perfect documents with data binding and PDF export capabilities",
   "author": "",
   "license": "MIT",
@@ -82,6 +82,7 @@
     "vitest": "^1.0.0"
   },
   "dependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^3.11.174"
   }

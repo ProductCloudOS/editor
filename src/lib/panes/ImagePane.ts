@@ -91,7 +91,7 @@ export class ImagePane extends BasePane {
       { value: 'relative', label: 'Relative' }
     ], 'inline');
     this.addImmediateApplyListener(this.positionSelect, () => this.updateOffsetVisibility());
-    positionSection.appendChild(this.createFormGroup('Type', this.positionSelect));
+    positionSection.appendChild(this.createFormGroup('Type:', this.positionSelect));
 
     // Offset group (only visible for relative positioning)
     this.offsetGroup = document.createElement('div');
@@ -99,8 +99,8 @@ export class ImagePane extends BasePane {
     const offsetRow = this.createRow();
     this.offsetXInput = this.createNumberInput({ value: 0 });
     this.offsetYInput = this.createNumberInput({ value: 0 });
-    offsetRow.appendChild(this.createFormGroup('X', this.offsetXInput, { inline: true }));
-    offsetRow.appendChild(this.createFormGroup('Y', this.offsetYInput, { inline: true }));
+    offsetRow.appendChild(this.createFormGroup('X:', this.offsetXInput, { inline: true }));
+    offsetRow.appendChild(this.createFormGroup('Y:', this.offsetYInput, { inline: true }));
     this.offsetGroup.appendChild(offsetRow);
     positionSection.appendChild(this.offsetGroup);
     container.appendChild(positionSection);
@@ -114,19 +114,19 @@ export class ImagePane extends BasePane {
       { value: 'none', label: 'None (original size)' },
       { value: 'tile', label: 'Tile' }
     ], 'contain');
-    fitSection.appendChild(this.createFormGroup('Fit Mode', this.fitModeSelect));
+    fitSection.appendChild(this.createFormGroup('Fit Mode:', this.fitModeSelect));
 
     this.resizeModeSelect = this.createSelect([
       { value: 'locked-aspect-ratio', label: 'Lock Aspect Ratio' },
       { value: 'free', label: 'Free Resize' }
     ], 'locked-aspect-ratio');
-    fitSection.appendChild(this.createFormGroup('Resize Mode', this.resizeModeSelect));
+    fitSection.appendChild(this.createFormGroup('Resize Mode:', this.resizeModeSelect));
     container.appendChild(fitSection);
 
     // Alt text section
     const altSection = this.createSection('Accessibility');
     this.altTextInput = this.createTextInput({ placeholder: 'Description of the image' });
-    altSection.appendChild(this.createFormGroup('Alt Text', this.altTextInput));
+    altSection.appendChild(this.createFormGroup('Alt Text:', this.altTextInput));
     container.appendChild(altSection);
 
     // Source section

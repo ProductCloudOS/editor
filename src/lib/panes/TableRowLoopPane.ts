@@ -48,8 +48,25 @@ export class TableRowLoopPane extends BasePane {
   attach(options: PaneAttachOptions): void {
     super.attach(options);
 
-    // Table row loop pane is typically shown manually when a table's row loop is selected
-    // The consumer is responsible for calling showLoop() with the table and loop
+    if (this.editor) {
+      // Auto-show when a table row loop is clicked
+      const loopClickHandler = (data: { table: TableObject; loop: TableRowLoop }) => {
+        this.showLoop(data.table, data.loop);
+      };
+
+      // Hide when selection changes away from a loop
+      const selectionHandler = () => {
+        this.hideLoop();
+      };
+
+      this.editor.on('table-row-loop-clicked', loopClickHandler);
+      this.editor.on('selection-change', selectionHandler);
+
+      this.eventCleanup.push(() => {
+        this.editor?.off('table-row-loop-clicked', loopClickHandler);
+        this.editor?.off('selection-change', selectionHandler);
+      });
+    }
   }
 
   protected createContent(): HTMLElement {
@@ -57,7 +74,7 @@ export class TableRowLoopPane extends BasePane {
 
     // Field path input
     this.fieldPathInput = this.createTextInput({ placeholder: 'items' });
-    container.appendChild(this.createFormGroup('Array Field Path', this.fieldPathInput, {
+    container.appendChild(this.createFormGroup('Array Field Path:', this.fieldPathInput, {
       hint: 'Path to array in merge data (e.g., "items" or "orders")'
     }));
 

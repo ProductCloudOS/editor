@@ -5,6 +5,7 @@ import { ParagraphFormattingManager } from './ParagraphFormatting';
 import { SubstitutionFieldManager } from './SubstitutionFieldManager';
 import { EmbeddedObjectManager } from './EmbeddedObjectManager';
 import { RepeatingSectionManager } from './RepeatingSectionManager';
+import { ConditionalSectionManager } from './ConditionalSectionManager';
 import { HyperlinkManager, Hyperlink, HyperlinkOptions, HyperlinkUpdate } from './HyperlinkManager';
 import { TextLayout, LayoutContext } from './TextLayout';
 import { TextMeasurer } from './TextMeasurer';
@@ -15,6 +16,7 @@ import {
   SubstitutionFieldConfig,
   FlowedPage,
   RepeatingSection,
+  ConditionalSection,
   OBJECT_REPLACEMENT_CHAR,
   PAGE_BREAK_CHAR,
   ObjectPosition,
@@ -33,6 +35,7 @@ export type {
   TextRun,
   SubstitutionField,
   RepeatingSection,
+  ConditionalSection,
   FlowedLine,
   FlowedPage,
   ObjectPosition,
@@ -52,6 +55,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
   private substitutionFields: SubstitutionFieldManager;
   private embeddedObjects: EmbeddedObjectManager;
   private repeatingSections: RepeatingSectionManager;
+  private conditionalSections: ConditionalSectionManager;
   private hyperlinks: HyperlinkManager;
   private layout: TextLayout;
 
@@ -70,6 +74,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     this.substitutionFields = new SubstitutionFieldManager();
     this.embeddedObjects = new EmbeddedObjectManager();
     this.repeatingSections = new RepeatingSectionManager();
+    this.conditionalSections = new ConditionalSectionManager();
     this.hyperlinks = new HyperlinkManager();
     this.layout = new TextLayout();
 
@@ -112,6 +117,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
       this.substitutionFields.handleDeletion(data.start, data.length);
       this.embeddedObjects.handleDeletion(data.start, data.length);
       this.repeatingSections.handleDeletion(data.start, data.length);
+      this.conditionalSections.handleDeletion(data.start, data.length);
       this.paragraphFormatting.handleDeletion(data.start, data.length);
       this.hyperlinks.handleDeletion(data.start, data.length);
 
@@ -175,6 +181,19 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
 
     this.repeatingSections.on('section-updated', (data) => {
       this.emit('repeating-section-updated', data);
+    });
+
+    // Forward conditional section events
+    this.conditionalSections.on('section-added', (data) => {
+      this.emit('conditional-section-added', data);
+    });
+
+    this.conditionalSections.on('section-removed', (data) => {
+      this.emit('conditional-section-removed', data);
+    });
+
+    this.conditionalSections.on('section-updated', (data) => {
+      this.emit('conditional-section-updated', data);
     });
 
     // Forward hyperlink events
@@ -241,6 +260,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     this.substitutionFields.shiftFields(insertAt, text.length);
     this.embeddedObjects.shiftObjects(insertAt, text.length);
     this.repeatingSections.shiftSections(insertAt, text.length);
+    this.conditionalSections.shiftSections(insertAt, text.length);
     this.hyperlinks.shiftHyperlinks(insertAt, text.length);
 
     // Insert the text first so we have the full content
@@ -324,6 +344,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     this.substitutionFields.shiftFields(position, text.length);
     this.embeddedObjects.shiftObjects(position, text.length);
     this.repeatingSections.shiftSections(position, text.length);
+    this.conditionalSections.shiftSections(position, text.length);
     this.hyperlinks.shiftHyperlinks(position, text.length);
 
     // Insert the text
@@ -344,6 +365,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     this.substitutionFields.handleDeletion(position, length);
     this.embeddedObjects.handleDeletion(position, length);
     this.repeatingSections.handleDeletion(position, length);
+    this.conditionalSections.handleDeletion(position, length);
     this.paragraphFormatting.handleDeletion(position, length);
     this.hyperlinks.handleDeletion(position, length);
 
@@ -796,6 +818,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     this.substitutionFields.shiftFields(insertAt, 1);
     this.embeddedObjects.shiftObjects(insertAt, 1);
     this.repeatingSections.shiftSections(insertAt, 1);
+    this.conditionalSections.shiftSections(insertAt, 1);
 
     // Insert the placeholder character
     this.textState.insertText(OBJECT_REPLACEMENT_CHAR, insertAt);
@@ -1109,6 +1132,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     this.substitutionFields.clear();
     this.embeddedObjects.clear();
     this.repeatingSections.clear();
+    this.conditionalSections.clear();
     this.hyperlinks.clear();
   }
 
@@ -1493,47 +1517,66 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
   // ============================================
 
   /**
-   * Toggle bullet list for the current paragraph (or selection).
+   * Get paragraph starts affected by the current selection or cursor position.
+   */
+  private getAffectedParagraphStarts(): number[] {
+    const content = this.textState.getText();
+    const selection = this.getSelection();
+    if (selection && selection.start !== selection.end) {
+      return this.paragraphFormatting.getParagraphBoundariesInRange(
+        selection.start, selection.end, content
+      );
+    }
+    const cursorPos = this.textState.getCursorPosition();
+    return [this.paragraphFormatting.getParagraphStart(cursorPos, content)];
+  }
+
+  /**
+   * Toggle bullet list for the current paragraph(s) in selection.
    */
   toggleBulletList(): void {
-    const cursorPos = this.textState.getCursorPosition();
     const content = this.textState.getText();
-    const paragraphStart = this.paragraphFormatting.getParagraphStart(cursorPos, content);
-    this.paragraphFormatting.toggleList(paragraphStart, 'bullet');
-    this.emit('content-changed', { text: content, cursorPosition: cursorPos });
+    const paragraphStarts = this.getAffectedParagraphStarts();
+    for (const start of paragraphStarts) {
+      this.paragraphFormatting.toggleList(start, 'bullet');
+    }
+    this.emit('content-changed', { text: content, cursorPosition: this.textState.getCursorPosition() });
   }
 
   /**
-   * Toggle numbered list for the current paragraph (or selection).
+   * Toggle numbered list for the current paragraph(s) in selection.
    */
   toggleNumberedList(): void {
-    const cursorPos = this.textState.getCursorPosition();
     const content = this.textState.getText();
-    const paragraphStart = this.paragraphFormatting.getParagraphStart(cursorPos, content);
-    this.paragraphFormatting.toggleList(paragraphStart, 'number');
-    this.emit('content-changed', { text: content, cursorPosition: cursorPos });
+    const paragraphStarts = this.getAffectedParagraphStarts();
+    for (const start of paragraphStarts) {
+      this.paragraphFormatting.toggleList(start, 'number');
+    }
+    this.emit('content-changed', { text: content, cursorPosition: this.textState.getCursorPosition() });
   }
 
   /**
-   * Indent the current paragraph (increase list nesting level).
+   * Indent the current paragraph(s) in selection.
    */
   indentParagraph(): void {
-    const cursorPos = this.textState.getCursorPosition();
     const content = this.textState.getText();
-    const paragraphStart = this.paragraphFormatting.getParagraphStart(cursorPos, content);
-    this.paragraphFormatting.indentParagraph(paragraphStart);
-    this.emit('content-changed', { text: content, cursorPosition: cursorPos });
+    const paragraphStarts = this.getAffectedParagraphStarts();
+    for (const start of paragraphStarts) {
+      this.paragraphFormatting.indentParagraph(start);
+    }
+    this.emit('content-changed', { text: content, cursorPosition: this.textState.getCursorPosition() });
   }
 
   /**
-   * Outdent the current paragraph (decrease list nesting level).
+   * Outdent the current paragraph(s) in selection.
    */
   outdentParagraph(): void {
-    const cursorPos = this.textState.getCursorPosition();
     const content = this.textState.getText();
-    const paragraphStart = this.paragraphFormatting.getParagraphStart(cursorPos, content);
-    this.paragraphFormatting.outdentParagraph(paragraphStart);
-    this.emit('content-changed', { text: content, cursorPosition: cursorPos });
+    const paragraphStarts = this.getAffectedParagraphStarts();
+    for (const start of paragraphStarts) {
+      this.paragraphFormatting.outdentParagraph(start);
+    }
+    this.emit('content-changed', { text: content, cursorPosition: this.textState.getCursorPosition() });
   }
 
   /**
@@ -1723,6 +1766,95 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
   }
 
   // ============================================
+  // Conditional Section Operations
+  // ============================================
+
+  /**
+   * Get the conditional section manager.
+   */
+  getConditionalSectionManager(): ConditionalSectionManager {
+    return this.conditionalSections;
+  }
+
+  /**
+   * Get all conditional sections.
+   */
+  getConditionalSections(): ConditionalSection[] {
+    return this.conditionalSections.getSections();
+  }
+
+  /**
+   * Create a conditional section.
+   * @param startIndex Text index at paragraph start (must be at a paragraph boundary)
+   * @param endIndex Text index at closing paragraph start (must be at a paragraph boundary)
+   * @param predicate The predicate expression to evaluate
+   * @returns The created section, or null if boundaries are invalid
+   */
+  createConditionalSection(
+    startIndex: number,
+    endIndex: number,
+    predicate: string
+  ): ConditionalSection | null {
+    const content = this.textState.getText();
+
+    if (!this.conditionalSections.validateBoundaries(startIndex, endIndex, content)) {
+      return null;
+    }
+
+    const section = this.conditionalSections.create(startIndex, endIndex, predicate);
+
+    this.emit('content-changed', {
+      text: content,
+      cursorPosition: this.textState.getCursorPosition()
+    });
+
+    return section;
+  }
+
+  /**
+   * Remove a conditional section by ID.
+   */
+  removeConditionalSection(id: string): boolean {
+    const section = this.conditionalSections.remove(id);
+    if (section) {
+      this.emit('content-changed', {
+        text: this.textState.getText(),
+        cursorPosition: this.textState.getCursorPosition()
+      });
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Get a conditional section by ID.
+   */
+  getConditionalSection(id: string): ConditionalSection | undefined {
+    return this.conditionalSections.getSection(id);
+  }
+
+  /**
+   * Find a conditional section that has a boundary at the given text index.
+   */
+  getConditionalSectionAtBoundary(textIndex: number): ConditionalSection | undefined {
+    return this.conditionalSections.getSectionAtBoundary(textIndex);
+  }
+
+  /**
+   * Update a conditional section's predicate.
+   */
+  updateConditionalSectionPredicate(id: string, predicate: string): boolean {
+    const result = this.conditionalSections.updatePredicate(id, predicate);
+    if (result) {
+      this.emit('content-changed', {
+        text: this.textState.getText(),
+        cursorPosition: this.textState.getCursorPosition()
+      });
+    }
+    return result;
+  }
+
+  // ============================================
   // Serialization
   // ============================================
 
@@ -1782,6 +1914,9 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     // Serialize repeating sections
     const repeatingSectionsData = this.repeatingSections.toJSON();
 
+    // Serialize conditional sections
+    const conditionalSectionsData = this.conditionalSections.toJSON();
+
     // Serialize embedded objects
     const embeddedObjects: EmbeddedObjectReference[] = [];
     const objectsMap = this.embeddedObjects.getObjects();
@@ -1801,6 +1936,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
       paragraphFormatting: paragraphFormatting.length > 0 ? paragraphFormatting : undefined,
       substitutionFields: substitutionFieldsData.length > 0 ? substitutionFieldsData : undefined,
       repeatingSections: repeatingSectionsData.length > 0 ? repeatingSectionsData : undefined,
+      conditionalSections: conditionalSectionsData.length > 0 ? conditionalSectionsData : undefined,
       embeddedObjects: embeddedObjects.length > 0 ? embeddedObjects : undefined,
       hyperlinks: hyperlinksData.length > 0 ? hyperlinksData : undefined
     };
@@ -1846,6 +1982,11 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     // Restore repeating sections
     if (data.repeatingSections && data.repeatingSections.length > 0) {
       content.getRepeatingSectionManager().fromJSON(data.repeatingSections);
+    }
+
+    // Restore conditional sections
+    if (data.conditionalSections && data.conditionalSections.length > 0) {
+      content.getConditionalSectionManager().fromJSON(data.conditionalSections);
     }
 
     // Restore embedded objects using factory
@@ -1911,6 +2052,11 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     // Restore repeating sections
     if (data.repeatingSections && data.repeatingSections.length > 0) {
       this.repeatingSections.fromJSON(data.repeatingSections);
+    }
+
+    // Restore conditional sections
+    if (data.conditionalSections && data.conditionalSections.length > 0) {
+      this.conditionalSections.fromJSON(data.conditionalSections);
     }
 
     // Restore embedded objects

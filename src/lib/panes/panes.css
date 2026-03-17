@@ -21,7 +21,8 @@
   --pc-pane-border-radius: 4px;
   --pc-pane-border-color: #ccc;
   --pc-pane-focus-color: #0066cc;
-  --pc-pane-min-width: 220px;
+  --pc-pane-min-width: 300px;
+  --pc-pane-content-min-width: 220px;
   --pc-pane-select-max-width: 200px;
 
   /* Alignment icons (SVG data URIs) */
@@ -36,7 +37,7 @@
   font-size: var(--pc-pane-font-size);
   line-height: 1.4;
   color: var(--pc-pane-text-color);
-  min-width: var(--pc-pane-min-width);
+  min-width: var(--pc-pane-content-min-width);
 }
 
 /* Form group */
@@ -321,6 +322,11 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--pc-pane-spacing-sm);
+}
+
+/* Override button-group spacer — view toggles need to wrap freely */
+.pc-pane-view-toggles.pc-pane-button-group::after {
+  display: none;
 }
 
 .pc-pane-view-toggles .pc-pane-toggle {

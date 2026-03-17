@@ -72,11 +72,11 @@ export class SubstitutionFieldPane extends BasePane {
 
     // Field name input
     this.fieldNameInput = this.createTextInput({ placeholder: 'Field name' });
-    container.appendChild(this.createFormGroup('Field Name', this.fieldNameInput));
+    container.appendChild(this.createFormGroup('Field Name:', this.fieldNameInput));
 
     // Default value input
     this.fieldDefaultInput = this.createTextInput({ placeholder: 'Default value (optional)' });
-    container.appendChild(this.createFormGroup('Default Value', this.fieldDefaultInput));
+    container.appendChild(this.createFormGroup('Default Value:', this.fieldDefaultInput));
 
     // Value type select
     this.valueTypeSelect = this.createSelect([
@@ -86,7 +86,7 @@ export class SubstitutionFieldPane extends BasePane {
       { value: 'date', label: 'Date' }
     ]);
     this.addImmediateApplyListener(this.valueTypeSelect, () => this.updateFormatGroups());
-    container.appendChild(this.createFormGroup('Value Type', this.valueTypeSelect));
+    container.appendChild(this.createFormGroup('Value Type:', this.valueTypeSelect));
 
     // Number format group
     this.numberFormatGroup = this.createSection();
@@ -97,7 +97,7 @@ export class SubstitutionFieldPane extends BasePane {
       { value: '0,0', label: 'Thousands separator (0,0)' },
       { value: '0,0.00', label: 'Thousands + decimals (0,0.00)' }
     ]);
-    this.numberFormatGroup.appendChild(this.createFormGroup('Number Format', this.numberFormatSelect));
+    this.numberFormatGroup.appendChild(this.createFormGroup('Number Format:', this.numberFormatSelect));
     container.appendChild(this.numberFormatGroup);
 
     // Currency format group
@@ -109,7 +109,7 @@ export class SubstitutionFieldPane extends BasePane {
       { value: 'GBP', label: 'GBP' },
       { value: 'JPY', label: 'JPY' }
     ]);
-    this.currencyFormatGroup.appendChild(this.createFormGroup('Currency', this.currencyFormatSelect));
+    this.currencyFormatGroup.appendChild(this.createFormGroup('Currency:', this.currencyFormatSelect));
     container.appendChild(this.currencyFormatGroup);
 
     // Date format group
@@ -121,7 +121,7 @@ export class SubstitutionFieldPane extends BasePane {
       { value: 'DD/MM/YYYY', label: '01/01/2026 (EU)' },
       { value: 'YYYY-MM-DD', label: '2026-01-01 (ISO)' }
     ]);
-    this.dateFormatGroup.appendChild(this.createFormGroup('Date Format', this.dateFormatSelect));
+    this.dateFormatGroup.appendChild(this.createFormGroup('Date Format:', this.dateFormatSelect));
     container.appendChild(this.dateFormatGroup);
 
     // Apply button

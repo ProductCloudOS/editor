@@ -78,11 +78,11 @@ export class HyperlinkPane extends BasePane {
 
     // URL input
     this.urlInput = this.createTextInput({ placeholder: 'https://example.com' });
-    container.appendChild(this.createFormGroup('URL', this.urlInput));
+    container.appendChild(this.createFormGroup('URL:', this.urlInput));
 
     // Title input
     this.titleInput = this.createTextInput({ placeholder: 'Link title (optional)' });
-    container.appendChild(this.createFormGroup('Title', this.titleInput));
+    container.appendChild(this.createFormGroup('Title:', this.titleInput));
 
     // Apply button
     const applyBtn = this.createButton('Apply Changes', { variant: 'primary' });

@@ -8,6 +8,7 @@ import {
   TablePane,
   SubstitutionFieldPane,
   RepeatingSectionPane,
+  ConditionalSectionPane,
   TableRowLoopPane,
   HyperlinkPane,
   DocumentInfoPane,
@@ -30,6 +31,7 @@ let imagePane: ImagePane | null = null;
 let tablePane: TablePane | null = null;
 let fieldPane: SubstitutionFieldPane | null = null;
 let loopPane: RepeatingSectionPane | null = null;
+let conditionalPane: ConditionalSectionPane | null = null;
 let tableRowLoopPane: TableRowLoopPane | null = null;
 let hyperlinkPane: HyperlinkPane | null = null;
 let documentInfoPane: DocumentInfoPane | null = null;
@@ -63,6 +65,7 @@ function initializeEditor(): void {
     loadDocumentSettings();
     initializeRulers();
     initializeLibraryPanes();
+    loadGoogleFonts();
     updateStatus('Editor initialized');
   });
 }
@@ -83,6 +86,16 @@ function setupEditorEventLogging(): void {
       const section = editor.getRepeatingSection(selection.sectionId);
       if (section) {
         updateStatus(`Loop "${section.fieldPath}" selected`);
+      }
+      return;
+    }
+
+    // Handle conditional section selection
+    if (selection.type === 'conditional-section') {
+      Logger.log(`[Editor Event] selection-change: conditional section selected: ${selection.sectionId}`);
+      const section = editor.getConditionalSection(selection.sectionId);
+      if (section) {
+        updateStatus(`Condition "${section.predicate}" selected`);
       }
       return;
     }
@@ -240,6 +253,17 @@ function setupEditorEventLogging(): void {
     updateStatus('Loop removed');
   });
 
+  // Conditional section events
+  editor.on('conditional-section-added', (event: any) => {
+    Logger.log('[Editor Event] conditional-section-added', event);
+    updateStatus('Conditional section created');
+  });
+
+  editor.on('conditional-section-removed', (event: any) => {
+    Logger.log('[Editor Event] conditional-section-removed', event);
+    updateStatus('Conditional section removed');
+  });
+
   // Section focus changed (header/body/footer)
   editor.on('section-focus-changed', (event: { section: EditingSection; previousSection: EditingSection }) => {
     Logger.log(`[Editor Event] section-focus-changed: ${event.previousSection} -> ${event.section}`);
@@ -387,6 +411,8 @@ function setupEventHandlers(): void {
   document.getElementById('insert-page-number')?.addEventListener('click', insertPageNumber);
   document.getElementById('create-loop')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('create-loop')?.addEventListener('click', createLoop);
+  document.getElementById('create-conditional')?.addEventListener('mousedown', preventFocusSteal);
+  document.getElementById('create-conditional')?.addEventListener('click', createConditional);
   document.getElementById('insert-page-break')?.addEventListener('mousedown', preventFocusSteal);
   document.getElementById('insert-page-break')?.addEventListener('click', insertPageBreak);
 
@@ -803,6 +829,27 @@ function initializeRulers(): void {
  * Initialize library panes - attach them to their respective containers.
  * The panes will auto-update based on editor events.
  */
+async function loadGoogleFonts(): Promise<void> {
+  if (!editor) return;
+
+  const googleFonts = [
+    { family: 'Roboto', url: 'https://fonts.gstatic.com/s/roboto/v47/KFOMCnqEu92Fr1ME7kSn66aGLdTylUAMQXC89YmC2DPNWubEbGmT.ttf' },
+    { family: 'Open Sans', url: 'https://fonts.gstatic.com/s/opensans/v44/memSYaGs126MiZpBA-UvWbX2vVnXBbObj2OVZyOOSr4dVJWUgsjZ0C4n.ttf' },
+    { family: 'Lato', url: 'https://fonts.gstatic.com/s/lato/v25/S6uyw4BMUTPHvxk.ttf' },
+    { family: 'Playfair Display', url: 'https://fonts.gstatic.com/s/playfairdisplay/v40/nuFvD-vYSZviVYUb_rj3ij__anPXJzDwcbmjWBN2PKdFvUDQ.ttf' },
+    { family: 'Source Code Pro', url: 'https://fonts.gstatic.com/s/sourcecodepro/v31/HI_diYsKILxRpg3hIP6sJ7fM7PqPMcMnZFqUwX28DMyQhM4.ttf' },
+  ];
+
+  for (const font of googleFonts) {
+    try {
+      await editor.registerFont(font);
+      Logger.log('[Demo] Loaded Google Font:', font.family);
+    } catch (e) {
+      Logger.warn('[Demo] Failed to load Google Font:', font.family, e);
+    }
+  }
+}
+
 function initializeLibraryPanes(): void {
   if (!editor) return;
 
@@ -875,6 +922,18 @@ function initializeLibraryPanes(): void {
       }
     });
     loopPane.attach({ editor, container: loopContainer, sectionElement: loopSection || undefined });
+  }
+
+  // Conditional section pane
+  const condContainer = document.getElementById('conditional-properties');
+  const condSection = document.getElementById('conditional-section');
+  if (condContainer) {
+    conditionalPane = new ConditionalSectionPane('conditional', {
+      onApply: (success) => {
+        if (success) updateStatus('Condition updated');
+      }
+    });
+    conditionalPane.attach({ editor, container: condContainer, sectionElement: condSection || undefined });
   }
 
   // Table row loop pane
@@ -959,7 +1018,11 @@ function initializeLibraryPanes(): void {
             city: 'San Francisco',
             postcode: 'CA 94102'
           }
-        }
+        },
+        isVIP: true,
+        isActive: true,
+        status: 'approved',
+        orderCount: 5
       },
       onApply: (success, error) => {
         if (success) {
@@ -1383,15 +1446,21 @@ function createLoopWithPath(fieldPath: string): void {
   try {
     const section = editor.createRepeatingSection(pendingLoopStart, pendingLoopEnd, fieldPath.trim());
     if (section) {
-      // Use library pane to show the section
+      // Text repeating section created — show the pane
       loopPane?.showSection(section);
       updateStatus(`Loop created for "${fieldPath.trim()}"`);
     } else {
-      updateStatus('Failed to create loop - check boundaries', 'error');
+      // May have created a table row loop (returns null but emits event)
+      const focusedTable = editor.getFocusedTable();
+      if (focusedTable && focusedTable.getAllRowLoops().length > 0) {
+        updateStatus(`Table row loop created for "${fieldPath.trim()}"`);
+      } else {
+        updateStatus('Failed to create loop - check boundaries', 'error');
+      }
     }
   } catch (error) {
     updateStatus('Failed to create loop', 'error');
-    console.error('Loop creation error:', error);
+    Logger.error('Loop creation error:', error);
   }
 }
 
@@ -1649,9 +1718,17 @@ function removeHyperlink(): void {
 function createLoop(): void {
   if (!editor) return;
 
+  // Check if a table is being edited — use table row loop path
+  const focusedTable = editor.getFocusedTable();
+  if (focusedTable && focusedTable.focusedCell) {
+    // For tables, use dummy boundaries (createRepeatingSection detects table context)
+    showArrayPicker(0, 0);
+    return;
+  }
+
   const selection = editor.getSelection();
   if (selection.type !== 'text') {
-    updateStatus('Select text first to create a loop', 'error');
+    updateStatus('Select text or focus a table cell first', 'error');
     return;
   }
 
@@ -1687,6 +1764,76 @@ function createLoop(): void {
   showArrayPicker(startBoundary, endBoundary);
 }
 
+/**
+ * Create a conditional section from the current text selection.
+ * The selection must span complete paragraphs.
+ */
+function createConditional(): void {
+  if (!editor) return;
+
+  // Check if a table is being edited — use table row conditional path
+  const focusedTable = editor.getFocusedTable();
+  if (focusedTable && focusedTable.focusedCell) {
+    const predicate = prompt('Enter condition predicate (e.g., "isActive"):');
+    if (predicate) {
+      // addConditionalSection detects table context
+      editor.addConditionalSection(0, 0, predicate.trim());
+    }
+    return;
+  }
+
+  const selection = editor.getSelection();
+  if (selection.type !== 'text') {
+    updateStatus('Select text or focus a table cell first', 'error');
+    return;
+  }
+
+  // Get paragraph boundaries
+  const boundaries = editor.getParagraphBoundaries();
+
+  // Find the paragraph boundary at or before the selection start
+  let startBoundary = 0;
+  for (const boundary of boundaries) {
+    if (boundary <= selection.start) {
+      startBoundary = boundary;
+    } else {
+      break;
+    }
+  }
+
+  // Find the paragraph boundary at or after the selection end
+  let endBoundary = boundaries[boundaries.length - 1] || selection.end;
+  for (const boundary of boundaries) {
+    if (boundary >= selection.end) {
+      endBoundary = boundary;
+      break;
+    }
+  }
+
+  if (endBoundary <= startBoundary) {
+    updateStatus('Selection must include at least one paragraph', 'error');
+    return;
+  }
+
+  const predicate = prompt('Enter condition predicate (e.g., "isActive"):');
+  if (predicate) {
+    const section = editor.addConditionalSection(startBoundary, endBoundary, predicate.trim());
+    if (section) {
+      conditionalPane?.showSection(section);
+      updateStatus(`Conditional section created: "${predicate.trim()}"`);
+    } else {
+      updateStatus('Failed to create conditional section — check boundaries', 'error');
+    }
+  }
+}
+
+async function simpleHash(str: string): Promise<string> {
+  const data = new TextEncoder().encode(str);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 function runExportRoundTrip(): void {
   if (!editor) return;
 
@@ -1696,14 +1843,15 @@ function runExportRoundTrip(): void {
   const firstSizeEl = document.getElementById('roundtrip-first-size');
   const secondSizeEl = document.getElementById('roundtrip-second-size');
   const diffEl = document.getElementById('roundtrip-diff');
-  if (!modal || !statusEl || !resultsEl || !firstSizeEl || !secondSizeEl || !diffEl) return;
+  const checksumEl = document.getElementById('roundtrip-checksum');
+  if (!modal || !statusEl || !resultsEl || !firstSizeEl || !secondSizeEl || !diffEl || !checksumEl) return;
 
   // Show modal
   modal.style.display = '';
   statusEl.textContent = 'Running...';
   resultsEl.style.display = 'none';
 
-  setTimeout(() => {
+  setTimeout(async () => {
     try {
       const firstExport = editor!.saveDocument();
       const firstSize = new Blob([firstExport]).size;
@@ -1716,12 +1864,21 @@ function runExportRoundTrip(): void {
       const diff = secondSize - firstSize;
       const sign = diff > 0 ? '+' : '';
 
+      // Compute checksums
+      const hash1 = await simpleHash(firstExport);
+      const hash2 = await simpleHash(secondExport);
+      const contentMatch = hash1 === hash2;
+
       firstSizeEl.textContent = firstSize.toLocaleString() + ' bytes';
       secondSizeEl.textContent = secondSize.toLocaleString() + ' bytes';
       diffEl.textContent = sign + diff.toLocaleString() + ' bytes';
       diffEl.style.color = diff === 0 ? '#27ae60' : '#e74c3c';
+      checksumEl.textContent = contentMatch ? 'Identical' : 'Different';
+      checksumEl.style.color = contentMatch ? '#27ae60' : '#e74c3c';
 
-      statusEl.textContent = diff === 0 ? 'Round-trip is lossless.' : 'Round-trip produced a size difference.';
+      statusEl.textContent = contentMatch
+        ? 'Round-trip is lossless (content identical).'
+        : 'Round-trip produced different content.';
       resultsEl.style.display = '';
     } catch (error) {
       statusEl.textContent = 'Error: ' + (error instanceof Error ? error.message : String(error));
@@ -1734,13 +1891,20 @@ function setupSidebarResize(): void {
   const sidebar = document.querySelector('.sidebar') as HTMLElement;
   if (!handle || !sidebar) return;
 
+  // Read the pane min-width from CSS variable to use as sidebar minimum
+  const paneMinWidth = parseInt(
+    getComputedStyle(document.documentElement).getPropertyValue('--pc-pane-min-width') || '220',
+    10
+  );
+
   let startX = 0;
   let startWidth = 0;
 
   const onMouseMove = (e: MouseEvent) => {
     const newWidth = startWidth + (e.clientX - startX);
-    const clamped = Math.min(600, Math.max(200, newWidth));
+    const clamped = Math.min(600, Math.max(paneMinWidth, newWidth));
     sidebar.style.width = clamped + 'px';
+    updateStatus(`Sidebar width: ${Math.round(clamped)}px`);
   };
 
   const onMouseUp = () => {
@@ -1749,6 +1913,7 @@ function setupSidebarResize(): void {
     document.body.style.userSelect = '';
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
+    updateStatus('Ready');
   };
 
   handle.addEventListener('mousedown', (e: MouseEvent) => {

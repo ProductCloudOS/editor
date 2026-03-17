@@ -87,6 +87,12 @@ export class FormattingPane extends BasePane {
     super.attach(options);
 
     if (this.editor) {
+      // Populate font list from editor if no explicit list was provided
+      if (this.fontFamilies === DEFAULT_FONT_FAMILIES) {
+        this.fontFamilies = this.editor.getAvailableFontFamilies();
+        this.rebuildFontSelect();
+      }
+
       // Update on cursor/selection changes
       const updateHandler = () => this.updateFromEditor();
       this.editor.on('cursor-changed', updateHandler);
@@ -94,11 +100,19 @@ export class FormattingPane extends BasePane {
       this.editor.on('text-changed', updateHandler);
       this.editor.on('formatting-changed', updateHandler);
 
+      // Update font list when new fonts are registered
+      const fontHandler = () => {
+        this.fontFamilies = this.editor!.getAvailableFontFamilies();
+        this.rebuildFontSelect();
+      };
+      this.editor.on('font-registered', fontHandler);
+
       this.eventCleanup.push(() => {
         this.editor?.off('cursor-changed', updateHandler);
         this.editor?.off('selection-changed', updateHandler);
         this.editor?.off('text-changed', updateHandler);
         this.editor?.off('formatting-changed', updateHandler);
+        this.editor?.off('font-registered', fontHandler);
       });
 
       // Initial update
@@ -186,51 +200,101 @@ export class FormattingPane extends BasePane {
     listsSection.appendChild(listsGroup);
     container.appendChild(listsSection);
 
-    // Font section
+    // Font section - label-value grid with right-aligned labels
     const fontSection = this.createSection('Font');
+    const fontGrid = document.createElement('div');
+    fontGrid.className = 'pc-pane-label-value-grid';
+
+    // Family row
+    const familyLabel = document.createElement('label');
+    familyLabel.className = 'pc-pane-label pc-pane-margin-label';
+    familyLabel.textContent = 'Family:';
     this.fontFamilySelect = this.createSelect(
       this.fontFamilies.map(f => ({ value: f, label: f })),
       'Arial'
     );
     this.addImmediateApplyListener(this.fontFamilySelect, () => this.applyFontFamily());
-    fontSection.appendChild(this.createFormGroup('Family', this.fontFamilySelect));
+    fontGrid.appendChild(familyLabel);
+    fontGrid.appendChild(this.fontFamilySelect);
+    fontGrid.appendChild(document.createElement('div'));
 
+    // Size row
+    const sizeLabel = document.createElement('label');
+    sizeLabel.className = 'pc-pane-label pc-pane-margin-label';
+    sizeLabel.textContent = 'Size:';
     this.fontSizeSelect = this.createSelect(
       this.fontSizes.map(s => ({ value: s.toString(), label: s.toString() })),
       '14'
     );
     this.addImmediateApplyListener(this.fontSizeSelect, () => this.applyFontSize());
-    fontSection.appendChild(this.createFormGroup('Size', this.fontSizeSelect));
+    fontGrid.appendChild(sizeLabel);
+    fontGrid.appendChild(this.fontSizeSelect);
+    fontGrid.appendChild(document.createElement('div'));
+
+    fontSection.appendChild(fontGrid);
     container.appendChild(fontSection);
 
-    // Color section
+    // Color section - label-value grid with right-aligned labels
     const colorSection = this.createSection('Color');
-    const colorRow = this.createRow();
+    const colorGrid = document.createElement('div');
+    colorGrid.className = 'pc-pane-label-value-grid';
 
-    const colorGroup = document.createElement('div');
+    // Text color row: label | picker | spacer
+    const textColorLabel = document.createElement('label');
+    textColorLabel.className = 'pc-pane-label pc-pane-margin-label';
+    textColorLabel.textContent = 'Text:';
     this.colorInput = this.createColorInput('#000000');
     this.addImmediateApplyListener(this.colorInput, () => this.applyTextColor());
-    colorGroup.appendChild(this.createFormGroup('Text', this.colorInput));
-    colorRow.appendChild(colorGroup);
+    colorGrid.appendChild(textColorLabel);
+    colorGrid.appendChild(this.colorInput);
+    colorGrid.appendChild(document.createElement('div'));
 
-    const highlightGroup = document.createElement('div');
+    // Highlight row: label | picker + clear button | spacer
+    const highlightLabel = document.createElement('label');
+    highlightLabel.className = 'pc-pane-label pc-pane-margin-label';
+    highlightLabel.textContent = 'Highlight:';
     this.highlightInput = this.createColorInput('#ffff00');
     this.addImmediateApplyListener(this.highlightInput, () => this.applyHighlight());
-    const highlightForm = this.createFormGroup('Highlight', this.highlightInput);
+
+    const highlightControls = document.createElement('div');
+    highlightControls.style.display = 'flex';
+    highlightControls.style.alignItems = 'center';
+    highlightControls.style.gap = '4px';
+    highlightControls.appendChild(this.highlightInput);
 
     const clearHighlightBtn = this.createButton('Clear');
     clearHighlightBtn.className = 'pc-pane-button';
-    clearHighlightBtn.style.marginLeft = '4px';
     this.addButtonListener(clearHighlightBtn, () => this.clearHighlight());
-    highlightForm.appendChild(clearHighlightBtn);
+    highlightControls.appendChild(clearHighlightBtn);
 
-    highlightGroup.appendChild(highlightForm);
-    colorRow.appendChild(highlightGroup);
+    colorGrid.appendChild(highlightLabel);
+    colorGrid.appendChild(highlightControls);
+    colorGrid.appendChild(document.createElement('div'));
 
-    colorSection.appendChild(colorRow);
+    colorSection.appendChild(colorGrid);
     container.appendChild(colorSection);
 
     return container;
+  }
+
+  private rebuildFontSelect(): void {
+    if (!this.fontFamilySelect) return;
+
+    const currentValue = this.fontFamilySelect.value;
+    this.fontFamilySelect.innerHTML = '';
+
+    for (const family of this.fontFamilies) {
+      const option = document.createElement('option');
+      option.value = family;
+      option.textContent = family;
+      option.style.fontFamily = family;
+      this.fontFamilySelect.appendChild(option);
+    }
+
+    // Restore selection if the font still exists
+    if (this.fontFamilies.includes(currentValue)) {
+      this.fontFamilySelect.value = currentValue;
+    }
   }
 
   private updateFromEditor(): void {

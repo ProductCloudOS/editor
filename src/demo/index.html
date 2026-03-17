@@ -64,6 +64,7 @@
                         <div class="menu-divider"></div>
                         <button id="insert-page-break"><span class="menu-label">Page Break</span><span class="menu-shortcut">Ctrl+Enter</span></button>
                         <button id="create-loop">Repeating Section</button>
+                        <button id="create-conditional">Conditional Section</button>
                     </div>
                 </div>
                 <div class="menu-item">
@@ -172,6 +173,16 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" id="conditional-section" style="display: none;">
+                    <button class="collapsible-header expanded" data-target="conditional-properties">
+                        <span class="collapsible-icon"></span>
+                        <span>Conditional Section</span>
+                    </button>
+                    <div class="collapsible-content" id="conditional-properties">
+                        <!-- ConditionalSectionPane renders here -->
+                    </div>
+                </div>
+
                 <div class="collapsible-section" id="table-row-loop-section" style="display: none;">
                     <button class="collapsible-header expanded" data-target="table-row-loop-properties">
                         <span class="collapsible-icon"></span>
@@ -255,6 +266,7 @@
                     <tr><td>First export size:</td><td id="roundtrip-first-size"></td></tr>
                     <tr><td>Second export size:</td><td id="roundtrip-second-size"></td></tr>
                     <tr><td>Difference:</td><td id="roundtrip-diff"></td></tr>
+                    <tr><td>Content match:</td><td id="roundtrip-checksum"></td></tr>
                 </table>
             </div>
             <div class="modal-footer">

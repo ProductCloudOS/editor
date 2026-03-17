@@ -15,7 +15,8 @@ import { DataBinder } from '../data/DataBinder';
 import { PDFGenerator } from '../rendering/PDFGenerator';
 import { LayoutEngine } from '../layout/LayoutEngine';
 import { BaseEmbeddedObject, ObjectPosition, TextBoxObject, TableObject, ImageObject, TableRowConfig, EmbeddedObjectFactory, EmbeddedObjectData } from '../objects';
-import { SubstitutionFieldConfig, TextFormattingStyle, SubstitutionField, RepeatingSection, FlowingTextContent, TextAlignment, Focusable } from '../text';
+import { SubstitutionFieldConfig, TextFormattingStyle, SubstitutionField, RepeatingSection, ConditionalSection, FlowingTextContent, TextAlignment, Focusable } from '../text';
+import { PredicateEvaluator } from '../text/PredicateEvaluator';
 import { formatFieldValue } from '../text/FieldFormatter';
 import {
   TransactionManager,
@@ -31,6 +32,7 @@ import { ClipboardManager, type PCEditorClipboardData, type ClipboardContent } f
 import { PDFImporter, PDFImportProgress, PDFImportResult } from '../import';
 import { PDFImportOptions, PDFImportError, PDFImportErrorCode } from '../import/types';
 import { Logger } from '../utils/logger';
+import { FontManager, RegisterFontOptions } from '../fonts';
 
 export class PCEditor extends EventEmitter {
   private container: HTMLElement;
@@ -39,6 +41,7 @@ export class PCEditor extends EventEmitter {
   private canvasManager!: CanvasManager;
   private dataBinder: DataBinder;
   private pdfGenerator: PDFGenerator;
+  private fontManager: FontManager;
   private layoutEngine!: LayoutEngine;
   // Transaction-based undo system
   private transactionManager!: TransactionManager;
@@ -76,7 +79,8 @@ export class PCEditor extends EventEmitter {
     });
 
     this.dataBinder = new DataBinder();
-    this.pdfGenerator = new PDFGenerator();
+    this.fontManager = new FontManager();
+    this.pdfGenerator = new PDFGenerator(this.fontManager);
     this.clipboardManager = new ClipboardManager();
 
     this.initialize();
@@ -263,11 +267,27 @@ export class PCEditor extends EventEmitter {
       this.emit('table-cell-selection-changed', data);
     });
 
+    // Forward table row loop clicks
+    this.canvasManager.on('table-row-loop-clicked', (data: any) => {
+      this.emit('table-row-loop-clicked', data);
+    });
+
     this.canvasManager.on('repeating-section-clicked', (data: any) => {
       // Repeating section clicked - update selection state
       if (data.section && data.section.id) {
         this.currentSelection = {
           type: 'repeating-section',
+          sectionId: data.section.id
+        };
+        this.emitSelectionChange();
+      }
+    });
+
+    this.canvasManager.on('conditional-section-clicked', (data: any) => {
+      // Conditional section clicked - update selection state
+      if (data.section && data.section.id) {
+        this.currentSelection = {
+          type: 'conditional-section',
           sectionId: data.section.id
         };
         this.emitSelectionChange();
@@ -2657,12 +2677,20 @@ export class PCEditor extends EventEmitter {
     // Step 1: Expand repeating sections in body (header/footer don't support them)
     this.expandRepeatingSections(bodyContent, data);
 
-    // Step 2: Expand table row loops in body, header, and footer
+    // Step 2: Evaluate conditional sections in body (remove content where predicate is false)
+    this.evaluateConditionalSections(bodyContent, data);
+
+    // Step 3: Expand table row loops in body, header, and footer
     this.expandTableRowLoops(bodyContent, data);
     this.expandTableRowLoops(this.document.headerFlowingContent, data);
     this.expandTableRowLoops(this.document.footerFlowingContent, data);
 
-    // Step 3: Substitute all fields in body
+    // Step 4: Evaluate table row conditionals in body, header, and footer
+    this.evaluateTableRowConditionals(bodyContent, data);
+    this.evaluateTableRowConditionals(this.document.headerFlowingContent, data);
+    this.evaluateTableRowConditionals(this.document.footerFlowingContent, data);
+
+    // Step 5: Substitute all fields in body
     totalFieldCount += this.substituteFieldsInContent(bodyContent, data);
 
     // Step 4: Substitute all fields in embedded objects in body
@@ -2934,6 +2962,75 @@ export class PCEditor extends EventEmitter {
       // Remove the section after expansion
       sectionManager.remove(section.id);
     }
+  }
+
+  /**
+   * Evaluate conditional sections by removing content where predicate is false.
+   * Processes sections from end to start to preserve text indices.
+   */
+  private evaluateConditionalSections(
+    flowingContent: FlowingTextContent,
+    data: Record<string, unknown>
+  ): void {
+    const sectionManager = flowingContent.getConditionalSectionManager();
+
+    // Get sections in descending order (process end-to-start)
+    const sections = sectionManager.getSectionsDescending();
+
+    for (const section of sections) {
+      const result = PredicateEvaluator.evaluate(section.predicate, data);
+
+      if (!result) {
+        // Predicate is false — remove the content within this section
+        const deleteStart = section.startIndex;
+        const deleteLength = section.endIndex - section.startIndex;
+
+        flowingContent.deleteText(deleteStart, deleteLength);
+      }
+
+      // Remove the conditional section marker regardless
+      sectionManager.remove(section.id);
+    }
+  }
+
+  /**
+   * Evaluate table row conditionals in embedded tables within a FlowingTextContent.
+   * For each table with row conditionals, removes rows where predicate is false.
+   */
+  private evaluateTableRowConditionals(flowingContent: FlowingTextContent, data: Record<string, unknown>): void {
+    const embeddedObjects = flowingContent.getEmbeddedObjects();
+
+    for (const [, obj] of embeddedObjects.entries()) {
+      if (obj instanceof TableObject) {
+        this.evaluateTableRowConditionalsInTable(obj, data);
+      }
+    }
+  }
+
+  /**
+   * Evaluate row conditionals in a single table.
+   * Processes conditionals from end to start to preserve row indices.
+   */
+  private evaluateTableRowConditionalsInTable(table: TableObject, data: Record<string, unknown>): void {
+    const conditionals = table.getAllRowConditionals();
+    if (conditionals.length === 0) return;
+
+    // Sort by startRowIndex descending (process end-to-start)
+    const sorted = [...conditionals].sort((a, b) => b.startRowIndex - a.startRowIndex);
+
+    for (const cond of sorted) {
+      const result = PredicateEvaluator.evaluate(cond.predicate, data);
+
+      if (!result) {
+        // Predicate is false — remove the rows
+        table.removeRowsInRange(cond.startRowIndex, cond.endRowIndex);
+      }
+
+      // Remove the conditional marker regardless
+      table.removeRowConditional(cond.id);
+    }
+
+    table.markLayoutDirty();
   }
 
   /**
@@ -3214,7 +3311,7 @@ export class PCEditor extends EventEmitter {
   toggleBulletList(): void {
     if (!this._isReady) return;
 
-    const flowingContent = this.getActiveFlowingContent();
+    const flowingContent = this.getEditingFlowingContent() || this.getActiveFlowingContent();
     if (!flowingContent) return;
 
     flowingContent.toggleBulletList();
@@ -3228,7 +3325,7 @@ export class PCEditor extends EventEmitter {
   toggleNumberedList(): void {
     if (!this._isReady) return;
 
-    const flowingContent = this.getActiveFlowingContent();
+    const flowingContent = this.getEditingFlowingContent() || this.getActiveFlowingContent();
     if (!flowingContent) return;
 
     flowingContent.toggleNumberedList();
@@ -3242,7 +3339,7 @@ export class PCEditor extends EventEmitter {
   indentParagraph(): void {
     if (!this._isReady) return;
 
-    const flowingContent = this.getActiveFlowingContent();
+    const flowingContent = this.getEditingFlowingContent() || this.getActiveFlowingContent();
     if (!flowingContent) return;
 
     flowingContent.indentParagraph();
@@ -3256,7 +3353,7 @@ export class PCEditor extends EventEmitter {
   outdentParagraph(): void {
     if (!this._isReady) return;
 
-    const flowingContent = this.getActiveFlowingContent();
+    const flowingContent = this.getEditingFlowingContent() || this.getActiveFlowingContent();
     if (!flowingContent) return;
 
     flowingContent.outdentParagraph();
@@ -3270,7 +3367,7 @@ export class PCEditor extends EventEmitter {
   getListFormatting(): import('../text').ListFormatting | undefined {
     if (!this._isReady) return undefined;
 
-    const flowingContent = this.getActiveFlowingContent();
+    const flowingContent = this.getEditingFlowingContent() || this.getActiveFlowingContent();
     if (!flowingContent) return undefined;
 
     return flowingContent.getListFormatting();
@@ -3514,9 +3611,12 @@ export class PCEditor extends EventEmitter {
     // If a table is focused, create a row loop instead of a text repeating section
     const focusedTable = this.getFocusedTable();
     if (focusedTable && focusedTable.focusedCell) {
-      Logger.log('[pc-editor] createRepeatingSection → table row loop', fieldPath);
-      const row = focusedTable.focusedCell.row;
-      const loop = focusedTable.createRowLoop(row, row, fieldPath);
+      // Use the selected range if multiple rows are selected, otherwise use the focused cell's row
+      const selectedRange = focusedTable.selectedRange;
+      const startRow = selectedRange ? selectedRange.start.row : focusedTable.focusedCell.row;
+      const endRow = selectedRange ? selectedRange.end.row : focusedTable.focusedCell.row;
+      Logger.log('[pc-editor] createRepeatingSection → table row loop', startRow, endRow, fieldPath);
+      const loop = focusedTable.createRowLoop(startRow, endRow, fieldPath);
       if (loop) {
         this.canvasManager.render();
         this.emit('table-row-loop-added', { table: focusedTable, loop });
@@ -3603,6 +3703,127 @@ export class PCEditor extends EventEmitter {
     }
 
     return this.document.bodyFlowingContent.getRepeatingSectionAtBoundary(textIndex) || null;
+  }
+
+  // ============================================
+  // Conditional Section API
+  // ============================================
+
+  /**
+   * Create a conditional section.
+   *
+   * If a table is currently being edited (focused), creates a table row conditional
+   * based on the focused cell's row.
+   *
+   * Otherwise, creates a body text conditional section at the given paragraph boundaries.
+   *
+   * @param startIndex Text index at paragraph start (ignored for table row conditionals)
+   * @param endIndex Text index at closing paragraph start (ignored for table row conditionals)
+   * @param predicate The predicate expression to evaluate (e.g., "isActive")
+   * @returns The created section, or null if creation failed
+   */
+  addConditionalSection(
+    startIndex: number,
+    endIndex: number,
+    predicate: string
+  ): ConditionalSection | null {
+    if (!this._isReady) {
+      throw new Error('Editor is not ready');
+    }
+
+    // If a table is focused, create a row conditional instead
+    const focusedTable = this.getFocusedTable();
+    if (focusedTable && focusedTable.focusedCell) {
+      const selectedRange = focusedTable.selectedRange;
+      const startRow = selectedRange ? selectedRange.start.row : focusedTable.focusedCell.row;
+      const endRow = selectedRange ? selectedRange.end.row : focusedTable.focusedCell.row;
+      Logger.log('[pc-editor] addConditionalSection → table row conditional', startRow, endRow, predicate);
+      const cond = focusedTable.createRowConditional(startRow, endRow, predicate);
+      if (cond) {
+        this.canvasManager.render();
+        this.emit('table-row-conditional-added', { table: focusedTable, conditional: cond });
+      }
+      return null; // Row conditionals are not ConditionalSections, return null
+    }
+
+    Logger.log('[pc-editor] addConditionalSection', startIndex, endIndex, predicate);
+    const section = this.document.bodyFlowingContent.createConditionalSection(startIndex, endIndex, predicate);
+
+    if (section) {
+      this.canvasManager.render();
+      this.emit('conditional-section-added', { section });
+    }
+
+    return section;
+  }
+
+  /**
+   * Get a conditional section by ID.
+   */
+  getConditionalSection(id: string): ConditionalSection | null {
+    if (!this._isReady) {
+      return null;
+    }
+
+    return this.document.bodyFlowingContent.getConditionalSection(id) || null;
+  }
+
+  /**
+   * Get all conditional sections.
+   */
+  getConditionalSections(): ConditionalSection[] {
+    if (!this._isReady) {
+      return [];
+    }
+
+    return this.document.bodyFlowingContent.getConditionalSections();
+  }
+
+  /**
+   * Update a conditional section's predicate.
+   */
+  updateConditionalSectionPredicate(id: string, predicate: string): boolean {
+    if (!this._isReady) {
+      return false;
+    }
+
+    const success = this.document.bodyFlowingContent.updateConditionalSectionPredicate(id, predicate);
+
+    if (success) {
+      this.canvasManager.render();
+      this.emit('conditional-section-updated', { id, predicate });
+    }
+
+    return success;
+  }
+
+  /**
+   * Remove a conditional section by ID.
+   */
+  removeConditionalSection(id: string): boolean {
+    if (!this._isReady) {
+      return false;
+    }
+
+    const success = this.document.bodyFlowingContent.removeConditionalSection(id);
+
+    if (success) {
+      this.canvasManager.render();
+      this.emit('conditional-section-removed', { id });
+    }
+
+    return success;
+  }
+
+  /**
+   * Find a conditional section that has a boundary at the given text index.
+   */
+  getConditionalSectionAtBoundary(textIndex: number): ConditionalSection | null {
+    if (!this._isReady) {
+      return null;
+    }
+
+    return this.document.bodyFlowingContent.getConditionalSectionAtBoundary(textIndex) || null;
   }
 
   // ============================================
@@ -4008,6 +4229,43 @@ export class PCEditor extends EventEmitter {
    */
   setLogging(enabled: boolean): void {
     Logger.setEnabled(enabled);
+  }
+
+  // ============================================
+  // Font Management
+  // ============================================
+
+  /**
+   * Register a custom font for use in the editor and PDF export.
+   * The font will be loaded via the FontFace API for canvas rendering
+   * and its raw bytes stored for PDF embedding.
+   * @param options Font registration options (family + url or data)
+   */
+  async registerFont(options: RegisterFontOptions): Promise<void> {
+    Logger.log('[pc-editor] registerFont', options.family);
+    await this.fontManager.registerFont(options);
+    this.emit('font-registered', { family: options.family });
+    // Re-render to pick up the new font if it's already in use
+    if (this._isReady) {
+      this.canvasManager.render();
+    }
+  }
+
+  /**
+   * Get all registered fonts (built-in and custom).
+   */
+  getAvailableFonts(): Array<{ family: string; source: 'built-in' | 'custom' }> {
+    return this.fontManager.getAvailableFonts().map(f => ({
+      family: f.family,
+      source: f.source
+    }));
+  }
+
+  /**
+   * Get all available font family names.
+   */
+  getAvailableFontFamilies(): string[] {
+    return this.fontManager.getAvailableFontFamilies();
   }
 
   destroy(): void {

@@ -15,6 +15,8 @@ export {
   SubstitutionFieldManager,
   EmbeddedObjectManager,
   RepeatingSectionManager,
+  ConditionalSectionManager,
+  PredicateEvaluator,
   TextMeasurer,
   TextLayout,
   TextPositionCalculator,
@@ -32,6 +34,8 @@ export type {
   SubstitutionFieldConfig,
   RepeatingSection,
   RepeatingSectionVisualState,
+  ConditionalSection,
+  ConditionalSectionVisualState,
   FlowedLine,
   FlowedPage,
   FlowedSubstitutionField,
@@ -120,6 +124,7 @@ export {
   HyperlinkPane,
   SubstitutionFieldPane,
   RepeatingSectionPane,
+  ConditionalSectionPane,
   TableRowLoopPane,
   TextBoxPane,
   ImagePane,
@@ -145,6 +150,7 @@ export type {
   HyperlinkPaneOptions,
   SubstitutionFieldPaneOptions,
   RepeatingSectionPaneOptions,
+  ConditionalSectionPaneOptions,
   TableRowLoopPaneOptions,
   TextBoxPaneOptions,
   ImagePaneOptions,
@@ -178,6 +184,10 @@ export type {
   FormattingRun,
   PageInfo
 } from './import';
+
+// Font management
+export { FontManager } from './fonts';
+export type { RegisterFontOptions, FontRegistration, FontVariant } from './fonts';
 
 // Utilities
 export { Logger } from './utils/logger';

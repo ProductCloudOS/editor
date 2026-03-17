@@ -70,15 +70,18 @@ export class TextBoxPane extends BasePane {
   protected createContent(): HTMLElement {
     const container = document.createElement('div');
 
-    // Position section
+    // Position section - Type on same row as label
     const positionSection = this.createSection('Position');
     this.positionSelect = this.createSelect([
       { value: 'inline', label: 'Inline' },
       { value: 'block', label: 'Block' },
       { value: 'relative', label: 'Relative' }
     ], 'inline');
-    this.addImmediateApplyListener(this.positionSelect, () => this.updateOffsetVisibility());
-    positionSection.appendChild(this.createFormGroup('Type', this.positionSelect));
+    this.addImmediateApplyListener(this.positionSelect, () => {
+      this.updateOffsetVisibility();
+      this.applyChanges();
+    });
+    positionSection.appendChild(this.createFormGroup('Type:', this.positionSelect, { inline: true }));
 
     // Offset group (only visible for relative positioning)
     this.offsetGroup = document.createElement('div');
@@ -86,16 +89,19 @@ export class TextBoxPane extends BasePane {
     const offsetRow = this.createRow();
     this.offsetXInput = this.createNumberInput({ value: 0 });
     this.offsetYInput = this.createNumberInput({ value: 0 });
-    offsetRow.appendChild(this.createFormGroup('X', this.offsetXInput, { inline: true }));
-    offsetRow.appendChild(this.createFormGroup('Y', this.offsetYInput, { inline: true }));
+    this.addImmediateApplyListener(this.offsetXInput, () => this.applyChanges());
+    this.addImmediateApplyListener(this.offsetYInput, () => this.applyChanges());
+    offsetRow.appendChild(this.createFormGroup('X:', this.offsetXInput, { inline: true }));
+    offsetRow.appendChild(this.createFormGroup('Y:', this.offsetYInput, { inline: true }));
     this.offsetGroup.appendChild(offsetRow);
     positionSection.appendChild(this.offsetGroup);
     container.appendChild(positionSection);
 
-    // Background section
-    const bgSection = this.createSection('Background');
+    // Background - color on same row as label
+    const bgSection = this.createSection();
     this.bgColorInput = this.createColorInput('#ffffff');
-    bgSection.appendChild(this.createFormGroup('Color', this.bgColorInput));
+    this.addImmediateApplyListener(this.bgColorInput, () => this.applyChanges());
+    bgSection.appendChild(this.createFormGroup('Background:', this.bgColorInput, { inline: true }));
     container.appendChild(bgSection);
 
     // Border section
@@ -103,29 +109,29 @@ export class TextBoxPane extends BasePane {
     const borderRow = this.createRow();
     this.borderWidthInput = this.createNumberInput({ min: 0, max: 10, value: 1 });
     this.borderColorInput = this.createColorInput('#cccccc');
-    borderRow.appendChild(this.createFormGroup('Width', this.borderWidthInput, { inline: true }));
-    borderRow.appendChild(this.createFormGroup('Color', this.borderColorInput, { inline: true }));
+    this.addImmediateApplyListener(this.borderWidthInput, () => this.applyChanges());
+    this.addImmediateApplyListener(this.borderColorInput, () => this.applyChanges());
+    borderRow.appendChild(this.createFormGroup('Width:', this.borderWidthInput, { inline: true }));
+    borderRow.appendChild(this.createFormGroup('Color:', this.borderColorInput, { inline: true }));
     borderSection.appendChild(borderRow);
 
+    // Border style on same row as label
     this.borderStyleSelect = this.createSelect([
       { value: 'solid', label: 'Solid' },
       { value: 'dashed', label: 'Dashed' },
       { value: 'dotted', label: 'Dotted' },
       { value: 'none', label: 'None' }
     ], 'solid');
-    borderSection.appendChild(this.createFormGroup('Style', this.borderStyleSelect));
+    this.addImmediateApplyListener(this.borderStyleSelect, () => this.applyChanges());
+    borderSection.appendChild(this.createFormGroup('Style:', this.borderStyleSelect, { inline: true }));
     container.appendChild(borderSection);
 
-    // Padding section
-    const paddingSection = this.createSection('Padding');
+    // Padding on same row as label
+    const paddingSection = this.createSection();
     this.paddingInput = this.createNumberInput({ min: 0, max: 50, value: 8 });
-    paddingSection.appendChild(this.createFormGroup('All sides (px)', this.paddingInput));
+    this.addImmediateApplyListener(this.paddingInput, () => this.applyChanges());
+    paddingSection.appendChild(this.createFormGroup('Padding:', this.paddingInput, { inline: true }));
     container.appendChild(paddingSection);
-
-    // Apply button
-    const applyBtn = this.createButton('Apply Changes', { variant: 'primary' });
-    this.addButtonListener(applyBtn, () => this.applyChanges());
-    container.appendChild(applyBtn);
 
     return container;
   }
@@ -213,7 +219,6 @@ export class TextBoxPane extends BasePane {
 
   private applyChanges(): void {
     if (!this.editor || !this.currentTextBox) {
-      this.onApplyCallback?.(false, new Error('No text box selected'));
       return;
     }
 
@@ -257,11 +262,7 @@ export class TextBoxPane extends BasePane {
 
     try {
       const success = this.editor.updateTextBox(this.currentTextBox.id, updates);
-      if (success) {
-        this.onApplyCallback?.(true);
-      } else {
-        this.onApplyCallback?.(false, new Error('Failed to update text box'));
-      }
+      this.onApplyCallback?.(success);
     } catch (error) {
       this.onApplyCallback?.(false, error instanceof Error ? error : new Error(String(error)));
     }

@@ -24,7 +24,8 @@ import {
   TablePageLayout,
   TablePageSlice,
   TableRowLoop,
-  TableRowLoopData
+  TableRowLoopData,
+  TableRowConditional
 } from './types';
 import { TableCellMerger } from './TableCellMerger';
 import { Logger } from '../../utils/logger';
@@ -64,6 +65,9 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
   // Row loops for merge expansion
   private _rowLoops: Map<string, TableRowLoop> = new Map();
+
+  // Row conditionals for conditional display
+  private _rowConditionals: Map<string, TableRowConditional> = new Map();
 
   // Layout caching for performance
   private _layoutDirty: boolean = true;
@@ -867,6 +871,101 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     return start1 <= end2 && start2 <= end1;
   }
 
+  // ============================================
+  // Table Row Conditionals
+  // ============================================
+
+  private _nextCondId: number = 1;
+
+  private generateRowConditionalId(): string {
+    return `row-cond-${this._nextCondId++}`;
+  }
+
+  /**
+   * Create a row conditional.
+   */
+  createRowConditional(startRowIndex: number, endRowIndex: number, predicate: string): TableRowConditional | null {
+    if (startRowIndex < 0 || endRowIndex >= this._rows.length) {
+      Logger.warn('[pc-editor:TableObject.createRowConditional] Invalid row range');
+      return null;
+    }
+    if (startRowIndex > endRowIndex) {
+      Logger.warn('[pc-editor:TableObject.createRowConditional] Start index must be <= end index');
+      return null;
+    }
+
+    // Check for overlapping conditionals
+    for (const existing of this._rowConditionals.values()) {
+      if (this.loopRangesOverlap(startRowIndex, endRowIndex, existing.startRowIndex, existing.endRowIndex)) {
+        Logger.warn('[pc-editor:TableObject.createRowConditional] Range overlaps with existing conditional');
+        return null;
+      }
+    }
+
+    const cond: TableRowConditional = {
+      id: this.generateRowConditionalId(),
+      predicate,
+      startRowIndex,
+      endRowIndex
+    };
+
+    this._rowConditionals.set(cond.id, cond);
+    this.emit('row-conditional-created', { conditional: cond });
+    this.emit('content-changed', {});
+    return cond;
+  }
+
+  /**
+   * Remove a row conditional by ID.
+   */
+  removeRowConditional(id: string): boolean {
+    const cond = this._rowConditionals.get(id);
+    if (!cond) return false;
+
+    this._rowConditionals.delete(id);
+    this.emit('row-conditional-removed', { conditionalId: id });
+    return true;
+  }
+
+  /**
+   * Get a row conditional by ID.
+   */
+  getRowConditional(id: string): TableRowConditional | undefined {
+    return this._rowConditionals.get(id);
+  }
+
+  /**
+   * Get all row conditionals.
+   */
+  getAllRowConditionals(): TableRowConditional[] {
+    return Array.from(this._rowConditionals.values());
+  }
+
+  /**
+   * Get the row conditional at a given row index.
+   */
+  getRowConditionalAtRow(rowIndex: number): TableRowConditional | undefined {
+    for (const cond of this._rowConditionals.values()) {
+      if (rowIndex >= cond.startRowIndex && rowIndex <= cond.endRowIndex) {
+        return cond;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Update a row conditional's predicate.
+   */
+  updateRowConditionalPredicate(id: string, predicate: string): boolean {
+    const cond = this._rowConditionals.get(id);
+    if (!cond) return false;
+
+    cond.predicate = predicate;
+    this.emit('row-conditional-updated', { conditional: cond });
+    this.emit('content-changed', {});
+    return true;
+  }
+
   /**
    * Shift row loop indices when rows are inserted or removed.
    * @param fromIndex The row index where insertion/removal occurred
@@ -908,6 +1007,45 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     for (const id of loopsToRemove) {
       this._rowLoops.delete(id);
       this.emit('row-loop-removed', { loopId: id, reason: 'row-deleted' });
+    }
+
+    // Also shift row conditional indices
+    this.shiftRowConditionalIndices(fromIndex, delta);
+  }
+
+  /**
+   * Shift row conditional indices when rows are inserted or removed.
+   */
+  private shiftRowConditionalIndices(fromIndex: number, delta: number): void {
+    const condsToRemove: string[] = [];
+
+    for (const cond of this._rowConditionals.values()) {
+      if (delta < 0) {
+        const removeCount = Math.abs(delta);
+        const removeEnd = fromIndex + removeCount - 1;
+
+        if (fromIndex <= cond.endRowIndex && removeEnd >= cond.startRowIndex) {
+          condsToRemove.push(cond.id);
+          continue;
+        }
+
+        if (fromIndex < cond.startRowIndex) {
+          cond.startRowIndex += delta;
+          cond.endRowIndex += delta;
+        }
+      } else {
+        if (fromIndex <= cond.startRowIndex) {
+          cond.startRowIndex += delta;
+          cond.endRowIndex += delta;
+        } else if (fromIndex <= cond.endRowIndex) {
+          cond.endRowIndex += delta;
+        }
+      }
+    }
+
+    for (const id of condsToRemove) {
+      this._rowConditionals.delete(id);
+      this.emit('row-conditional-removed', { conditionalId: id, reason: 'row-deleted' });
     }
   }
 
@@ -1963,6 +2101,11 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       this.renderRowLoopIndicators(ctx);
     }
 
+    // Render row conditional indicators
+    if (this._rowConditionals.size > 0) {
+      this.renderRowConditionalIndicators(ctx);
+    }
+
     // Render cell range selection highlight
     if (this._selectedRange) {
       this.renderRangeSelection(ctx);
@@ -1982,9 +2125,66 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
   /**
    * Render row loop indicators (colored stripe on left side of loop rows).
    */
+  private static readonly LOOP_COLOR = '#6B46C1';
+  private static readonly LOOP_LABEL_PADDING = 4;
+  private static readonly LOOP_LABEL_RADIUS = 4;
+  private _selectedRowLoopId: string | null = null;
+
+  /**
+   * Select a row loop by ID (for pane display).
+   */
+  selectRowLoop(loopId: string | null): void {
+    this._selectedRowLoopId = loopId;
+  }
+
+  /**
+   * Get the currently selected row loop ID.
+   */
+  get selectedRowLoopId(): string | null {
+    return this._selectedRowLoopId;
+  }
+
+  /**
+   * Hit-test a point against row loop labels.
+   * Point should be in table-local coordinates.
+   * Returns the loop if a label was clicked, null otherwise.
+   */
+  getRowLoopAtPoint(point: { x: number; y: number }): TableRowLoop | null {
+    let rowPositions = this._cachedRowPositions;
+    if (rowPositions.length === 0) {
+      rowPositions = [];
+      let y = 0;
+      for (const row of this._rows) {
+        rowPositions.push(y);
+        y += row.calculatedHeight;
+      }
+    }
+
+    for (const loop of this._rowLoops.values()) {
+      const startY = rowPositions[loop.startRowIndex] || 0;
+      let endY = startY;
+      for (let i = loop.startRowIndex; i <= loop.endRowIndex && i < this._rows.length; i++) {
+        endY += this._rows[i].calculatedHeight;
+      }
+
+      // Label bounds (matches rendering)
+      const labelWidth = 30; // approximate for "Loop" at 10px
+      const labelHeight = 10 + TableObject.LOOP_LABEL_PADDING * 2;
+      const labelX = -6 - labelWidth - 4;
+      const labelY = startY - labelHeight - 2;
+
+      if (point.x >= labelX && point.x <= labelX + labelWidth + 4 &&
+          point.y >= labelY && point.y <= labelY + labelHeight + 4) {
+        return loop;
+      }
+    }
+    return null;
+  }
+
   private renderRowLoopIndicators(ctx: CanvasRenderingContext2D): void {
-    const indicatorWidth = 4;
-    const labelPadding = 4;
+    const color = TableObject.LOOP_COLOR;
+    const padding = TableObject.LOOP_LABEL_PADDING;
+    const radius = TableObject.LOOP_LABEL_RADIUS;
 
     // Calculate row Y positions if not cached
     let rowPositions = this._cachedRowPositions;
@@ -1997,13 +2197,8 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       }
     }
 
-    // Colors for different loops (cycle through these)
-    const loopColors = ['#9b59b6', '#3498db', '#e67e22', '#1abc9c', '#e74c3c'];
-    let colorIndex = 0;
-
     for (const loop of this._rowLoops.values()) {
-      const color = loopColors[colorIndex % loopColors.length];
-      colorIndex++;
+      const isSelected = this._selectedRowLoopId === loop.id;
 
       // Calculate the Y range for this loop
       const startY = rowPositions[loop.startRowIndex] || 0;
@@ -2015,36 +2210,172 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
       // Draw colored stripe on left side
       ctx.fillStyle = color;
-      ctx.fillRect(-indicatorWidth - 2, startY, indicatorWidth, loopHeight);
+      ctx.fillRect(-6, startY, 4, loopHeight);
 
-      // Draw loop label on the first row
-      ctx.save();
-      ctx.font = '10px Arial';
-      ctx.fillStyle = color;
-
-      // Rotate text to be vertical along the stripe
-      const labelText = `⟳ ${loop.fieldPath}`;
-      const textMetrics = ctx.measureText(labelText);
-
-      // Position label to the left of the stripe
-      ctx.translate(-indicatorWidth - labelPadding - textMetrics.width - 4, startY + loopHeight / 2);
-
-      ctx.fillText(labelText, 0, 4);
-      ctx.restore();
-
-      // Draw top and bottom brackets
+      // Draw vertical connector line
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      // Top bracket
-      ctx.moveTo(-indicatorWidth - 2, startY);
-      ctx.lineTo(-indicatorWidth - 6, startY);
-      ctx.lineTo(-indicatorWidth - 6, startY + 6);
-      // Bottom bracket
-      ctx.moveTo(-indicatorWidth - 2, endY);
-      ctx.lineTo(-indicatorWidth - 6, endY);
-      ctx.lineTo(-indicatorWidth - 6, endY - 6);
+      ctx.moveTo(-4, startY);
+      ctx.lineTo(-4, endY);
       ctx.stroke();
+
+      // Draw "Loop" label — matches text flow style
+      ctx.save();
+      ctx.font = '10px Arial';
+      const labelText = 'Loop';
+      const metrics = ctx.measureText(labelText);
+      const boxWidth = metrics.width + padding * 2;
+      const boxHeight = 10 + padding * 2;
+      const labelX = -6 - boxWidth - 4;
+      const labelY = startY - boxHeight - 2;
+
+      ctx.beginPath();
+      ctx.roundRect(labelX, labelY, boxWidth, boxHeight, radius);
+
+      if (isSelected) {
+        // Selected: filled background with white text
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+      } else {
+        // Not selected: white background, outlined with colored text
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = color;
+      }
+
+      ctx.textBaseline = 'middle';
+      ctx.fillText(labelText, labelX + padding, labelY + boxHeight / 2);
+      ctx.restore();
+    }
+  }
+
+  private static readonly COND_COLOR = '#D97706'; // Orange
+  private _selectedRowConditionalId: string | null = null;
+
+  /**
+   * Select a row conditional by ID (for pane display).
+   */
+  selectRowConditional(conditionalId: string | null): void {
+    this._selectedRowConditionalId = conditionalId;
+  }
+
+  /**
+   * Get the currently selected row conditional ID.
+   */
+  get selectedRowConditionalId(): string | null {
+    return this._selectedRowConditionalId;
+  }
+
+  /**
+   * Hit-test a point against row conditional labels.
+   * Point should be in table-local coordinates.
+   */
+  getRowConditionalAtPoint(point: { x: number; y: number }): TableRowConditional | null {
+    let rowPositions = this._cachedRowPositions;
+    if (rowPositions.length === 0) {
+      rowPositions = [];
+      let y = 0;
+      for (const row of this._rows) {
+        rowPositions.push(y);
+        y += row.calculatedHeight;
+      }
+    }
+
+    for (const cond of this._rowConditionals.values()) {
+      const startY = rowPositions[cond.startRowIndex] || 0;
+      let endY = startY;
+      for (let i = cond.startRowIndex; i <= cond.endRowIndex && i < this._rows.length; i++) {
+        endY += this._rows[i].calculatedHeight;
+      }
+
+      // Label bounds (right side of table, offset from loop labels)
+      const totalWidth = this._columns.reduce((sum, col) => sum + col.width, 0);
+      const labelWidth = 22; // approximate for "If" at 10px
+      const labelHeight = 10 + TableObject.LOOP_LABEL_PADDING * 2;
+      const labelX = totalWidth + 10;
+      const labelY = startY - labelHeight - 2;
+
+      if (point.x >= labelX && point.x <= labelX + labelWidth + 4 &&
+          point.y >= labelY && point.y <= labelY + labelHeight + 4) {
+        return cond;
+      }
+    }
+    return null;
+  }
+
+  private renderRowConditionalIndicators(ctx: CanvasRenderingContext2D): void {
+    const color = TableObject.COND_COLOR;
+    const padding = TableObject.LOOP_LABEL_PADDING;
+    const radius = TableObject.LOOP_LABEL_RADIUS;
+
+    let rowPositions = this._cachedRowPositions;
+    if (rowPositions.length === 0) {
+      rowPositions = [];
+      let y = 0;
+      for (const row of this._rows) {
+        rowPositions.push(y);
+        y += row.calculatedHeight;
+      }
+    }
+
+    const totalWidth = this._columns.reduce((sum, col) => sum + col.width, 0);
+
+    for (const cond of this._rowConditionals.values()) {
+      const isSelected = this._selectedRowConditionalId === cond.id;
+
+      const startY = rowPositions[cond.startRowIndex] || 0;
+      let endY = startY;
+      for (let i = cond.startRowIndex; i <= cond.endRowIndex && i < this._rows.length; i++) {
+        endY += this._rows[i].calculatedHeight;
+      }
+      const condHeight = endY - startY;
+
+      // Draw colored stripe on right side
+      ctx.fillStyle = color;
+      ctx.fillRect(totalWidth + 2, startY, 4, condHeight);
+
+      // Draw vertical connector line
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(totalWidth + 4, startY);
+      ctx.lineTo(totalWidth + 4, endY);
+      ctx.stroke();
+
+      // Draw "If" label
+      ctx.save();
+      ctx.font = '10px Arial';
+      const labelText = 'If';
+      const metrics = ctx.measureText(labelText);
+      const boxWidth = metrics.width + padding * 2;
+      const boxHeight = 10 + padding * 2;
+      const labelX = totalWidth + 10;
+      const labelY = startY - boxHeight - 2;
+
+      ctx.beginPath();
+      ctx.roundRect(labelX, labelY, boxWidth, boxHeight, radius);
+
+      if (isSelected) {
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+      } else {
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = color;
+      }
+
+      ctx.textBaseline = 'middle';
+      ctx.fillText(labelText, labelX + padding, labelY + boxHeight / 2);
+      ctx.restore();
     }
   }
 
@@ -2181,6 +2512,14 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
         columns: this._columns.map(col => ({ ...col })),
         rows: this._rows.map(row => row.toData()),
         rowLoops,
+        rowConditionals: this._rowConditionals.size > 0
+          ? Array.from(this._rowConditionals.values()).map(c => ({
+              id: c.id,
+              predicate: c.predicate,
+              startRowIndex: c.startRowIndex,
+              endRowIndex: c.endRowIndex
+            }))
+          : undefined,
         defaultCellPadding: this._defaultCellPadding,
         defaultBorderColor: this._defaultBorderColor,
         defaultBorderWidth: this._defaultBorderWidth,
@@ -2230,6 +2569,18 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       }
     }
 
+    // Load row conditionals if present
+    if (data.data.rowConditionals) {
+      for (const condData of data.data.rowConditionals) {
+        table._rowConditionals.set(condData.id, {
+          id: condData.id,
+          predicate: condData.predicate,
+          startRowIndex: condData.startRowIndex,
+          endRowIndex: condData.endRowIndex
+        });
+      }
+    }
+
     table.updateCoveredCells();
     return table;
   }
@@ -2259,6 +2610,19 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
           fieldPath: loopData.fieldPath,
           startRowIndex: loopData.startRowIndex,
           endRowIndex: loopData.endRowIndex
+        });
+      }
+    }
+
+    // Restore row conditionals if any
+    this._rowConditionals.clear();
+    if (data.data.rowConditionals) {
+      for (const condData of data.data.rowConditionals) {
+        this._rowConditionals.set(condData.id, {
+          id: condData.id,
+          predicate: condData.predicate,
+          startRowIndex: condData.startRowIndex,
+          endRowIndex: condData.endRowIndex
         });
       }
     }

@@ -8,6 +8,7 @@
  */
 
 import { PDFDocument, PDFPage, PDFFont, StandardFonts, rgb } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 import { Document } from '../core/Document';
 import { PDFExportOptions } from '../types';
 import { FlowedPage, FlowedLine, TextFormattingStyle } from '../text/types';
@@ -23,6 +24,7 @@ import {
 import { BaseEmbeddedObject, ImageObject, TextBoxObject } from '../objects';
 import { TableObject } from '../objects/table';
 import { Logger } from '../utils/logger';
+import { FontManager } from '../fonts';
 
 /**
  * Hyperlink data for PDF generation.
@@ -52,6 +54,12 @@ type FontCache = Map<string, PDFFont>;
 
 export class PDFGenerator {
   private fontCache: FontCache = new Map();
+  private fontManager: FontManager;
+  private customFontCache: Map<string, PDFFont> = new Map();
+
+  constructor(fontManager: FontManager) {
+    this.fontManager = fontManager;
+  }
 
   /**
    * Generate a PDF from the document.
@@ -66,10 +74,15 @@ export class PDFGenerator {
     _options?: PDFExportOptions
   ): Promise<Blob> {
     const pdfDoc = await PDFDocument.create();
+    pdfDoc.registerFontkit(fontkit);
     this.fontCache.clear();
+    this.customFontCache.clear();
 
     // Embed standard fonts we'll need
     await this.embedStandardFonts(pdfDoc);
+
+    // Embed any custom fonts that have font data
+    await this.embedCustomFonts(pdfDoc);
 
     // Render each page
     for (let pageIndex = 0; pageIndex < document.pages.length; pageIndex++) {
@@ -221,14 +234,60 @@ export class PDFGenerator {
   }
 
   /**
+   * Embed custom fonts that have raw font data available.
+   */
+  private async embedCustomFonts(pdfDoc: PDFDocument): Promise<void> {
+    const fonts = this.fontManager.getAvailableFonts();
+    for (const font of fonts) {
+      if (font.source !== 'custom') continue;
+
+      for (const variant of font.variants) {
+        if (!variant.fontData) continue;
+
+        const cacheKey = `custom:${font.family.toLowerCase()}:${variant.weight}:${variant.style}`;
+        try {
+          // Ensure we pass Uint8Array (some pdf-lib versions need it)
+          const fontBytes = variant.fontData instanceof Uint8Array
+            ? variant.fontData
+            : new Uint8Array(variant.fontData);
+          const embedded = await pdfDoc.embedFont(fontBytes, { subset: true });
+          this.customFontCache.set(cacheKey, embedded);
+          Logger.log('[pc-editor:PDFGenerator] Embedded custom font:', font.family, variant.weight, variant.style);
+        } catch (e) {
+          Logger.warn('[pc-editor:PDFGenerator] Failed to embed custom font:', font.family, e);
+        }
+      }
+    }
+  }
+
+  /**
+   * Check if a font family is a custom font with embedded data.
+   */
+  private isCustomFont(family: string): boolean {
+    return !this.fontManager.isBuiltIn(family) && this.fontManager.isRegistered(family);
+  }
+
+  /**
    * Get a font from cache by formatting style.
+   * Checks custom fonts first, then falls back to standard fonts.
    */
   private getFont(formatting: Partial<TextFormattingStyle>): PDFFont {
-    const standardFont = getStandardFont(
-      formatting.fontFamily || 'Arial',
-      formatting.fontWeight,
-      formatting.fontStyle
-    );
+    const family = formatting.fontFamily || 'Arial';
+    const weight = formatting.fontWeight || 'normal';
+    const style = formatting.fontStyle || 'normal';
+
+    // Try custom font first
+    const customKey = `custom:${family.toLowerCase()}:${weight}:${style}`;
+    const customFont = this.customFontCache.get(customKey);
+    if (customFont) return customFont;
+
+    // Try custom font with normal variant as fallback
+    const customNormalKey = `custom:${family.toLowerCase()}:normal:normal`;
+    const customNormalFont = this.customFontCache.get(customNormalKey);
+    if (customNormalFont) return customNormalFont;
+
+    // Fall back to standard fonts
+    const standardFont = getStandardFont(family, weight, style);
     return this.fontCache.get(standardFont) || this.fontCache.get(StandardFonts.Helvetica)!;
   }
 
@@ -286,12 +345,14 @@ export class PDFGenerator {
       for (const run of line.runs) {
         if (!run.text) continue;
 
-        // Filter text to WinAnsi-compatible characters (standard PDF fonts limitation)
-        const safeText = this.filterToWinAnsi(run.text);
-        if (!safeText) continue;
-
         // Ensure formatting has required properties with defaults
         const formatting = run.formatting || {};
+
+        // Custom fonts support full Unicode; standard fonts need WinAnsi filtering
+        const safeText = this.isCustomFont(formatting.fontFamily || 'Arial')
+          ? run.text
+          : this.filterToWinAnsi(run.text);
+        if (!safeText) continue;
         const font = this.getFont(formatting);
         const fontSize = formatting.fontSize || 14;
         const color = parseColor(formatting.color || '#000000');

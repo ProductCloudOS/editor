@@ -387,6 +387,68 @@ editor.createRepeatingSection(
 ): void
 ```
 
+### addConditionalSection(start, end, predicate)
+
+Create a conditional section that shows or hides content based on a predicate.
+
+If a table is currently focused, creates a table row conditional instead.
+
+```typescript
+editor.addConditionalSection(
+  start: number,
+  end: number,
+  predicate: string
+): ConditionalSection | null
+```
+
+**Example:**
+```typescript
+// Show a paragraph only when the customer is a VIP
+const section = editor.addConditionalSection(startIndex, endIndex, 'customer.isVIP');
+
+// Show content when order count exceeds a threshold
+editor.addConditionalSection(start, end, 'orderCount > 3');
+
+// Complex conditions
+editor.addConditionalSection(start, end, 'isActive && status == "approved"');
+```
+
+### getConditionalSection(id)
+
+Get a conditional section by ID.
+
+```typescript
+editor.getConditionalSection(id: string): ConditionalSection | null
+```
+
+### getConditionalSections()
+
+Get all conditional sections.
+
+```typescript
+editor.getConditionalSections(): ConditionalSection[]
+```
+
+### updateConditionalSectionPredicate(id, predicate)
+
+Update a conditional section's predicate expression.
+
+```typescript
+editor.updateConditionalSectionPredicate(id: string, predicate: string): boolean
+```
+
+### removeConditionalSection(id)
+
+Remove a conditional section by ID.
+
+```typescript
+editor.removeConditionalSection(id: string): boolean
+```
+
+#### Predicate Expression Syntax
+
+Conditional sections use a predicate expression that is evaluated against the merge data. See [Predicate Expressions](./predicate-expressions.md) for the full syntax reference.
+
 ---
 
 ## Hyperlinks

@@ -138,6 +138,27 @@ export interface TableRowLoopData {
 }
 
 /**
+ * Configuration for a table row conditional.
+ * Defines which rows should be shown or hidden based on a predicate during merge.
+ */
+export interface TableRowConditional {
+  id: string;
+  predicate: string;          // e.g., "isActive", "status == \"approved\""
+  startRowIndex: number;      // First row of the conditional (inclusive)
+  endRowIndex: number;        // Last row of the conditional (inclusive)
+}
+
+/**
+ * Serialized conditional data for persistence.
+ */
+export interface TableRowConditionalData {
+  id: string;
+  predicate: string;
+  startRowIndex: number;
+  endRowIndex: number;
+}
+
+/**
  * Serialized table data for persistence.
  */
 export interface TableObjectData extends EmbeddedObjectData {
@@ -146,6 +167,7 @@ export interface TableObjectData extends EmbeddedObjectData {
     columns: TableColumnConfig[];
     rows: TableRowData[];
     rowLoops?: TableRowLoopData[];  // Optional array of row loops
+    rowConditionals?: TableRowConditionalData[];  // Optional array of row conditionals
     defaultCellPadding: number;
     defaultBorderColor: string;
     defaultBorderWidth: number;

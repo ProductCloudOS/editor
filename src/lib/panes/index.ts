@@ -28,6 +28,8 @@ export { SubstitutionFieldPane } from './SubstitutionFieldPane';
 export type { SubstitutionFieldPaneOptions } from './SubstitutionFieldPane';
 export { RepeatingSectionPane } from './RepeatingSectionPane';
 export type { RepeatingSectionPaneOptions } from './RepeatingSectionPane';
+export { ConditionalSectionPane } from './ConditionalSectionPane';
+export type { ConditionalSectionPaneOptions } from './ConditionalSectionPane';
 export { TableRowLoopPane } from './TableRowLoopPane';
 export type { TableRowLoopPaneOptions } from './TableRowLoopPane';
 
