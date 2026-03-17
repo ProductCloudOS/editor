@@ -1856,6 +1856,9 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
         result.mergedCell.markReflowDirty();
       }
       this.clearSelection();
+      // Focus the anchor (top-left) cell of the merged range
+      const normalized = TableCellMerger.normalizeRange(mergeRange);
+      this.focusCell(normalized.start.row, normalized.start.col);
       this.emit('cells-merged', { range: mergeRange });
       this.emit('content-changed', {});
     }

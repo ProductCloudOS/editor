@@ -442,7 +442,8 @@ export class CanvasManager extends EventEmitter {
 
       // Get the slice for this page (for multi-page tables)
       const slice = table.getRenderedSlice(pageIndex);
-      const tablePosition = slice?.position || table.renderedPosition;
+      const tablePosition = slice?.position ||
+        (table.renderedPageIndex === pageIndex ? table.renderedPosition : null);
       const sliceHeight = slice?.height || table.height;
 
       // Check if point is within the table slice on this page
@@ -480,6 +481,7 @@ export class CanvasManager extends EventEmitter {
               end: cellAddr
             });
             this.render();
+            this.emit('table-cell-selection-changed', { table });
             e.preventDefault();
             return;
           }
@@ -798,7 +800,8 @@ export class CanvasManager extends EventEmitter {
 
       // Get the slice for the current page (for multi-page tables)
       const slice = table.getRenderedSlice(currentPageIndex);
-      const tablePosition = slice?.position || table.renderedPosition;
+      const tablePosition = slice?.position ||
+        (table.renderedPageIndex === currentPageIndex ? table.renderedPosition : null);
       const sliceHeight = slice?.height || table.height;
 
       if (tablePosition) {
@@ -833,6 +836,7 @@ export class CanvasManager extends EventEmitter {
               end: cellAddr
             });
             this.render();
+            this.emit('table-cell-selection-changed', { table });
           }
         }
       }
@@ -1535,7 +1539,8 @@ export class CanvasManager extends EventEmitter {
 
       // Get the table position from slice info
       const slice = table.getRenderedSlice(pageIndex);
-      const tablePosition = slice?.position || table.renderedPosition;
+      const tablePosition = slice?.position ||
+        (table.renderedPageIndex === pageIndex ? table.renderedPosition : null);
 
       if (tablePosition) {
         // Calculate the divider position based on type and index
@@ -2366,7 +2371,9 @@ export class CanvasManager extends EventEmitter {
         if (obj instanceof TableObject) {
           // For multi-page tables, check if this page has a rendered slice
           const slice = obj.getRenderedSlice(pageIndex);
-          const tablePosition = slice?.position || obj.renderedPosition;
+          // Only use renderedPosition if the table was actually rendered on this page
+          const tablePosition = slice?.position ||
+            (obj.renderedPageIndex === pageIndex ? obj.renderedPosition : null);
 
           if (tablePosition) {
             // Check if point is inside the table slice on this page

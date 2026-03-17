@@ -26,3 +26,8 @@
 * T15 For the Document Info pane, labels should be right aligned with a colon suffix and value items should be left aligned with appropriate padding between labels and values.  Also there should be a stretch column on the right so the columns take only needed space
 * T16 In the demo app, turning off logging for the editor should also turn of logging for the demo app
 * T17 Demo app logs should be clearly identified so that they are not confused with logs from the editor itself. Logs from the editor should be consistently prefixed for identification purposes
+* T18 The table formatting pane needs to have the ability to merge cells when multiple cells are selected and to demerge cells if a single merged cell is selected
+* T19 On a browser on a windows machine the mouse cursor goes blank for some reaspon when hovering over the editor canvas.  Doesn't happen on a mac
+* T20 On a two page document with multiple tables, selecting a table on the second page selects the table on the first page if the coords overlap.  The table on the second page is fine until the coords overlap in which case the table on the first page is erroneously selected
+* T21 If the bullet format is applied to text and then removed then the button in the format pane stays enabled
+* T22 The create row loop section of the table pane should be removed

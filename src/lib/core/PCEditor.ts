@@ -258,6 +258,11 @@ export class PCEditor extends EventEmitter {
       this.emit('tablecell-cursor-changed', data);
     });
 
+    // Forward table cell selection changes (multi-cell drag/shift-click)
+    this.canvasManager.on('table-cell-selection-changed', (data: any) => {
+      this.emit('table-cell-selection-changed', data);
+    });
+
     this.canvasManager.on('repeating-section-clicked', (data: any) => {
       // Repeating section clicked - update selection state
       if (data.section && data.section.id) {
@@ -2539,6 +2544,39 @@ export class PCEditor extends EventEmitter {
     if (!this._isReady) return;
     table.removeColumn(colIndex);
     this.canvasManager.render();
+  }
+
+  /**
+   * Merge selected cells in a table.
+   * Uses the table's current cell selection range.
+   * @param table The table containing the cells to merge
+   * @returns true if cells were merged successfully
+   */
+  tableMergeCells(table: TableObject): boolean {
+    Logger.log('[pc-editor] tableMergeCells');
+    if (!this._isReady) return false;
+    const result = table.mergeCells();
+    if (result.success) {
+      this.canvasManager.render();
+    }
+    return result.success;
+  }
+
+  /**
+   * Split a merged cell back into individual cells.
+   * @param table The table containing the merged cell
+   * @param row Row index of the merged cell
+   * @param col Column index of the merged cell
+   * @returns true if the cell was split successfully
+   */
+  tableSplitCell(table: TableObject, row: number, col: number): boolean {
+    Logger.log('[pc-editor] tableSplitCell', row, col);
+    if (!this._isReady) return false;
+    const result = table.splitCell(row, col);
+    if (result.success) {
+      this.canvasManager.render();
+    }
+    return result.success;
   }
 
   /**

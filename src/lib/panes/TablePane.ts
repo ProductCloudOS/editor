@@ -51,8 +51,9 @@ export class TablePane extends BasePane {
   private defaultPaddingInput: HTMLInputElement | null = null;
   private defaultBorderColorInput: HTMLInputElement | null = null;
 
-  // Row loop controls
-  private loopFieldInput: HTMLInputElement | null = null;
+  // Merge/split buttons
+  private mergeCellsBtn: HTMLButtonElement | null = null;
+  private splitCellBtn: HTMLButtonElement | null = null;
 
   // Cell formatting controls
   private cellBgColorInput: HTMLInputElement | null = null;
@@ -80,13 +81,13 @@ export class TablePane extends BasePane {
       // Listen for selection/focus changes
       const updateHandler = () => this.updateFromFocusedTable();
       this.editor.on('selection-change', updateHandler);
-      this.editor.on('table-cell-focus', updateHandler);
-      this.editor.on('table-cell-selection', updateHandler);
+      this.editor.on('tablecell-cursor-changed', updateHandler);
+      this.editor.on('table-cell-selection-changed', updateHandler);
 
       this.eventCleanup.push(() => {
         this.editor?.off('selection-change', updateHandler);
-        this.editor?.off('table-cell-focus', updateHandler);
-        this.editor?.off('table-cell-selection', updateHandler);
+        this.editor?.off('tablecell-cursor-changed', updateHandler);
+        this.editor?.off('table-cell-selection-changed', updateHandler);
       });
 
       // Initial update
@@ -151,19 +152,6 @@ export class TablePane extends BasePane {
     headersSection.appendChild(applyHeadersBtn);
     container.appendChild(headersSection);
 
-    // Row Loop section
-    const loopSection = this.createSection('Row Loop');
-
-    this.loopFieldInput = this.createTextInput({ placeholder: 'items' });
-    loopSection.appendChild(this.createFormGroup('Array Field', this.loopFieldInput, {
-      hint: 'Creates a loop on the currently focused row'
-    }));
-
-    const createLoopBtn = this.createButton('Create Row Loop');
-    this.addButtonListener(createLoopBtn, () => this.createRowLoop());
-    loopSection.appendChild(createLoopBtn);
-    container.appendChild(loopSection);
-
     // Defaults section
     const defaultsSection = this.createSection('Defaults');
     const defaultsRow = this.createRow();
@@ -183,6 +171,18 @@ export class TablePane extends BasePane {
 
     this.cellSelectionDisplay = this.createHint('No cell selected');
     cellSection.appendChild(this.cellSelectionDisplay);
+
+    // Merge/Split buttons
+    const mergeBtnGroup = this.createButtonGroup();
+    this.mergeCellsBtn = this.createButton('Merge Cells');
+    this.mergeCellsBtn.disabled = true;
+    this.splitCellBtn = this.createButton('Split Cell');
+    this.splitCellBtn.disabled = true;
+    this.addButtonListener(this.mergeCellsBtn, () => this.doMergeCells());
+    this.addButtonListener(this.splitCellBtn, () => this.doSplitCell());
+    mergeBtnGroup.appendChild(this.mergeCellsBtn);
+    mergeBtnGroup.appendChild(this.splitCellBtn);
+    cellSection.appendChild(mergeBtnGroup);
 
     // Background
     this.cellBgColorInput = this.createColorInput('#ffffff');
@@ -314,6 +314,16 @@ export class TablePane extends BasePane {
 
     const focusedCell = table.focusedCell;
     const selectedRange = table.selectedRange;
+
+    // Update merge/split button states
+    if (this.mergeCellsBtn) {
+      const canMerge = selectedRange ? table.canMergeRange(selectedRange).canMerge : false;
+      this.mergeCellsBtn.disabled = !canMerge;
+    }
+    if (this.splitCellBtn) {
+      const canSplit = focusedCell ? table.canSplitCell(focusedCell.row, focusedCell.col).canSplit : false;
+      this.splitCellBtn.disabled = !canSplit;
+    }
 
     if (selectedRange) {
       const count = (selectedRange.end.row - selectedRange.start.row + 1) *
@@ -482,23 +492,18 @@ export class TablePane extends BasePane {
     return this.currentTable !== null;
   }
 
-  private createRowLoop(): void {
-    if (!this.editor || !this.currentTable) {
-      this.onApplyCallback?.(false, new Error('No table focused'));
-      return;
-    }
+  private doMergeCells(): void {
+    if (!this.editor || !this.currentTable) return;
+    this.editor.tableMergeCells(this.currentTable);
+    this.updateFromFocusedTable();
+  }
 
-    const fieldPath = this.loopFieldInput?.value.trim() || '';
-
-    if (!fieldPath) {
-      this.onApplyCallback?.(false, new Error('Array field path is required'));
-      return;
-    }
-
-    // Uses the unified createRepeatingSection API which detects
-    // that a table is focused and creates a row loop on the focused row
-    this.editor.createRepeatingSection(0, 0, fieldPath);
-    this.onApplyCallback?.(true);
+  private doSplitCell(): void {
+    if (!this.editor || !this.currentTable) return;
+    const focused = this.currentTable.focusedCell;
+    if (!focused) return;
+    this.editor.tableSplitCell(this.currentTable, focused.row, focused.col);
+    this.updateFromFocusedTable();
   }
 
   /**

@@ -295,9 +295,14 @@ export class FormattingPane extends BasePane {
       if (listFormatting) {
         this.bulletListBtn?.classList.toggle('pc-pane-button--active', listFormatting.listType === 'bullet');
         this.numberedListBtn?.classList.toggle('pc-pane-button--active', listFormatting.listType === 'number');
+      } else {
+        this.bulletListBtn?.classList.remove('pc-pane-button--active');
+        this.numberedListBtn?.classList.remove('pc-pane-button--active');
       }
     } catch {
       // No text editing active
+      this.bulletListBtn?.classList.remove('pc-pane-button--active');
+      this.numberedListBtn?.classList.remove('pc-pane-button--active');
     }
   }
 
