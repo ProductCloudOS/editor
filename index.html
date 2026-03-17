@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PC Editor Demo</title>
-  <script type="module" crossorigin src="/editor/assets/index-DbAuEJ_2.js"></script>
-  <link rel="stylesheet" crossorigin href="/editor/assets/index-DuWrEWO8.css">
+  <script type="module" crossorigin src="/editor/assets/index-BAWLtawZ.js"></script>
+  <link rel="stylesheet" crossorigin href="/editor/assets/index-BhQJFNIJ.css">
 </head>
 <body>
     <div id="app">
@@ -48,6 +48,9 @@
                         <button id="zoom-in"><span class="menu-label">Zoom In</span><span class="menu-shortcut">Ctrl++</span></button>
                         <button id="zoom-out"><span class="menu-label">Zoom Out</span><span class="menu-shortcut">Ctrl+-</span></button>
                         <button id="fit-page">Fit to Page</button>
+                        <div class="menu-divider"></div>
+                        <button id="toggle-logging">Console Logging: On</button>
+                        <button id="export-roundtrip">Export Round-Trip Test...</button>
                     </div>
                 </div>
                 <div class="menu-item">
@@ -221,6 +224,8 @@
                 </div>
             </aside>
 
+            <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
+
             <main class="editor-area">
                 <div class="ruler-corner"></div>
                 <div id="horizontal-ruler" class="ruler-container horizontal"></div>
@@ -239,6 +244,24 @@
                 <span id="zoom-level">Zoom: 100%</span>
             </div>
         </footer>
+    </div>
+
+    <!-- Round-trip test modal -->
+    <div id="roundtrip-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-dialog">
+            <h3>Export Round-Trip Test</h3>
+            <div class="modal-body">
+                <div id="roundtrip-status">Running...</div>
+                <table class="roundtrip-results" style="display: none;" id="roundtrip-results">
+                    <tr><td>First export size:</td><td id="roundtrip-first-size"></td></tr>
+                    <tr><td>Second export size:</td><td id="roundtrip-second-size"></td></tr>
+                    <tr><td>Difference:</td><td id="roundtrip-diff"></td></tr>
+                </table>
+            </div>
+            <div class="modal-footer">
+                <button id="roundtrip-close" class="modal-btn">Close</button>
+            </div>
+        </div>
     </div>
 
 </body>
