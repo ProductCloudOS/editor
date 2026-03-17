@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MutationUndo } from '../../../lib/undo/transaction/MutationUndo';
+import { Logger } from '../../../lib/utils/logger';
 import { FlowingTextContent } from '../../../lib/text/FlowingTextContent';
 import { TextBoxObject } from '../../../lib/objects/TextBoxObject';
 import { MutationRecord, ContentSourceId, ObjectSourceId } from '../../../lib/undo/transaction/types';
@@ -368,6 +369,7 @@ describe('MutationUndo', () => {
 
   describe('unknown mutation types', () => {
     it('should log warning for unknown undo mutation type', () => {
+      Logger.setEnabled(true);
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       const mutation: MutationRecord = {
@@ -379,11 +381,13 @@ describe('MutationUndo', () => {
 
       mutationUndo.undoMutation(mutation);
 
-      expect(warnSpy).toHaveBeenCalledWith('Unknown mutation type for undo:', 'unknown-type');
+      expect(warnSpy).toHaveBeenCalledWith('[pc-editor:MutationUndo] Unknown mutation type for undo:', 'unknown-type');
       warnSpy.mockRestore();
+      Logger.setEnabled(false);
     });
 
     it('should log warning for unknown redo mutation type', () => {
+      Logger.setEnabled(true);
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       const mutation: MutationRecord = {
@@ -395,8 +399,9 @@ describe('MutationUndo', () => {
 
       mutationUndo.redoMutation(mutation);
 
-      expect(warnSpy).toHaveBeenCalledWith('Unknown mutation type for redo:', 'unknown-type');
+      expect(warnSpy).toHaveBeenCalledWith('[pc-editor:MutationUndo] Unknown mutation type for redo:', 'unknown-type');
       warnSpy.mockRestore();
+      Logger.setEnabled(false);
     });
   });
 

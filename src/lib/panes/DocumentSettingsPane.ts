@@ -42,30 +42,56 @@ export class DocumentSettingsPane extends BasePane {
 
     // Margins section
     const marginsSection = this.createSection('Margins (mm)');
+
+    // Five-column grid: label, edit, label, edit, stretch
     const marginsGrid = document.createElement('div');
-    marginsGrid.className = 'pc-pane-margins-grid';
+    marginsGrid.className = 'pc-pane-margins-grid-5col';
 
     this.marginTopInput = this.createNumberInput({ min: 5, max: 50, step: 0.5, value: 20 });
     this.marginRightInput = this.createNumberInput({ min: 5, max: 50, step: 0.5, value: 20 });
     this.marginBottomInput = this.createNumberInput({ min: 5, max: 50, step: 0.5, value: 20 });
     this.marginLeftInput = this.createNumberInput({ min: 5, max: 50, step: 0.5, value: 20 });
 
-    marginsGrid.appendChild(this.createFormGroup('Top', this.marginTopInput, { inline: true }));
-    marginsGrid.appendChild(this.createFormGroup('Right', this.marginRightInput, { inline: true }));
-    marginsGrid.appendChild(this.createFormGroup('Bottom', this.marginBottomInput, { inline: true }));
-    marginsGrid.appendChild(this.createFormGroup('Left', this.marginLeftInput, { inline: true }));
+    // Apply margins on blur
+    const applyMargins = () => this.applyMargins();
+    this.marginTopInput.addEventListener('blur', applyMargins);
+    this.marginRightInput.addEventListener('blur', applyMargins);
+    this.marginBottomInput.addEventListener('blur', applyMargins);
+    this.marginLeftInput.addEventListener('blur', applyMargins);
+    this.eventCleanup.push(() => {
+      this.marginTopInput?.removeEventListener('blur', applyMargins);
+      this.marginRightInput?.removeEventListener('blur', applyMargins);
+      this.marginBottomInput?.removeEventListener('blur', applyMargins);
+      this.marginLeftInput?.removeEventListener('blur', applyMargins);
+    });
+
+    // Row 1: Top / Right
+    const topLabel = this.createMarginLabel('Top:');
+    const rightLabel = this.createMarginLabel('Right:');
+    marginsGrid.appendChild(topLabel);
+    marginsGrid.appendChild(this.marginTopInput);
+    marginsGrid.appendChild(rightLabel);
+    marginsGrid.appendChild(this.marginRightInput);
+    marginsGrid.appendChild(this.createSpacer());
+
+    // Row 2: Bottom / Left
+    const bottomLabel = this.createMarginLabel('Bottom:');
+    const leftLabel = this.createMarginLabel('Left:');
+    marginsGrid.appendChild(bottomLabel);
+    marginsGrid.appendChild(this.marginBottomInput);
+    marginsGrid.appendChild(leftLabel);
+    marginsGrid.appendChild(this.marginLeftInput);
+    marginsGrid.appendChild(this.createSpacer());
 
     marginsSection.appendChild(marginsGrid);
-
-    // Apply margins button
-    const applyMarginsBtn = this.createButton('Apply Margins');
-    this.addButtonListener(applyMarginsBtn, () => this.applyMargins());
-    marginsSection.appendChild(applyMarginsBtn);
-
     container.appendChild(marginsSection);
 
-    // Page size section
-    const pageSizeSection = this.createSection();
+    // Page settings section using label-value grid: label, value, stretch
+    const pageSection = this.createSection();
+    const pageGrid = document.createElement('div');
+    pageGrid.className = 'pc-pane-label-value-grid';
+
+    // Page Size
     this.pageSizeSelect = this.createSelect([
       { value: 'A4', label: 'A4' },
       { value: 'Letter', label: 'Letter' },
@@ -73,20 +99,36 @@ export class DocumentSettingsPane extends BasePane {
       { value: 'A3', label: 'A3' }
     ], 'A4');
     this.addImmediateApplyListener(this.pageSizeSelect, () => this.applyPageSettings());
-    pageSizeSection.appendChild(this.createFormGroup('Page Size', this.pageSizeSelect));
-    container.appendChild(pageSizeSection);
+    pageGrid.appendChild(this.createMarginLabel('Page Size:'));
+    pageGrid.appendChild(this.pageSizeSelect);
+    pageGrid.appendChild(this.createSpacer());
 
-    // Orientation section
-    const orientationSection = this.createSection();
+    // Orientation
     this.orientationSelect = this.createSelect([
       { value: 'portrait', label: 'Portrait' },
       { value: 'landscape', label: 'Landscape' }
     ], 'portrait');
     this.addImmediateApplyListener(this.orientationSelect, () => this.applyPageSettings());
-    orientationSection.appendChild(this.createFormGroup('Orientation', this.orientationSelect));
-    container.appendChild(orientationSection);
+    pageGrid.appendChild(this.createMarginLabel('Orientation:'));
+    pageGrid.appendChild(this.orientationSelect);
+    pageGrid.appendChild(this.createSpacer());
+
+    pageSection.appendChild(pageGrid);
+    container.appendChild(pageSection);
 
     return container;
+  }
+
+  private createMarginLabel(text: string): HTMLElement {
+    const label = document.createElement('label');
+    label.className = 'pc-pane-label pc-pane-margin-label';
+    label.textContent = text;
+    return label;
+  }
+
+  private createSpacer(): HTMLElement {
+    const spacer = document.createElement('div');
+    return spacer;
   }
 
   private loadSettings(): void {

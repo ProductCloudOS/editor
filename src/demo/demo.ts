@@ -1,4 +1,4 @@
-import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, EditingSection, HorizontalRuler, VerticalRuler } from '../lib';
+import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, EditingSection, HorizontalRuler, VerticalRuler, Logger } from '../lib';
 
 // Import library panes
 import {
@@ -49,14 +49,15 @@ function initializeEditor(): void {
     pageOrientation: 'portrait',
     units: 'mm',
     showGrid: true,
-    showRulers: true
+    showRulers: true,
+    enableLogging: true
   });
 
   // Set up logging for all editor events
   setupEditorEventLogging();
 
   editor.on('ready', () => {
-    console.log('[Editor Event] ready');
+    Logger.log('[Editor Event] ready');
     // Insert a welcome message with demo content
     insertWelcomeContent();
     loadDocumentSettings();
@@ -78,7 +79,7 @@ function setupEditorEventLogging(): void {
 
     // Handle repeating section selection
     if (selection.type === 'repeating-section') {
-      console.log(`[Editor Event] selection-change: repeating section selected: ${selection.sectionId}`);
+      Logger.log(`[Editor Event] selection-change: repeating section selected: ${selection.sectionId}`);
       const section = editor.getRepeatingSection(selection.sectionId);
       if (section) {
         updateStatus(`Loop "${section.fieldPath}" selected`);
@@ -86,26 +87,22 @@ function setupEditorEventLogging(): void {
       return;
     }
 
-    // Check if a table is selected or focused (for table toolbar, not pane)
-    const selectedTable = editor.getSelectedTable?.() || editor.getFocusedTable?.();
-    updateTableTools(selectedTable);
-
     if (selection.type === 'cursor') {
-      console.log(`[Editor Event] selection-change: cursor at position ${selection.position}`);
+      Logger.log(`[Editor Event] selection-change: cursor at position ${selection.position}`);
       if (selectedField) {
         updateStatus(`Field "${selectedField.fieldName}" selected`);
       } else {
         updateStatus(`Cursor at position ${selection.position}`);
       }
     } else if (selection.type === 'text') {
-      console.log(`[Editor Event] selection-change: text selection from ${selection.start} to ${selection.end}`);
+      Logger.log(`[Editor Event] selection-change: text selection from ${selection.start} to ${selection.end}`);
       if (selectedField) {
         updateStatus(`Field "${selectedField.fieldName}" selected`);
       } else {
         updateStatus(`Text selected: ${selection.end - selection.start} characters`);
       }
     } else {
-      console.log('[Editor Event] selection-change: no selection');
+      Logger.log('[Editor Event] selection-change: no selection');
     }
   });
 
@@ -117,12 +114,12 @@ function setupEditorEventLogging(): void {
 
   // Document events
   editor.on('document-change', (event: any) => {
-    console.log('[Editor Event] document-change', event);
+    Logger.log('[Editor Event] document-change', event);
     updateDocumentInfo();
   });
 
   editor.on('document-loaded', (event: any) => {
-    console.log('[Editor Event] document-loaded', event);
+    Logger.log('[Editor Event] document-loaded', event);
   });
 
   // Undo/Redo state change
@@ -135,32 +132,32 @@ function setupEditorEventLogging(): void {
 
   // Page events
   editor.on('page-added', (event: any) => {
-    console.log('[Editor Event] page-added', event);
+    Logger.log('[Editor Event] page-added', event);
     updateStatus('New page created');
     updateDocumentInfo();
   });
 
   editor.on('page-break-created', (event: any) => {
-    console.log('[Editor Event] page-break-created', event);
+    Logger.log('[Editor Event] page-break-created', event);
   });
 
   // Element events
   editor.on('element-added', (event: any) => {
-    console.log('[Editor Event] element-added', event);
+    Logger.log('[Editor Event] element-added', event);
   });
 
   editor.on('element-removed', (event: any) => {
-    console.log('[Editor Event] element-removed', event);
+    Logger.log('[Editor Event] element-removed', event);
   });
 
   editor.on('embedded-object-added', (event: any) => {
-    console.log('[Editor Event] embedded-object-added', event);
+    Logger.log('[Editor Event] embedded-object-added', event);
     updateStatus(`Embedded ${event.object?.objectType || 'object'} added`);
     updateDocumentInfo();
   });
 
   editor.on('substitution-field-added', (event: any) => {
-    console.log('[Editor Event] substitution-field-added', event);
+    Logger.log('[Editor Event] substitution-field-added', event);
     updateStatus(`Field "${event.field?.fieldName || 'unknown'}" added`);
     updateDocumentInfo();
   });
@@ -168,7 +165,7 @@ function setupEditorEventLogging(): void {
   // Unified text editing events
   // NOTE: Library panes (FormattingPane, TextBoxPane) handle their own show/hide
   editor.on('text-editing-started', (event: { source: 'body' | 'textbox' | 'tablecell' }) => {
-    console.log('[Editor Event] text-editing-started', event);
+    Logger.log('[Editor Event] text-editing-started', event);
 
     switch (event.source) {
       case 'body':
@@ -184,68 +181,68 @@ function setupEditorEventLogging(): void {
   });
 
   editor.on('text-editing-ended', (event: { source: 'body' | 'textbox' | 'tablecell' | null }) => {
-    console.log('[Editor Event] text-editing-ended', event);
+    Logger.log('[Editor Event] text-editing-ended', event);
   });
 
   // Legacy text box editing events (for backwards compatibility)
   editor.on('textbox-editing-started', (event: any) => {
-    console.log('[Editor Event] textbox-editing-started', event);
+    Logger.log('[Editor Event] textbox-editing-started', event);
   });
 
   editor.on('textbox-editing-ended', () => {
-    console.log('[Editor Event] textbox-editing-ended');
+    Logger.log('[Editor Event] textbox-editing-ended');
   });
 
   editor.on('textbox-cursor-changed', () => {
     // Library FormattingPane handles this
-    console.log('[Editor Event] textbox-cursor-changed');
+    Logger.log('[Editor Event] textbox-cursor-changed');
   });
 
   editor.on('tablecell-cursor-changed', () => {
     // Library FormattingPane and TablePane handle this
-    console.log('[Editor Event] tablecell-cursor-changed');
+    Logger.log('[Editor Event] tablecell-cursor-changed');
   });
 
   // Text events
   editor.on('text-clicked', (event: any) => {
-    console.log('[Editor Event] text-clicked', event);
+    Logger.log('[Editor Event] text-clicked', event);
     updateStatus('Text cursor active - use toolbar to insert content');
   });
 
   editor.on('cursor-changed', (event: any) => {
-    console.log('[Editor Event] cursor-changed', event);
+    Logger.log('[Editor Event] cursor-changed', event);
   });
 
   // Layout events
   editor.on('layout-complete', (event: any) => {
-    console.log('[Editor Event] layout-complete', event);
+    Logger.log('[Editor Event] layout-complete', event);
   });
 
   // Zoom events
   editor.on('zoom-change', (event: any) => {
-    console.log('[Editor Event] zoom-change', event);
+    Logger.log('[Editor Event] zoom-change', event);
     updateZoomLevel(event.zoom);
   });
 
   // Merge data events
   editor.on('merge-data-applied', (event: any) => {
-    console.log('[Editor Event] merge-data-applied', event);
+    Logger.log('[Editor Event] merge-data-applied', event);
   });
 
   // Repeating section events
   editor.on('repeating-section-added', (event: any) => {
-    console.log('[Editor Event] repeating-section-added', event);
+    Logger.log('[Editor Event] repeating-section-added', event);
     updateStatus('Loop created');
   });
 
   editor.on('repeating-section-removed', (event: any) => {
-    console.log('[Editor Event] repeating-section-removed', event);
+    Logger.log('[Editor Event] repeating-section-removed', event);
     updateStatus('Loop removed');
   });
 
   // Section focus changed (header/body/footer)
   editor.on('section-focus-changed', (event: { section: EditingSection; previousSection: EditingSection }) => {
-    console.log(`[Editor Event] section-focus-changed: ${event.previousSection} -> ${event.section}`);
+    Logger.log(`[Editor Event] section-focus-changed: ${event.previousSection} -> ${event.section}`);
     updateSectionIndicator(event.section);
     updateStatus(`Editing ${event.section}`);
   });
@@ -353,6 +350,22 @@ function setupEventHandlers(): void {
   document.getElementById('zoom-in')?.addEventListener('click', () => editor?.zoomIn());
   document.getElementById('zoom-out')?.addEventListener('click', () => editor?.zoomOut());
   document.getElementById('fit-page')?.addEventListener('click', () => editor?.fitToPage());
+
+  // Toggle logging
+  document.getElementById('toggle-logging')?.addEventListener('click', () => {
+    const enabled = !Logger.isEnabled();
+    Logger.setEnabled(enabled);
+    const btn = document.getElementById('toggle-logging');
+    if (btn) btn.textContent = `Console Logging: ${enabled ? 'On' : 'Off'}`;
+    updateStatus(`Console logging ${enabled ? 'enabled' : 'disabled'}`);
+  });
+
+  // Export round-trip test
+  document.getElementById('export-roundtrip')?.addEventListener('click', runExportRoundTrip);
+  document.getElementById('roundtrip-close')?.addEventListener('click', () => {
+    const modal = document.getElementById('roundtrip-modal');
+    if (modal) modal.style.display = 'none';
+  });
 
   // Prevent buttons from stealing focus
   const preventFocusSteal = (e: MouseEvent) => e.preventDefault();
@@ -959,7 +972,7 @@ function initializeLibraryPanes(): void {
     mergeDataPane.attach({ editor, container: mergeDataContainer });
   }
 
-  console.log('[Demo] Library panes initialized');
+  Logger.log('[Demo] Library panes initialized');
 }
 
 function toggleRulers(): void {
@@ -1674,8 +1687,85 @@ function createLoop(): void {
   showArrayPicker(startBoundary, endBoundary);
 }
 
+function runExportRoundTrip(): void {
+  if (!editor) return;
+
+  const modal = document.getElementById('roundtrip-modal');
+  const statusEl = document.getElementById('roundtrip-status');
+  const resultsEl = document.getElementById('roundtrip-results');
+  const firstSizeEl = document.getElementById('roundtrip-first-size');
+  const secondSizeEl = document.getElementById('roundtrip-second-size');
+  const diffEl = document.getElementById('roundtrip-diff');
+  if (!modal || !statusEl || !resultsEl || !firstSizeEl || !secondSizeEl || !diffEl) return;
+
+  // Show modal
+  modal.style.display = '';
+  statusEl.textContent = 'Running...';
+  resultsEl.style.display = 'none';
+
+  setTimeout(() => {
+    try {
+      const firstExport = editor!.saveDocument();
+      const firstSize = new Blob([firstExport]).size;
+
+      editor!.loadDocumentFromJSON(firstExport);
+
+      const secondExport = editor!.saveDocument();
+      const secondSize = new Blob([secondExport]).size;
+
+      const diff = secondSize - firstSize;
+      const sign = diff > 0 ? '+' : '';
+
+      firstSizeEl.textContent = firstSize.toLocaleString() + ' bytes';
+      secondSizeEl.textContent = secondSize.toLocaleString() + ' bytes';
+      diffEl.textContent = sign + diff.toLocaleString() + ' bytes';
+      diffEl.style.color = diff === 0 ? '#27ae60' : '#e74c3c';
+
+      statusEl.textContent = diff === 0 ? 'Round-trip is lossless.' : 'Round-trip produced a size difference.';
+      resultsEl.style.display = '';
+    } catch (error) {
+      statusEl.textContent = 'Error: ' + (error instanceof Error ? error.message : String(error));
+    }
+  }, 50);
+}
+
+function setupSidebarResize(): void {
+  const handle = document.getElementById('sidebar-resize-handle');
+  const sidebar = document.querySelector('.sidebar') as HTMLElement;
+  if (!handle || !sidebar) return;
+
+  let startX = 0;
+  let startWidth = 0;
+
+  const onMouseMove = (e: MouseEvent) => {
+    const newWidth = startWidth + (e.clientX - startX);
+    const clamped = Math.min(600, Math.max(200, newWidth));
+    sidebar.style.width = clamped + 'px';
+  };
+
+  const onMouseUp = () => {
+    handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+  };
+
+  handle.addEventListener('mousedown', (e: MouseEvent) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startWidth = sidebar.getBoundingClientRect().width;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+}
+
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
   initializeEditor();
   setupEventHandlers();
+  setupSidebarResize();
 });

@@ -44,6 +44,8 @@ export interface EditorOptions {
   defaultFont?: string;
   defaultFontSize?: number;
   theme?: 'light' | 'dark';
+  /** Enable verbose logging. When false (default), only errors are logged. */
+  enableLogging?: boolean;
 }
 
 /**

@@ -468,12 +468,12 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable, Edit
   }
 
   toData(): EmbeddedObjectData {
-    // Serialize formatting map to array of [index, style] pairs
-    const formattingMap = this._flowingContent.getFormattingManager().getAllFormatting();
-    const formattingEntries: Array<[number, Record<string, unknown>]> = [];
-    formattingMap.forEach((value, key) => {
-      formattingEntries.push([key, { ...value }]);
-    });
+    // Serialize formatting as compressed runs (only at change boundaries)
+    const text = this._flowingContent.getText();
+    const compressedRuns = this._flowingContent.getFormattingManager().getCompressedRuns(text.length);
+    const formattingEntries: Array<[number, Record<string, unknown>]> = compressedRuns.map(
+      run => [run.index, { ...run.formatting } as unknown as Record<string, unknown>]
+    );
 
     // Get substitution fields as array
     const fields = this._flowingContent.getSubstitutionFieldManager().getFieldsArray();
@@ -544,12 +544,21 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable, Edit
       if (boxData.border !== undefined) this._border = { ...boxData.border };
       if (boxData.padding !== undefined) this._padding = boxData.padding;
 
-      // Restore formatting runs
-      if (boxData.formattingRuns) {
+      // Restore formatting runs (run-based: each entry applies from its index to the next)
+      if (boxData.formattingRuns && boxData.formattingRuns.length > 0) {
         const formattingManager = this._flowingContent.getFormattingManager();
         formattingManager.clear();
-        for (const [index, style] of boxData.formattingRuns) {
-          formattingManager.applyFormatting(index, index + 1, style as unknown as TextFormattingStyle);
+        const textLength = this._flowingContent.getText().length;
+
+        for (let i = 0; i < boxData.formattingRuns.length; i++) {
+          const [startIndex, style] = boxData.formattingRuns[i];
+          const nextIndex = i + 1 < boxData.formattingRuns.length
+            ? boxData.formattingRuns[i + 1][0]
+            : textLength;
+
+          if (startIndex < nextIndex) {
+            formattingManager.applyFormatting(startIndex, nextIndex, style as unknown as TextFormattingStyle);
+          }
         }
       }
 
@@ -722,15 +731,19 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable, Edit
 
   /**
    * Check if a point is within this text box region.
+   * Uses the full object bounds (including padding/border) so that
+   * double-click to enter edit mode works on the entire text box area,
+   * not just the inner text area.
    * @param point Point in canvas coordinates
-   * @param pageIndex The page index (ignored for text boxes)
+   * @param _pageIndex The page index (ignored for text boxes)
    */
-  containsPointInRegion(point: Point, pageIndex: number): boolean {
-    const bounds = this.getRegionBounds(pageIndex);
-    if (!bounds) return false;
+  containsPointInRegion(point: Point, _pageIndex: number): boolean {
+    if (!this._renderedPosition) return false;
 
-    return point.x >= bounds.x && point.x <= bounds.x + bounds.width &&
-           point.y >= bounds.y && point.y <= bounds.y + bounds.height;
+    return point.x >= this._renderedPosition.x &&
+           point.x <= this._renderedPosition.x + this._size.width &&
+           point.y >= this._renderedPosition.y &&
+           point.y <= this._renderedPosition.y + this._size.height;
   }
 
   /**

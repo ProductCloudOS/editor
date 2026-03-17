@@ -30,6 +30,7 @@ import {
 import { ClipboardManager, type PCEditorClipboardData, type ClipboardContent } from '../clipboard';
 import { PDFImporter, PDFImportProgress, PDFImportResult } from '../import';
 import { PDFImportOptions, PDFImportError, PDFImportErrorCode } from '../import/types';
+import { Logger } from '../utils/logger';
 
 export class PCEditor extends EventEmitter {
   private container: HTMLElement;
@@ -62,6 +63,9 @@ export class PCEditor extends EventEmitter {
 
     this.container = container;
     this.options = this.mergeOptions(options);
+
+    // Initialize logging
+    Logger.setEnabled(this.options.enableLogging ?? false);
     this.document = new Document();
 
     // Apply constructor options to document settings
@@ -90,7 +94,8 @@ export class PCEditor extends EventEmitter {
       showControlCharacters: options?.showControlCharacters ?? false,
       defaultFont: options?.defaultFont || 'Arial',
       defaultFontSize: options?.defaultFontSize || 12,
-      theme: options?.theme || 'light'
+      theme: options?.theme || 'light',
+      enableLogging: options?.enableLogging ?? false
     };
   }
 
@@ -567,6 +572,7 @@ export class PCEditor extends EventEmitter {
    * This changes which section receives keyboard input and cursor positioning.
    */
   setActiveSection(section: EditingSection): void {
+    Logger.log('[pc-editor] setActiveSection', section);
     if (this._activeEditingSection !== section) {
       this._activeEditingSection = section;
       // Delegate to canvas manager which handles the section change and emits events
@@ -662,6 +668,7 @@ export class PCEditor extends EventEmitter {
   }
 
   loadDocument(documentData: DocumentData): void {
+    Logger.log('[pc-editor] loadDocument');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -695,6 +702,7 @@ export class PCEditor extends EventEmitter {
   }
 
   bindData(data: DataBindingContext): void {
+    Logger.log('[pc-editor] bindData');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -705,6 +713,7 @@ export class PCEditor extends EventEmitter {
   }
 
   async exportPDF(options?: PDFExportOptions): Promise<Blob> {
+    Logger.log('[pc-editor] exportPDF');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -751,6 +760,7 @@ export class PCEditor extends EventEmitter {
    * @returns JSON string representation of the document
    */
   saveDocument(): string {
+    Logger.log('[pc-editor] saveDocument');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -764,6 +774,7 @@ export class PCEditor extends EventEmitter {
    * @param filename Optional filename (defaults to 'document.pceditor.json')
    */
   saveDocumentToFile(filename: string = 'document.pceditor.json'): void {
+    Logger.log('[pc-editor] saveDocumentToFile', filename);
     const jsonString = this.saveDocument();
     const blob = new Blob([jsonString], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -784,6 +795,7 @@ export class PCEditor extends EventEmitter {
    * @param jsonString JSON string representation of the document
    */
   loadDocumentFromJSON(jsonString: string): void {
+    Logger.log('[pc-editor] loadDocumentFromJSON');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -805,6 +817,7 @@ export class PCEditor extends EventEmitter {
    * @returns Promise that resolves when loading is complete
    */
   async loadDocumentFromFile(file: File): Promise<void> {
+    Logger.log('[pc-editor] loadDocumentFromFile', file.name);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -911,11 +924,12 @@ export class PCEditor extends EventEmitter {
     // Version compatibility check
     const [major] = doc.version.split('.').map(Number);
     if (major > 1) {
-      console.warn(`Document version ${doc.version} may not be fully compatible with this editor`);
+      Logger.warn(`[pc-editor] Document version ${doc.version} may not be fully compatible with this editor`);
     }
   }
 
   selectElement(elementId: string): void {
+    Logger.log('[pc-editor] selectElement', elementId);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -924,6 +938,7 @@ export class PCEditor extends EventEmitter {
   }
 
   clearSelection(): void {
+    Logger.log('[pc-editor] clearSelection');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -932,6 +947,7 @@ export class PCEditor extends EventEmitter {
   }
 
   removeEmbeddedObject(objectId: string): void {
+    Logger.log('[pc-editor] removeEmbeddedObject', objectId);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -943,6 +959,7 @@ export class PCEditor extends EventEmitter {
    * Undo the last operation.
    */
   undo(): void {
+    Logger.log('[pc-editor] undo');
     if (!this._isReady) return;
 
     const success = this.transactionManager.undo();
@@ -956,6 +973,7 @@ export class PCEditor extends EventEmitter {
    * Redo the last undone operation.
    */
   redo(): void {
+    Logger.log('[pc-editor] redo');
     if (!this._isReady) return;
 
     const success = this.transactionManager.redo();
@@ -994,16 +1012,19 @@ export class PCEditor extends EventEmitter {
   }
 
   zoomIn(): void {
+    Logger.log('[pc-editor] zoomIn');
     if (!this._isReady) return;
     this.canvasManager.zoomIn();
   }
 
   zoomOut(): void {
+    Logger.log('[pc-editor] zoomOut');
     if (!this._isReady) return;
     this.canvasManager.zoomOut();
   }
 
   setZoom(level: number): void {
+    Logger.log('[pc-editor] setZoom', level);
     if (!this._isReady) return;
     this.canvasManager.setZoom(level);
   }
@@ -1041,6 +1062,7 @@ export class PCEditor extends EventEmitter {
   }
 
   fitToWidth(): void {
+    Logger.log('[pc-editor] fitToWidth');
     if (!this._isReady) return;
     this.canvasManager.fitToWidth();
   }
@@ -1049,17 +1071,20 @@ export class PCEditor extends EventEmitter {
    * Force a re-render of the canvas.
    */
   render(): void {
+    Logger.log('[pc-editor] render');
     if (!this._isReady) return;
     this.canvasManager.render();
   }
 
   fitToPage(): void {
+    Logger.log('[pc-editor] fitToPage');
     if (!this._isReady) return;
     this.canvasManager.fitToPage();
   }
 
   // Layout control methods
   setAutoFlow(enabled: boolean): void {
+    Logger.log('[pc-editor] setAutoFlow', enabled);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -1067,6 +1092,7 @@ export class PCEditor extends EventEmitter {
   }
 
   reflowDocument(): void {
+    Logger.log('[pc-editor] reflowDocument');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -1122,6 +1148,7 @@ export class PCEditor extends EventEmitter {
   }
 
   addPage(): void {
+    Logger.log('[pc-editor] addPage');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -1136,6 +1163,7 @@ export class PCEditor extends EventEmitter {
   }
 
   removePage(pageId: string): void {
+    Logger.log('[pc-editor] removePage', pageId);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -1222,7 +1250,7 @@ export class PCEditor extends EventEmitter {
 
     // Use the unified focus system to get the currently focused control
     const focusedControl = this.canvasManager.getFocusedControl();
-    console.log('[PCEditor.handleKeyDown] Key:', e.key, 'focusedControl:', focusedControl?.constructor?.name);
+    Logger.log('[pc-editor:handleKeyDown] Key:', e.key, 'focusedControl:', focusedControl?.constructor?.name);
     if (!focusedControl) return;
 
     // Vertical navigation needs layout context - handle specially
@@ -1248,9 +1276,9 @@ export class PCEditor extends EventEmitter {
     }
 
     // Delegate to the focused control's handleKeyDown
-    console.log('[PCEditor.handleKeyDown] Calling focusedControl.handleKeyDown');
+    Logger.log('[pc-editor:handleKeyDown] Calling focusedControl.handleKeyDown');
     const handled = focusedControl.handleKeyDown(e);
-    console.log('[PCEditor.handleKeyDown] handled:', handled);
+    Logger.log('[pc-editor:handleKeyDown] handled:', handled);
 
     if (handled) {
       this.canvasManager.render();
@@ -1662,6 +1690,7 @@ export class PCEditor extends EventEmitter {
    * This is useful when UI controls have stolen focus.
    */
   applyFormattingWithFallback(start: number, end: number, formatting: Partial<TextFormattingStyle>): void {
+    Logger.log('[pc-editor] applyFormattingWithFallback', start, end, formatting);
     // Try current context first
     let flowingContent = this.getEditingFlowingContent();
 
@@ -1887,6 +1916,7 @@ export class PCEditor extends EventEmitter {
    * Works for body text, text boxes, and table cells.
    */
   setUnifiedAlignment(alignment: TextAlignment): void {
+    Logger.log('[pc-editor] setUnifiedAlignment', alignment);
     const flowingContent = this.getEditingFlowingContent();
     if (!flowingContent) {
       throw new Error('No text is being edited');
@@ -1904,6 +1934,7 @@ export class PCEditor extends EventEmitter {
   }
 
   insertText(text: string): void {
+    Logger.log('[pc-editor] insertText', text);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -1924,6 +1955,7 @@ export class PCEditor extends EventEmitter {
   }
   
   setFlowingText(text: string): void {
+    Logger.log('[pc-editor] setFlowingText');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -1939,6 +1971,7 @@ export class PCEditor extends EventEmitter {
    * Works for body, header, footer, text boxes, and table cells.
    */
   setCursorPosition(position: number): void {
+    Logger.log('[pc-editor] setCursorPosition', position);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -1994,6 +2027,7 @@ export class PCEditor extends EventEmitter {
    * Works for body, header, footer, text boxes, and table cells.
    */
   insertEmbeddedObject(object: BaseEmbeddedObject, position: ObjectPosition = 'inline'): void {
+    Logger.log('[pc-editor] insertEmbeddedObject', object.id, position);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -2028,6 +2062,7 @@ export class PCEditor extends EventEmitter {
    * Works for body, header, footer, text boxes, and table cells.
    */
   insertSubstitutionField(fieldName: string, config?: SubstitutionFieldConfig): void {
+    Logger.log('[pc-editor] insertSubstitutionField', fieldName);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -2060,6 +2095,7 @@ export class PCEditor extends EventEmitter {
    * @param displayFormat Optional format string (e.g., "Page %d" where %d is replaced by page number)
    */
   insertPageNumberField(displayFormat?: string): void {
+    Logger.log('[pc-editor] insertPageNumberField');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -2092,6 +2128,7 @@ export class PCEditor extends EventEmitter {
    * @param displayFormat Optional format string (e.g., "of %d" where %d is replaced by page count)
    */
   insertPageCountField(displayFormat?: string): void {
+    Logger.log('[pc-editor] insertPageCountField');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -2124,6 +2161,7 @@ export class PCEditor extends EventEmitter {
    * or table cells are not recommended as these don't span pages.
    */
   insertPageBreak(): void {
+    Logger.log('[pc-editor] insertPageBreak');
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
@@ -2303,7 +2341,7 @@ export class PCEditor extends EventEmitter {
     // Find the text box in all flowing contents
     const textBox = this.findTextBoxById(textBoxId);
     if (!textBox) {
-      console.warn(`[PCEditor.updateTextBox] Text box not found: ${textBoxId}`);
+      Logger.warn(`[pc-editor:updateTextBox] Text box not found: ${textBoxId}`);
       return false;
     }
 
@@ -2378,7 +2416,7 @@ export class PCEditor extends EventEmitter {
     // Find the image in all flowing contents
     const image = this.findImageById(imageId);
     if (!image) {
-      console.warn(`[PCEditor.updateImage] Image not found: ${imageId}`);
+      Logger.warn(`[pc-editor:updateImage] Image not found: ${imageId}`);
       return false;
     }
 
@@ -2418,7 +2456,7 @@ export class PCEditor extends EventEmitter {
 
     const image = this.findImageById(imageId);
     if (!image) {
-      console.warn(`[PCEditor.setImageSource] Image not found: ${imageId}`);
+      Logger.warn(`[pc-editor:setImageSource] Image not found: ${imageId}`);
       return false;
     }
 
@@ -2558,7 +2596,7 @@ export class PCEditor extends EventEmitter {
    * @deprecated Use insertEmbeddedObject instead
    */
   insertInlineElement(_elementData: unknown, _position: ObjectPosition = 'inline'): void {
-    console.warn('insertInlineElement is deprecated and no longer functional. Use insertEmbeddedObject instead.');
+    Logger.warn('[pc-editor] insertInlineElement is deprecated and no longer functional. Use insertEmbeddedObject instead.');
   }
 
   /**
@@ -3413,12 +3451,18 @@ export class PCEditor extends EventEmitter {
   }
 
   /**
-   * Create a repeating section in the body content.
-   * Note: Repeating sections are only supported in the body, not in header/footer.
-   * @param startIndex Text index at paragraph start (must be at a paragraph boundary)
-   * @param endIndex Text index at closing paragraph start (must be at a paragraph boundary)
+   * Create a repeating section.
+   *
+   * If a table is currently being edited (focused), creates a table row loop
+   * based on the focused cell's row. In this case, startIndex and endIndex
+   * are ignored — the focused cell's row determines the loop range.
+   *
+   * Otherwise, creates a body text repeating section at the given paragraph boundaries.
+   *
+   * @param startIndex Text index at paragraph start (ignored for table row loops)
+   * @param endIndex Text index at closing paragraph start (ignored for table row loops)
    * @param fieldPath The field path to the array to loop over (e.g., "items")
-   * @returns The created section, or null if boundaries are invalid
+   * @returns The created section/loop, or null if creation failed
    */
   createRepeatingSection(
     startIndex: number,
@@ -3429,7 +3473,21 @@ export class PCEditor extends EventEmitter {
       throw new Error('Editor is not ready');
     }
 
+    // If a table is focused, create a row loop instead of a text repeating section
+    const focusedTable = this.getFocusedTable();
+    if (focusedTable && focusedTable.focusedCell) {
+      Logger.log('[pc-editor] createRepeatingSection → table row loop', fieldPath);
+      const row = focusedTable.focusedCell.row;
+      const loop = focusedTable.createRowLoop(row, row, fieldPath);
+      if (loop) {
+        this.canvasManager.render();
+        this.emit('table-row-loop-added', { table: focusedTable, loop });
+      }
+      return null; // Row loops are not RepeatingSections, return null
+    }
+
     // Repeating sections only work in body (document-level)
+    Logger.log('[pc-editor] createRepeatingSection', startIndex, endIndex, fieldPath);
     const section = this.document.bodyFlowingContent.createRepeatingSection(startIndex, endIndex, fieldPath);
 
     if (section) {
@@ -3874,7 +3932,7 @@ export class PCEditor extends EventEmitter {
   private createEmbeddedObjectFromData(data: EmbeddedObjectData): BaseEmbeddedObject | null {
     const object = EmbeddedObjectFactory.tryCreate(data);
     if (!object) {
-      console.warn('Unknown object type:', data.objectType);
+      Logger.warn('[pc-editor] Unknown object type:', data.objectType);
     }
     return object;
   }
@@ -3904,6 +3962,14 @@ export class PCEditor extends EventEmitter {
       console.error('Failed to paste image:', error);
       return false;
     }
+  }
+
+  /**
+   * Enable or disable verbose logging.
+   * When disabled (default), only errors are logged to the console.
+   */
+  setLogging(enabled: boolean): void {
+    Logger.setEnabled(enabled);
   }
 
   destroy(): void {

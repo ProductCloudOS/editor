@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TableCell } from '../../../lib/objects/table/TableCell';
 import { DEFAULT_TABLE_STYLE } from '../../../lib/objects/table/types';
+import { Logger } from '../../../lib/utils/logger';
 
 describe('TableCell', () => {
   let cell: TableCell;
@@ -268,6 +269,7 @@ describe('TableCell', () => {
     });
 
     it('should prevent embedded objects', () => {
+      Logger.setEnabled(true);
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       cell.flowingContent.insertEmbeddedObject({
@@ -278,6 +280,7 @@ describe('TableCell', () => {
 
       expect(warnSpy).toHaveBeenCalled();
       warnSpy.mockRestore();
+      Logger.setEnabled(false);
     });
   });
 
@@ -482,7 +485,8 @@ describe('TableCell', () => {
 
       const data = cell.toData();
 
-      expect(data.id).toBe(cell.id);
+      // IDs are omitted from export (no cross-references)
+      expect(data.id).toBeUndefined();
       expect(data.content).toBe('Test content');
       expect(data.backgroundColor).toBe('#ff0000');
       expect(data.rowSpan).toBe(2);
@@ -521,7 +525,8 @@ describe('TableCell', () => {
 
       const cloned = cell.clone();
 
-      expect(cloned.id).toBe(cell.id);
+      // Clone gets a new ID (IDs are not serialized)
+      expect(cloned.id).toBeDefined();
       expect(cloned.content).toBe('Original');
       expect(cloned.backgroundColor).toBe('#123456');
 
@@ -532,14 +537,14 @@ describe('TableCell', () => {
 
     it('should serialize and restore formatting runs', () => {
       cell.content = 'Hello';
-      cell.flowingContent.applyFormatting(0, 2, { bold: true });
+      cell.flowingContent.applyFormatting(0, 2, { fontWeight: 'bold' });
 
       const data = cell.toData();
       expect(data.formattingRuns).toBeDefined();
 
       const restored = TableCell.fromData(data);
-      const formatting = restored.flowingContent.getFormattingManager().getAllFormatting();
-      expect(formatting.size).toBeGreaterThan(0);
+      const formatting = restored.flowingContent.getFormattingManager().getFormattingAt(0);
+      expect(formatting.fontWeight).toBe('bold');
     });
   });
 

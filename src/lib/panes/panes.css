@@ -21,6 +21,8 @@
   --pc-pane-border-radius: 4px;
   --pc-pane-border-color: #ccc;
   --pc-pane-focus-color: #0066cc;
+  --pc-pane-min-width: 220px;
+  --pc-pane-select-max-width: 200px;
 
   /* Alignment icons (SVG data URIs) */
   --pc-pane-icon-align-left: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='%23000' d='M1 2h14v2H1zM1 7h10v2H1zM1 12h12v2H1z'/%3E%3C/svg%3E");
@@ -34,6 +36,7 @@
   font-size: var(--pc-pane-font-size);
   line-height: 1.4;
   color: var(--pc-pane-text-color);
+  min-width: var(--pc-pane-min-width);
 }
 
 /* Form group */
@@ -45,6 +48,13 @@
   display: flex;
   align-items: center;
   gap: var(--pc-pane-spacing-sm);
+}
+
+/* Zero-width spacer column absorbs extra horizontal space */
+.pc-pane-form-group--inline::after {
+  content: '';
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .pc-pane-form-group--inline .pc-pane-label {
@@ -85,6 +95,7 @@
 /* Selects */
 .pc-pane-select {
   width: 100%;
+  max-width: var(--pc-pane-select-max-width);
   height: var(--pc-pane-input-height);
   padding: 0 8px;
   border: 1px solid var(--pc-pane-border-color);
@@ -191,6 +202,13 @@
   flex-wrap: wrap;
 }
 
+/* Zero-width spacer column absorbs extra horizontal space */
+.pc-pane-button-group::after {
+  content: '';
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 /* Sections */
 .pc-pane-section {
   margin-top: var(--pc-pane-spacing);
@@ -215,6 +233,13 @@
   display: flex;
   gap: var(--pc-pane-spacing);
   align-items: center;
+}
+
+/* Zero-width spacer column absorbs extra horizontal space */
+.pc-pane-row::after {
+  content: '';
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 /* Hints */
@@ -306,7 +331,34 @@
   height: auto;
 }
 
-/* Margins grid (DocumentSettingsPane) */
+/* Margins 5-column grid (DocumentSettingsPane) */
+.pc-pane-margins-grid-5col {
+  display: grid;
+  grid-template-columns: auto auto auto auto 1fr;
+  gap: var(--pc-pane-spacing-sm) var(--pc-pane-spacing);
+  align-items: center;
+  margin-bottom: var(--pc-pane-spacing);
+}
+
+.pc-pane-margins-grid-5col .pc-pane-input--number {
+  width: 60px;
+}
+
+.pc-pane-margin-label {
+  text-align: right;
+  margin-bottom: 0;
+  padding-right: var(--pc-pane-spacing-sm);
+}
+
+/* Label-value grid: label, value, stretch (DocumentSettingsPane) */
+.pc-pane-label-value-grid {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: var(--pc-pane-spacing-sm) var(--pc-pane-spacing);
+  align-items: center;
+}
+
+/* Margins grid (DocumentSettingsPane - legacy) */
 .pc-pane-margins-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -338,7 +390,7 @@
 }
 
 .pc-pane-formatting .pc-pane-row > div {
-  flex: 1;
+  flex: 0 0 auto;
 }
 
 /* Active state for formatting buttons */

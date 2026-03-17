@@ -426,7 +426,8 @@ describe('TableRow', () => {
 
       const data = row.toData();
 
-      expect(data.id).toBe(row.id);
+      // IDs are omitted from export (no cross-references)
+      expect(data.id).toBeUndefined();
       expect(data.height).toBe(60);
       expect(data.minHeight).toBe(40);
       expect(data.isHeader).toBe(true);
@@ -475,7 +476,8 @@ describe('TableRow', () => {
 
       const cloned = row.clone();
 
-      expect(cloned.id).toBe(row.id);
+      // Clone gets a new ID (IDs are not serialized)
+      expect(cloned.id).toBeDefined();
       expect(cloned.height).toBe(55);
       expect(cloned.getCell(0)?.content).toBe('Original');
 

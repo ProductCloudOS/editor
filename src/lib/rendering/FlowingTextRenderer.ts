@@ -18,6 +18,7 @@ import { Point, Rect, EditingSection } from '../types';
 import { EventEmitter } from '../events/EventEmitter';
 import { BaseEmbeddedObject, TextBoxObject, TableObject } from '../objects';
 import { HitTestManager, HIT_PRIORITY } from '../hit-test';
+import { Logger } from '../utils/logger';
 
 // Control character symbols
 const CONTROL_CHAR_COLOR = '#87CEEB'; // Light blue
@@ -1854,7 +1855,7 @@ export class FlowingTextRenderer extends EventEmitter {
     // Clear existing resize handle targets
     this._hitTestManager.clearCategory('resize-handles');
 
-    console.log('[updateResizeHandleTargets] selectedObjects:', selectedObjects.length);
+    Logger.log('[pc-editor:FlowingTextRenderer] updateResizeHandleTargets selectedObjects:', selectedObjects.length);
 
     // Register resize handles for each selected object
     for (const object of selectedObjects) {
@@ -1867,7 +1868,7 @@ export class FlowingTextRenderer extends EventEmitter {
         // For regular objects, use renderedPosition
         const pos = object.renderedPosition;
         const pageIndex = object.renderedPageIndex;
-        console.log('[updateResizeHandleTargets] object:', object.id, 'pageIndex:', pageIndex, 'pos:', pos);
+        Logger.log('[pc-editor:FlowingTextRenderer] updateResizeHandleTargets object:', object.id, 'pageIndex:', pageIndex, 'pos:', pos);
         if (pos && pageIndex >= 0) {
           this.registerObjectResizeHandles(object, pageIndex, pos);
         }

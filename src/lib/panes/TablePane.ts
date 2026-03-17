@@ -51,6 +51,9 @@ export class TablePane extends BasePane {
   private defaultPaddingInput: HTMLInputElement | null = null;
   private defaultBorderColorInput: HTMLInputElement | null = null;
 
+  // Row loop controls
+  private loopFieldInput: HTMLInputElement | null = null;
+
   // Cell formatting controls
   private cellBgColorInput: HTMLInputElement | null = null;
   private borderTopCheck: HTMLInputElement | null = null;
@@ -62,6 +65,7 @@ export class TablePane extends BasePane {
   private borderStyleSelect: HTMLSelectElement | null = null;
 
   private currentTable: TableObject | null = null;
+  private _isUpdating: boolean = false;
   private onApplyCallback?: (success: boolean, error?: Error) => void;
 
   constructor(id: string = 'table', options: TablePaneOptions = {}) {
@@ -147,6 +151,19 @@ export class TablePane extends BasePane {
     headersSection.appendChild(applyHeadersBtn);
     container.appendChild(headersSection);
 
+    // Row Loop section
+    const loopSection = this.createSection('Row Loop');
+
+    this.loopFieldInput = this.createTextInput({ placeholder: 'items' });
+    loopSection.appendChild(this.createFormGroup('Array Field', this.loopFieldInput, {
+      hint: 'Creates a loop on the currently focused row'
+    }));
+
+    const createLoopBtn = this.createButton('Create Row Loop');
+    this.addButtonListener(createLoopBtn, () => this.createRowLoop());
+    loopSection.appendChild(createLoopBtn);
+    container.appendChild(loopSection);
+
     // Defaults section
     const defaultsSection = this.createSection('Defaults');
     const defaultsRow = this.createRow();
@@ -230,14 +247,19 @@ export class TablePane extends BasePane {
   }
 
   private updateFromFocusedTable(): void {
-    if (!this.editor) return;
+    if (!this.editor || this._isUpdating) return;
 
-    const table = this.editor.getFocusedTable();
+    this._isUpdating = true;
+    try {
+      const table = this.editor.getFocusedTable();
 
-    if (table) {
-      this.showTable(table);
-    } else {
-      this.hideTable();
+      if (table) {
+        this.showTable(table);
+      } else {
+        this.hideTable();
+      }
+    } finally {
+      this._isUpdating = false;
     }
   }
 
@@ -458,6 +480,25 @@ export class TablePane extends BasePane {
    */
   hasTable(): boolean {
     return this.currentTable !== null;
+  }
+
+  private createRowLoop(): void {
+    if (!this.editor || !this.currentTable) {
+      this.onApplyCallback?.(false, new Error('No table focused'));
+      return;
+    }
+
+    const fieldPath = this.loopFieldInput?.value.trim() || '';
+
+    if (!fieldPath) {
+      this.onApplyCallback?.(false, new Error('Array field path is required'));
+      return;
+    }
+
+    // Uses the unified createRepeatingSection API which detects
+    // that a table is focused and creates a row loop on the focused row
+    this.editor.createRepeatingSection(0, 0, fieldPath);
+    this.onApplyCallback?.(true);
   }
 
   /**

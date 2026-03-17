@@ -4,6 +4,7 @@
 
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy, TextItem } from 'pdfjs-dist/types/src/display/api';
+import { Logger } from '../utils/logger';
 import {
   PDFExtractedContent,
   PDFExtractedPage,
@@ -227,12 +228,12 @@ export class PDFParser {
             }
           } catch {
             // Skip images that fail to extract
-            console.warn(`Failed to extract image: ${imageName}`);
+            Logger.warn(`[pc-editor:PDFParser] Failed to extract image: ${imageName}`);
           }
         }
       }
     } catch (error) {
-      console.warn('Image extraction failed:', error);
+      Logger.warn('[pc-editor:PDFParser] Image extraction failed:', error);
     }
 
     return images;

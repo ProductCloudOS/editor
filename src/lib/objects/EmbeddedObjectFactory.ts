@@ -115,14 +115,22 @@ export class EmbeddedObjectFactory {
         padding: data.data.padding as number | undefined
       });
 
-      // Restore formatting runs if present
+      // Restore formatting runs (run-based: each entry applies from its index to the next)
       if (data.data.formattingRuns && Array.isArray(data.data.formattingRuns)) {
-        const formattingManager = textBox.flowingContent.getFormattingManager();
-        const formattingMap = new Map<number, any>();
-        for (const [index, style] of data.data.formattingRuns as Array<[number, Record<string, unknown>]>) {
-          formattingMap.set(index, style);
+        const runs = data.data.formattingRuns as Array<[number, Record<string, unknown>]>;
+        if (runs.length > 0) {
+          const formattingManager = textBox.flowingContent.getFormattingManager();
+          const textLength = textBox.flowingContent.getText().length;
+
+          for (let i = 0; i < runs.length; i++) {
+            const [startIndex, style] = runs[i];
+            const nextIndex = i + 1 < runs.length ? runs[i + 1][0] : textLength;
+
+            if (startIndex < nextIndex) {
+              formattingManager.applyFormatting(startIndex, nextIndex, style as any);
+            }
+          }
         }
-        formattingManager.setAllFormatting(formattingMap);
       }
 
       // Restore substitution fields if present

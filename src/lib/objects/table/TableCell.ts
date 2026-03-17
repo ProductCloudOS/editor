@@ -15,12 +15,14 @@ import {
   CellPadding,
   VerticalAlign,
   DEFAULT_TABLE_STYLE,
+  DEFAULT_CELL_BORDER_SIDE,
   createCellBorder,
   createCellPadding,
   getHorizontalPadding,
   getVerticalPadding
 } from './types';
 import { BorderSide } from '../types';
+import { Logger } from '../../utils/logger';
 
 /**
  * Generate a unique cell ID.
@@ -96,7 +98,7 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
 
     // Prevent embedded objects in table cells (only substitution fields allowed)
     this._flowingContent.insertEmbeddedObject = () => {
-      console.warn('Embedded objects are not allowed in table cells. Use insertSubstitutionField instead.');
+      Logger.warn('[pc-editor:TableCell] Embedded objects are not allowed in table cells. Use insertSubstitutionField instead.');
     };
 
     // Set initial content
@@ -475,7 +477,7 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
     this._reflowDirty = false;
     this._lastReflowWidth = width;
     this._cachedContentHeight = null; // Clear cached height since lines changed
-    console.log('[TableCell.reflow] cellId:', this._id, 'text:', JSON.stringify(this._flowingContent.getText()), 'lines:', this._flowedLines.length);
+    Logger.log('[pc-editor:TableCell.reflow] cellId:', this._id, 'text:', JSON.stringify(this._flowingContent.getText()), 'lines:', this._flowedLines.length);
   }
 
   /**
@@ -520,7 +522,7 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
   }
 
   handleKeyDown(e: KeyboardEvent): boolean {
-    console.log('[TableCell.handleKeyDown] Key:', e.key, '_editing:', this._editing, 'flowingContent.hasFocus:', this._flowingContent.hasFocus());
+    Logger.log('[pc-editor:TableCell.handleKeyDown] Key:', e.key, '_editing:', this._editing, 'flowingContent.hasFocus:', this._flowingContent.hasFocus());
     if (!this._editing) return false;
 
     // Let parent table handle Tab navigation
@@ -529,9 +531,9 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
     }
 
     // Delegate to FlowingTextContent
-    console.log('[TableCell.handleKeyDown] Delegating to FlowingTextContent.handleKeyDown');
+    Logger.log('[pc-editor:TableCell.handleKeyDown] Delegating to FlowingTextContent.handleKeyDown');
     const handled = this._flowingContent.handleKeyDown(e);
-    console.log('[TableCell.handleKeyDown] FlowingTextContent handled:', handled);
+    Logger.log('[pc-editor:TableCell.handleKeyDown] FlowingTextContent handled:', handled);
     return handled;
   }
 
@@ -626,30 +628,48 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
   // ============================================
 
   toData(): TableCellData {
-    const formattingMap = this._flowingContent.getFormattingManager().getAllFormatting();
-    const formattingRuns: Array<[number, Partial<TextFormattingStyle>]> = [];
-    formattingMap.forEach((style, index) => {
-      formattingRuns.push([index, { ...style }]);
-    });
+    const text = this._flowingContent.getText();
+    const compressedRuns = this._flowingContent.getFormattingManager().getCompressedRuns(text.length);
+    const formattingRuns: Array<[number, Partial<TextFormattingStyle>]> = compressedRuns.map(
+      run => [run.index, run.formatting]
+    );
 
     // Get substitution fields for serialization
     const fields = this._flowingContent.getSubstitutionFieldManager().getFieldsArray();
 
-    return {
-      id: this._id,
-      rowSpan: this._rowSpan,
-      colSpan: this._colSpan,
-      backgroundColor: this._backgroundColor,
-      border: this._border,
-      padding: this._padding,
-      verticalAlign: this._verticalAlign,
-      content: this._flowingContent.getText(),
-      fontFamily: this._fontFamily,
-      fontSize: this._fontSize,
-      color: this._color,
-      formattingRuns: formattingRuns.length > 0 ? formattingRuns : undefined,
-      substitutionFields: fields.length > 0 ? fields : undefined
-    };
+    // Only include non-default values to minimize export size
+    const defaults = DEFAULT_TABLE_STYLE;
+    const defaultBorder = DEFAULT_CELL_BORDER_SIDE;
+
+    const isDefaultBorderSide = (side: { width: number; color: string; style: string }) =>
+      side.width === defaultBorder.width && side.color === defaultBorder.color && side.style === defaultBorder.style;
+
+    const isDefaultBorder = isDefaultBorderSide(this._border.top) &&
+      isDefaultBorderSide(this._border.right) &&
+      isDefaultBorderSide(this._border.bottom) &&
+      isDefaultBorderSide(this._border.left);
+
+    const isDefaultPadding = this._padding.top === defaults.cellPadding &&
+      this._padding.right === defaults.cellPadding &&
+      this._padding.bottom === defaults.cellPadding &&
+      this._padding.left === defaults.cellPadding;
+
+    const data: TableCellData = {};
+
+    if (this._rowSpan !== 1) data.rowSpan = this._rowSpan;
+    if (this._colSpan !== 1) data.colSpan = this._colSpan;
+    if (this._backgroundColor !== defaults.backgroundColor) data.backgroundColor = this._backgroundColor;
+    if (!isDefaultBorder) data.border = this._border;
+    if (!isDefaultPadding) data.padding = this._padding;
+    if (this._verticalAlign !== 'top') data.verticalAlign = this._verticalAlign;
+    if (text) data.content = text;
+    if (this._fontFamily !== defaults.fontFamily) data.fontFamily = this._fontFamily;
+    if (this._fontSize !== defaults.fontSize) data.fontSize = this._fontSize;
+    if (this._color !== defaults.color) data.color = this._color;
+    if (formattingRuns.length > 0) data.formattingRuns = formattingRuns;
+    if (fields.length > 0) data.substitutionFields = fields;
+
+    return data;
   }
 
   static fromData(data: TableCellData): TableCell {
@@ -667,14 +687,21 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
       color: data.color
     });
 
-    // Restore formatting runs
-    if (data.formattingRuns) {
+    // Restore formatting runs (run-based: each entry applies from its index to the next)
+    if (data.formattingRuns && data.formattingRuns.length > 0) {
       const formattingManager = cell._flowingContent.getFormattingManager();
-      const formattingMap = new Map<number, TextFormattingStyle>();
-      for (const [index, style] of data.formattingRuns) {
-        formattingMap.set(index, style as TextFormattingStyle);
+      const textLength = (data.content || '').length;
+
+      for (let i = 0; i < data.formattingRuns.length; i++) {
+        const [startIndex, style] = data.formattingRuns[i];
+        const nextIndex = i + 1 < data.formattingRuns.length
+          ? data.formattingRuns[i + 1][0]
+          : textLength;
+
+        if (startIndex < nextIndex) {
+          formattingManager.applyFormatting(startIndex, nextIndex, style as TextFormattingStyle);
+        }
       }
-      formattingManager.setAllFormatting(formattingMap);
     }
 
     // Restore substitution fields

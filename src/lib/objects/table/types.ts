@@ -52,17 +52,17 @@ export interface TableCellConfig {
  * Serialized cell data for persistence.
  */
 export interface TableCellData {
-  id: string;
-  rowSpan: number;
-  colSpan: number;
-  backgroundColor: string;
-  border: CellBorder;
-  padding: CellPadding;
-  verticalAlign: VerticalAlign;
-  content: string;
-  fontFamily: string;
-  fontSize: number;
-  color: string;
+  id?: string;
+  rowSpan?: number;
+  colSpan?: number;
+  backgroundColor?: string;
+  border?: CellBorder;
+  padding?: CellPadding;
+  verticalAlign?: VerticalAlign;
+  content?: string;
+  fontFamily?: string;
+  fontSize?: number;
+  color?: string;
   formattingRuns?: Array<[number, Partial<TextFormattingStyle>]>;
   substitutionFields?: Array<unknown>;
 }
@@ -82,10 +82,10 @@ export interface TableRowConfig {
  * Serialized row data for persistence.
  */
 export interface TableRowData {
-  id: string;
-  height: number | null;
-  minHeight: number;
-  isHeader: boolean;
+  id?: string;
+  height?: number | null;
+  minHeight?: number;
+  isHeader?: boolean;
   cells: TableCellData[];
 }
 

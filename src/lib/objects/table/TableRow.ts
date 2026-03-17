@@ -262,13 +262,16 @@ export class TableRow extends EventEmitter {
   // ============================================
 
   toData(): TableRowData {
-    return {
-      id: this._id,
-      height: this._height,
-      minHeight: this._minHeight,
-      isHeader: this._isHeader,
+    const data: TableRowData = {
       cells: this._cells.map(cell => cell.toData())
     };
+
+    // Only include non-default values
+    if (this._height !== null) data.height = this._height;
+    if (this._minHeight !== DEFAULT_TABLE_STYLE.minRowHeight) data.minHeight = this._minHeight;
+    if (this._isHeader) data.isHeader = this._isHeader;
+
+    return data;
   }
 
   static fromData(data: TableRowData): TableRow {

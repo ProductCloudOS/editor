@@ -49,6 +49,7 @@ export class ImagePane extends BasePane {
   private fileInput: HTMLInputElement | null = null;
 
   private currentImage: ImageObject | null = null;
+  private _isUpdating: boolean = false;
   private maxImageWidth: number;
   private maxImageHeight: number;
   private onApplyCallback?: (success: boolean, error?: Error) => void;
@@ -151,14 +152,19 @@ export class ImagePane extends BasePane {
   }
 
   private updateFromSelection(): void {
-    if (!this.editor) return;
+    if (!this.editor || this._isUpdating) return;
 
-    const image = this.editor.getSelectedImage?.();
+    this._isUpdating = true;
+    try {
+      const image = this.editor.getSelectedImage?.();
 
-    if (image) {
-      this.showImage(image);
-    } else {
-      this.hideImage();
+      if (image) {
+        this.showImage(image);
+      } else {
+        this.hideImage();
+      }
+    } finally {
+      this._isUpdating = false;
     }
   }
 

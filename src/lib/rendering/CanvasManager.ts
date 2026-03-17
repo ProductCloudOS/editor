@@ -13,6 +13,7 @@ import {
   FooterTextRegion,
   FlowingTextContent
 } from '../text';
+import { Logger } from '../utils/logger';
 
 // Double-click detection constants
 const DOUBLE_CLICK_THRESHOLD = 300; // ms
@@ -1595,7 +1596,7 @@ export class CanvasManager extends EventEmitter {
   }
 
   selectElement(elementId: string): void {
-    console.log('Selecting element:', elementId);
+    Logger.log('[pc-editor:CanvasManager] Selecting element:', elementId);
     this.selectedElements.add(elementId);
 
     // Update embedded object's selected state
@@ -1609,13 +1610,13 @@ export class CanvasManager extends EventEmitter {
       const embeddedObjects = flowingContent.getEmbeddedObjects();
       for (const [, obj] of embeddedObjects.entries()) {
         if (obj.id === elementId) {
-          console.log('Found embedded object to select:', obj.id);
+          Logger.log('[pc-editor:CanvasManager] Found embedded object to select:', obj.id);
           obj.selected = true;
         }
       }
     }
 
-    console.log('Selected elements after selection:', Array.from(this.selectedElements));
+    Logger.log('[pc-editor:CanvasManager] Selected elements after selection:', Array.from(this.selectedElements));
     this.render();
     this.updateResizeHandleHitTargets();
     this.emit('selection-change', { selectedElements: Array.from(this.selectedElements) });
@@ -1671,10 +1672,10 @@ export class CanvasManager extends EventEmitter {
   }
 
   clearSelection(): void {
-    console.log('clearSelection called, current selected elements:', Array.from(this.selectedElements));
+    Logger.log('[pc-editor:CanvasManager] clearSelection called, current selected elements:', Array.from(this.selectedElements));
     // Clear selected state on all embedded objects
     this.selectedElements.forEach(elementId => {
-      console.log('Clearing selection for element:', elementId);
+      Logger.log('[pc-editor:CanvasManager] Clearing selection for element:', elementId);
       // Check embedded objects in all flowing content sources (body, header, footer)
       const flowingContents = [
         this.document.bodyFlowingContent,
@@ -1686,7 +1687,7 @@ export class CanvasManager extends EventEmitter {
         const embeddedObjects = flowingContent.getEmbeddedObjects();
         for (const [, embeddedObj] of embeddedObjects.entries()) {
           if (embeddedObj.id === elementId) {
-            console.log('Clearing selection on embedded object:', elementId);
+            Logger.log('[pc-editor:CanvasManager] Clearing selection on embedded object:', elementId);
             embeddedObj.selected = false;
           }
         }
@@ -1695,7 +1696,7 @@ export class CanvasManager extends EventEmitter {
 
     this.selectedElements.clear();
     this.selectedSectionId = null;
-    console.log('About to render after clearing selection...');
+    Logger.log('[pc-editor:CanvasManager] About to render after clearing selection...');
     this.render();
     this.updateResizeHandleHitTargets();
     this.emit('selection-change', { selectedElements: [] });
@@ -1982,7 +1983,7 @@ export class CanvasManager extends EventEmitter {
 
     // Handle substitution field clicks
     this.flowingTextRenderer.on('substitution-field-clicked', (data) => {
-      console.log('[substitution-field-clicked] Field:', data.field?.fieldName, 'Section:', data.section);
+      Logger.log('[pc-editor:CanvasManager] substitution-field-clicked Field:', data.field?.fieldName, 'Section:', data.section);
       // Emit event for external handling (e.g., showing field properties panel)
       this.emit('substitution-field-clicked', data);
     });
@@ -2527,15 +2528,16 @@ export class CanvasManager extends EventEmitter {
     this._editingTextBoxPageId = pageId || null;
 
     if (textBox) {
-      // Use the unified focus system to handle focus/blur and cursor blink
-      // This blurs the previous control, hiding its cursor
-      this.setFocus(textBox);
-
       // Clear selection in main flowing content
       this.document.bodyFlowingContent.clearSelection();
-      // Select the text box
+      // Select the text box visually (this calls setFocus(null) internally,
+      // so we must set focus to the text box AFTER this call)
       this.clearSelection();
       this.selectInlineElement({ type: 'embedded-object', object: textBox, textIndex: textBox.textIndex });
+
+      // Now set focus to the text box for editing — must be AFTER selectInlineElement
+      // because selectBaseEmbeddedObject calls setFocus(null) which would undo it
+      this.setFocus(textBox);
       this.emit('textbox-editing-started', { textBox });
     } else {
       // Restore focus to the active section's FlowingTextContent

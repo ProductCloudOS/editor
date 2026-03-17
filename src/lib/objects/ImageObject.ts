@@ -79,6 +79,35 @@ export class ImageObject extends BaseEmbeddedObject {
     return this._error;
   }
 
+  /**
+   * Get the loaded HTMLImageElement, if available.
+   * Used by PDFGenerator to convert unsupported formats to PNG.
+   */
+  get imageElement(): HTMLImageElement | null {
+    return this._loaded ? this._image : null;
+  }
+
+  /**
+   * Convert the image to a PNG data URL via canvas.
+   * Used when the original format (e.g., SVG, WebP, GIF) is not supported by pdf-lib.
+   * Returns null if the image is not loaded or conversion fails.
+   */
+  toPngDataUrl(): string | null {
+    if (!this._loaded || !this._image) return null;
+
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = this._image.naturalWidth || this._size.width;
+      canvas.height = this._image.naturalHeight || this._size.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(this._image, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/png');
+    } catch {
+      return null;
+    }
+  }
+
   private loadImage(): void {
     if (!this._src) {
       this._error = true;

@@ -26,6 +26,7 @@ import {
   TextFormattingRunData,
   EmbeddedObjectReference
 } from '../types';
+import { Logger } from '../utils/logger';
 
 // Re-export types
 export type {
@@ -1160,9 +1161,9 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
    * @returns true if the event was handled, false otherwise
    */
   handleKeyDown(e: KeyboardEvent): boolean {
-    console.log('[FlowingTextContent.handleKeyDown] Key:', e.key, '_hasFocus:', this._hasFocus);
+    Logger.log('[pc-editor:FlowingTextContent.handleKeyDown] Key:', e.key, '_hasFocus:', this._hasFocus);
     if (!this._hasFocus) {
-      console.log('[FlowingTextContent.handleKeyDown] No focus, returning false');
+      Logger.log('[pc-editor:FlowingTextContent.handleKeyDown] No focus, returning false');
       return false;
     }
 
@@ -1732,51 +1733,19 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     // Serialize text content
     const text = this.textState.getText();
 
-    // Serialize text formatting as runs - only output when format changes
-    // This optimizes document size by not storing redundant formatting entries
-    const formattingRuns: TextFormattingRunData[] = [];
-    const defaultFormat = this.formatting.defaultFormatting;
-    let lastFormat: TextFormattingStyle | null = null;
-
-    for (let i = 0; i < text.length; i++) {
-      const currentFormat = this.formatting.getFormattingAt(i);
-
-      // Check if formatting changed from previous character
-      const formatChanged = lastFormat === null ||
-        currentFormat.fontFamily !== lastFormat.fontFamily ||
-        currentFormat.fontSize !== lastFormat.fontSize ||
-        currentFormat.fontWeight !== lastFormat.fontWeight ||
-        currentFormat.fontStyle !== lastFormat.fontStyle ||
-        currentFormat.color !== lastFormat.color ||
-        currentFormat.backgroundColor !== lastFormat.backgroundColor;
-
-      if (formatChanged) {
-        // Only output if different from default (to further reduce size)
-        const isDefault =
-          currentFormat.fontFamily === defaultFormat.fontFamily &&
-          currentFormat.fontSize === defaultFormat.fontSize &&
-          currentFormat.fontWeight === defaultFormat.fontWeight &&
-          currentFormat.fontStyle === defaultFormat.fontStyle &&
-          currentFormat.color === defaultFormat.color &&
-          currentFormat.backgroundColor === defaultFormat.backgroundColor;
-
-        // Always output first run if it's not default, or output when format changes
-        if (!isDefault || formattingRuns.length > 0) {
-          formattingRuns.push({
-            index: i,
-            formatting: {
-              fontFamily: currentFormat.fontFamily,
-              fontSize: currentFormat.fontSize,
-              fontWeight: currentFormat.fontWeight,
-              fontStyle: currentFormat.fontStyle,
-              color: currentFormat.color,
-              backgroundColor: currentFormat.backgroundColor
-            }
-          });
-        }
-        lastFormat = currentFormat;
+    // Serialize text formatting as compressed runs (only at change boundaries)
+    const compressedRuns = this.formatting.getCompressedRuns(text.length);
+    const formattingRuns: TextFormattingRunData[] = compressedRuns.map(run => ({
+      index: run.index,
+      formatting: {
+        fontFamily: run.formatting.fontFamily,
+        fontSize: run.formatting.fontSize,
+        fontWeight: run.formatting.fontWeight,
+        fontStyle: run.formatting.fontStyle,
+        color: run.formatting.color,
+        backgroundColor: run.formatting.backgroundColor
       }
-    }
+    }));
 
     // Serialize paragraph formatting
     const paragraphFormatting = this.paragraphFormatting.toJSON();
@@ -1886,7 +1855,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
         if (object) {
           content.getEmbeddedObjectManager().insert(object, ref.textIndex);
         } else {
-          console.warn(`Failed to create embedded object of type: ${ref.object.objectType}`);
+          Logger.warn(`[pc-editor:FlowingTextContent] Failed to create embedded object of type: ${ref.object.objectType}`);
         }
       }
     }
@@ -1951,7 +1920,7 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
         if (object) {
           this.embeddedObjects.insert(object, ref.textIndex);
         } else {
-          console.warn(`Failed to create embedded object of type: ${ref.object.objectType}`);
+          Logger.warn(`[pc-editor:FlowingTextContent] Failed to create embedded object of type: ${ref.object.objectType}`);
         }
       }
     }

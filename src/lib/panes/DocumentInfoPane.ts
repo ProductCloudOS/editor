@@ -41,42 +41,45 @@ export class DocumentInfoPane extends BasePane {
 
   protected createContent(): HTMLElement {
     const container = document.createElement('div');
-    container.className = 'pc-pane-info-list';
+    container.className = 'pc-pane-label-value-grid';
 
     // Page count
-    const countRow = this.createInfoRow('Pages', '0');
-    this.pageCountEl = countRow.querySelector('.pc-pane-info-value');
-    container.appendChild(countRow);
+    container.appendChild(this.createLabel('Pages:'));
+    this.pageCountEl = this.createValue('0');
+    container.appendChild(this.pageCountEl);
+    container.appendChild(this.createSpacer());
 
     // Page size
-    const sizeRow = this.createInfoRow('Size', '-');
-    this.pageSizeEl = sizeRow.querySelector('.pc-pane-info-value');
-    container.appendChild(sizeRow);
+    container.appendChild(this.createLabel('Size:'));
+    this.pageSizeEl = this.createValue('-');
+    container.appendChild(this.pageSizeEl);
+    container.appendChild(this.createSpacer());
 
     // Page orientation
-    const orientationRow = this.createInfoRow('Orientation', '-');
-    this.pageOrientationEl = orientationRow.querySelector('.pc-pane-info-value');
-    container.appendChild(orientationRow);
+    container.appendChild(this.createLabel('Orientation:'));
+    this.pageOrientationEl = this.createValue('-');
+    container.appendChild(this.pageOrientationEl);
+    container.appendChild(this.createSpacer());
 
     return container;
   }
 
-  private createInfoRow(label: string, value: string): HTMLElement {
-    const row = document.createElement('div');
-    row.className = 'pc-pane-info';
+  private createLabel(text: string): HTMLElement {
+    const label = document.createElement('span');
+    label.className = 'pc-pane-label pc-pane-margin-label';
+    label.textContent = text;
+    return label;
+  }
 
-    const labelEl = document.createElement('span');
-    labelEl.className = 'pc-pane-info-label';
-    labelEl.textContent = label;
+  private createValue(text: string): HTMLElement {
+    const value = document.createElement('span');
+    value.className = 'pc-pane-info-value';
+    value.textContent = text;
+    return value;
+  }
 
-    const valueEl = document.createElement('span');
-    valueEl.className = 'pc-pane-info-value';
-    valueEl.textContent = value;
-
-    row.appendChild(labelEl);
-    row.appendChild(valueEl);
-
-    return row;
+  private createSpacer(): HTMLElement {
+    return document.createElement('div');
   }
 
   /**

@@ -44,6 +44,7 @@ export class HyperlinkPane extends BasePane {
   private titleInput: HTMLInputElement | null = null;
   private rangeHint: HTMLElement | null = null;
   private currentHyperlink: HyperlinkData | null = null;
+  private _isUpdating: boolean = false;
   private onApply?: (success: boolean, error?: Error) => void;
   private onRemove?: (success: boolean) => void;
 
@@ -102,15 +103,20 @@ export class HyperlinkPane extends BasePane {
   }
 
   private updateFromCursor(): void {
-    if (!this.editor) return;
+    if (!this.editor || this._isUpdating) return;
 
-    const cursorPos = this.editor.getCursorPosition();
-    const hyperlink = this.editor.getHyperlinkAt(cursorPos);
+    this._isUpdating = true;
+    try {
+      const cursorPos = this.editor.getCursorPosition();
+      const hyperlink = this.editor.getHyperlinkAt(cursorPos);
 
-    if (hyperlink) {
-      this.showHyperlink(hyperlink);
-    } else {
-      this.hideHyperlink();
+      if (hyperlink) {
+        this.showHyperlink(hyperlink);
+      } else {
+        this.hideHyperlink();
+      }
+    } finally {
+      this._isUpdating = false;
     }
   }
 

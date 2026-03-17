@@ -22,6 +22,7 @@ import {
 } from './pdf-utils';
 import { BaseEmbeddedObject, ImageObject, TextBoxObject } from '../objects';
 import { TableObject } from '../objects/table';
+import { Logger } from '../utils/logger';
 
 /**
  * Hyperlink data for PDF generation.
@@ -597,12 +598,22 @@ export class PDFGenerator {
     pageHeight: number
   ): Promise<void> {
     const pdfDoc = pdfPage.doc;
-    const src = image.src;
+    let src = image.src;
 
     // Check if it's a data URL we can embed
     if (src.startsWith('data:')) {
       try {
-        const embeddedImage = await this.embedImageFromDataUrl(pdfDoc, src);
+        let embeddedImage = await this.embedImageFromDataUrl(pdfDoc, src);
+
+        // If the format isn't directly supported (e.g., SVG, WebP, GIF),
+        // convert to PNG via canvas and try again
+        if (!embeddedImage) {
+          const pngDataUrl = image.toPngDataUrl();
+          if (pngDataUrl) {
+            embeddedImage = await this.embedImageFromDataUrl(pdfDoc, pngDataUrl);
+          }
+        }
+
         if (embeddedImage) {
           // Calculate draw position/size based on fit mode
           const drawParams = this.calculateImageDrawParams(
@@ -631,7 +642,7 @@ export class PDFGenerator {
           return;
         }
       } catch (e) {
-        console.warn('Failed to embed image:', e);
+        Logger.warn('[pc-editor:PDFGenerator] Failed to embed image:', e);
       }
     }
 

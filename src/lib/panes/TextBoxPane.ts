@@ -38,6 +38,7 @@ export class TextBoxPane extends BasePane {
   private borderColorInput: HTMLInputElement | null = null;
   private borderStyleSelect: HTMLSelectElement | null = null;
   private paddingInput: HTMLInputElement | null = null;
+  private _isUpdating: boolean = false;
 
   private currentTextBox: TextBoxObject | null = null;
   private onApplyCallback?: (success: boolean, error?: Error) => void;
@@ -130,14 +131,19 @@ export class TextBoxPane extends BasePane {
   }
 
   private updateFromSelection(): void {
-    if (!this.editor) return;
+    if (!this.editor || this._isUpdating) return;
 
-    const textBox = this.editor.getSelectedTextBox?.();
+    this._isUpdating = true;
+    try {
+      const textBox = this.editor.getSelectedTextBox?.();
 
-    if (textBox && !textBox.editing) {
-      this.showTextBox(textBox);
-    } else {
-      this.hideTextBox();
+      if (textBox && !textBox.editing) {
+        this.showTextBox(textBox);
+      } else {
+        this.hideTextBox();
+      }
+    } finally {
+      this._isUpdating = false;
     }
   }
 

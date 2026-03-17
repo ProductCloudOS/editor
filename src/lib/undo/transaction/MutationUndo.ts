@@ -23,6 +23,7 @@ import {
 } from './types';
 import { BaseEmbeddedObject, TableObject, EmbeddedObjectFactory } from '../../objects';
 import { EmbeddedObjectData } from '../../objects/types';
+import { Logger } from '../../utils/logger';
 
 /**
  * Callback to get a FlowingTextContent by source ID.
@@ -93,7 +94,7 @@ export class MutationUndo {
         this.undoTableStructure(mutation);
         break;
       default:
-        console.warn('Unknown mutation type for undo:', mutation.type);
+        Logger.warn('[pc-editor:MutationUndo] Unknown mutation type for undo:', mutation.type);
     }
   }
 
@@ -144,7 +145,7 @@ export class MutationUndo {
         this.redoTableStructure(mutation);
         break;
       default:
-        console.warn('Unknown mutation type for redo:', mutation.type);
+        Logger.warn('[pc-editor:MutationUndo] Unknown mutation type for redo:', mutation.type);
     }
   }
 

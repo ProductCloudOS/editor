@@ -27,6 +27,7 @@ import {
   TableRowLoopData
 } from './types';
 import { TableCellMerger } from './TableCellMerger';
+import { Logger } from '../../utils/logger';
 
 /**
  * Generate a unique column ID.
@@ -155,7 +156,7 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
   override set position(value: 'inline' | 'block' | 'relative') {
     // Tables only support block positioning - ignore any attempt to set other modes
     if (value !== 'block') {
-      console.warn(`Tables only support 'block' positioning. Ignoring attempt to set '${value}'.`);
+      Logger.warn(`[pc-editor:TableObject] Tables only support 'block' positioning. Ignoring attempt to set '${value}'.`);
     }
     // Always set to block
     super.position = 'block';
@@ -770,18 +771,18 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
   createRowLoop(startRowIndex: number, endRowIndex: number, fieldPath: string): TableRowLoop | null {
     // Validate range
     if (startRowIndex < 0 || endRowIndex >= this._rows.length) {
-      console.warn('[TableObject.createRowLoop] Invalid row range');
+      Logger.warn('[pc-editor:TableObject.createRowLoop] Invalid row range');
       return null;
     }
     if (startRowIndex > endRowIndex) {
-      console.warn('[TableObject.createRowLoop] Start index must be <= end index');
+      Logger.warn('[pc-editor:TableObject.createRowLoop] Start index must be <= end index');
       return null;
     }
 
     // Check for overlap with existing loops
     for (const existingLoop of this._rowLoops.values()) {
       if (this.loopRangesOverlap(startRowIndex, endRowIndex, existingLoop.startRowIndex, existingLoop.endRowIndex)) {
-        console.warn('[TableObject.createRowLoop] Loop range overlaps with existing loop');
+        Logger.warn('[pc-editor:TableObject.createRowLoop] Loop range overlaps with existing loop');
         return null;
       }
     }
@@ -789,7 +790,7 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     // Check that loop rows are not header rows
     for (let i = startRowIndex; i <= endRowIndex; i++) {
       if (this._rows[i]?.isHeader) {
-        console.warn('[TableObject.createRowLoop] Loop rows cannot be header rows');
+        Logger.warn('[pc-editor:TableObject.createRowLoop] Loop rows cannot be header rows');
         return null;
       }
     }
@@ -1730,7 +1731,7 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
   }
 
   handleKeyDown(e: KeyboardEvent): boolean {
-    console.log('[TableObject.handleKeyDown] Key:', e.key, '_editing:', this._editing, '_focusedCell:', this._focusedCell);
+    Logger.log('[pc-editor:TableObject.handleKeyDown] Key:', e.key, '_editing:', this._editing, '_focusedCell:', this._focusedCell);
     if (!this._editing) return false;
 
     // Handle Tab navigation

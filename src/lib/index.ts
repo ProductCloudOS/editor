@@ -178,3 +178,6 @@ export type {
   FormattingRun,
   PageInfo
 } from './import';
+
+// Utilities
+export { Logger } from './utils/logger';

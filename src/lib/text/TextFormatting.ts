@@ -32,12 +32,13 @@ export class TextFormattingManager extends EventEmitter {
 
   /**
    * Get formatting at a specific character position.
-   * Returns the position-specific formatting or the default.
+   * Returns the position-specific formatting merged with defaults,
+   * ensuring all properties are consistently present.
    */
   getFormattingAt(position: number): TextFormattingStyle {
     const override = this.formatting.get(position);
     if (override) {
-      return { ...override };
+      return { ...this._defaultFormatting, ...override };
     }
     return { ...this._defaultFormatting };
   }
@@ -132,6 +133,50 @@ export class TextFormattingManager extends EventEmitter {
    */
   getAllFormatting(): Map<number, TextFormattingStyle> {
     return new Map(this.formatting);
+  }
+
+  /**
+   * Get formatting as compressed runs for serialization.
+   * Only outputs entries where formatting changes from the previous character.
+   * Skips leading default formatting to minimize output size.
+   * @param textLength Length of the text to serialize formatting for
+   */
+  getCompressedRuns(textLength: number): Array<{ index: number; formatting: TextFormattingStyle }> {
+    const runs: Array<{ index: number; formatting: TextFormattingStyle }> = [];
+    const defaultFormat = this._defaultFormatting;
+    let lastFormat: TextFormattingStyle | null = null;
+
+    for (let i = 0; i < textLength; i++) {
+      const currentFormat = this.getFormattingAt(i);
+
+      const formatChanged = lastFormat === null ||
+        currentFormat.fontFamily !== lastFormat.fontFamily ||
+        currentFormat.fontSize !== lastFormat.fontSize ||
+        currentFormat.fontWeight !== lastFormat.fontWeight ||
+        currentFormat.fontStyle !== lastFormat.fontStyle ||
+        currentFormat.color !== lastFormat.color ||
+        currentFormat.backgroundColor !== lastFormat.backgroundColor;
+
+      if (formatChanged) {
+        const isDefault =
+          currentFormat.fontFamily === defaultFormat.fontFamily &&
+          currentFormat.fontSize === defaultFormat.fontSize &&
+          currentFormat.fontWeight === defaultFormat.fontWeight &&
+          currentFormat.fontStyle === defaultFormat.fontStyle &&
+          currentFormat.color === defaultFormat.color &&
+          currentFormat.backgroundColor === defaultFormat.backgroundColor;
+
+        if (!isDefault || runs.length > 0) {
+          runs.push({
+            index: i,
+            formatting: { ...currentFormat }
+          });
+        }
+        lastFormat = currentFormat;
+      }
+    }
+
+    return runs;
   }
 
   /**
