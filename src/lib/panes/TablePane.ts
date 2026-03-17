@@ -100,70 +100,66 @@ export class TablePane extends BasePane {
 
     // Structure section
     const structureSection = this.createSection('Structure');
+
+    // Rows/Columns info with aligned labels
     const structureInfo = document.createElement('div');
-    structureInfo.className = 'pc-pane-info-list';
+    structureInfo.className = 'pc-pane-table-structure-info';
 
     this.rowCountDisplay = document.createElement('span');
+    this.rowCountDisplay.className = 'pc-pane-info-value';
     this.colCountDisplay = document.createElement('span');
+    this.colCountDisplay.className = 'pc-pane-info-value';
 
-    const rowInfo = document.createElement('div');
-    rowInfo.className = 'pc-pane-info';
-    rowInfo.innerHTML = '<span class="pc-pane-info-label">Rows</span>';
-    rowInfo.appendChild(this.rowCountDisplay);
-
-    const colInfo = document.createElement('div');
-    colInfo.className = 'pc-pane-info';
-    colInfo.innerHTML = '<span class="pc-pane-info-label">Columns</span>';
-    colInfo.appendChild(this.colCountDisplay);
-
-    structureInfo.appendChild(rowInfo);
-    structureInfo.appendChild(colInfo);
+    structureInfo.appendChild(this.createFormGroup('Rows:', this.rowCountDisplay, { inline: true }));
+    structureInfo.appendChild(this.createFormGroup('Columns:', this.colCountDisplay, { inline: true }));
     structureSection.appendChild(structureInfo);
 
-    // Row/column buttons
-    const structureBtns = this.createButtonGroup();
+    // Row buttons
+    const rowBtns = this.createButtonGroup();
     const addRowBtn = this.createButton('+ Row');
     this.addButtonListener(addRowBtn, () => this.insertRow());
     const removeRowBtn = this.createButton('- Row');
     this.addButtonListener(removeRowBtn, () => this.removeRow());
+    rowBtns.appendChild(addRowBtn);
+    rowBtns.appendChild(removeRowBtn);
+    structureSection.appendChild(rowBtns);
+
+    // Column buttons (separate row)
+    const colBtns = this.createButtonGroup();
     const addColBtn = this.createButton('+ Column');
     this.addButtonListener(addColBtn, () => this.insertColumn());
     const removeColBtn = this.createButton('- Column');
     this.addButtonListener(removeColBtn, () => this.removeColumn());
+    colBtns.appendChild(addColBtn);
+    colBtns.appendChild(removeColBtn);
+    structureSection.appendChild(colBtns);
 
-    structureBtns.appendChild(addRowBtn);
-    structureBtns.appendChild(removeRowBtn);
-    structureBtns.appendChild(addColBtn);
-    structureBtns.appendChild(removeColBtn);
-    structureSection.appendChild(structureBtns);
+    // Header rows/cols (with separator and aligned labels)
+    structureSection.appendChild(document.createElement('hr'));
+    const headersGroup = document.createElement('div');
+    headersGroup.className = 'pc-pane-table-headers';
+    this.headerRowInput = this.createNumberInput({ min: 0, max: 10, value: 0 });
+    this.addImmediateApplyListener(this.headerRowInput, () => this.applyHeaders());
+    headersGroup.appendChild(this.createFormGroup('Header Rows:', this.headerRowInput, { inline: true }));
+    this.headerColInput = this.createNumberInput({ min: 0, max: 10, value: 0 });
+    this.addImmediateApplyListener(this.headerColInput, () => this.applyHeaders());
+    headersGroup.appendChild(this.createFormGroup('Header Cols:', this.headerColInput, { inline: true }));
+    structureSection.appendChild(headersGroup);
+
     container.appendChild(structureSection);
 
-    // Headers section
-    const headersSection = this.createSection('Headers');
-    const headerRow = this.createRow();
-    this.headerRowInput = this.createNumberInput({ min: 0, max: 10, value: 0 });
-    this.headerColInput = this.createNumberInput({ min: 0, max: 10, value: 0 });
-    headerRow.appendChild(this.createFormGroup('Header Rows:', this.headerRowInput, { inline: true }));
-    headerRow.appendChild(this.createFormGroup('Header Cols:', this.headerColInput, { inline: true }));
-    headersSection.appendChild(headerRow);
-
-    const applyHeadersBtn = this.createButton('Apply Headers');
-    this.addButtonListener(applyHeadersBtn, () => this.applyHeaders());
-    headersSection.appendChild(applyHeadersBtn);
-    container.appendChild(headersSection);
-
-    // Defaults section
+    // Defaults section (aligned labels)
     const defaultsSection = this.createSection('Defaults');
-    const defaultsRow = this.createRow();
+    const defaultsGroup = document.createElement('div');
+    defaultsGroup.className = 'pc-pane-table-defaults';
     this.defaultPaddingInput = this.createNumberInput({ min: 0, max: 20, value: 8 });
+    this.addImmediateApplyListener(this.defaultPaddingInput, () => this.applyDefaults());
+    defaultsGroup.appendChild(this.createFormGroup('Padding:', this.defaultPaddingInput, { inline: true }));
     this.defaultBorderColorInput = this.createColorInput('#cccccc');
-    defaultsRow.appendChild(this.createFormGroup('Padding:', this.defaultPaddingInput, { inline: true }));
-    defaultsRow.appendChild(this.createFormGroup('Border:', this.defaultBorderColorInput, { inline: true }));
-    defaultsSection.appendChild(defaultsRow);
+    this.addImmediateApplyListener(this.defaultBorderColorInput, () => this.applyDefaults());
+    defaultsGroup.appendChild(this.createFormGroup('Border:', this.defaultBorderColorInput, { inline: true }));
+    defaultsSection.appendChild(defaultsGroup);
 
-    const applyDefaultsBtn = this.createButton('Apply Defaults');
-    this.addButtonListener(applyDefaultsBtn, () => this.applyDefaults());
-    defaultsSection.appendChild(applyDefaultsBtn);
     container.appendChild(defaultsSection);
 
     // Cell formatting section
@@ -183,10 +179,12 @@ export class TablePane extends BasePane {
     mergeBtnGroup.appendChild(this.mergeCellsBtn);
     mergeBtnGroup.appendChild(this.splitCellBtn);
     cellSection.appendChild(mergeBtnGroup);
+    cellSection.appendChild(document.createElement('hr'));
 
-    // Background
+    // Background — inline
     this.cellBgColorInput = this.createColorInput('#ffffff');
-    cellSection.appendChild(this.createFormGroup('Background:', this.cellBgColorInput));
+    this.addImmediateApplyListener(this.cellBgColorInput, () => this.applyCellFormatting());
+    cellSection.appendChild(this.createFormGroup('Background:', this.cellBgColorInput, { inline: true }));
 
     // Border checkboxes
     const borderChecks = document.createElement('div');
@@ -219,27 +217,32 @@ export class TablePane extends BasePane {
     if (checkLabels[2]) checkLabels[2].replaceChild(this.borderBottomCheck, checkLabels[2].querySelector('input')!);
     if (checkLabels[3]) checkLabels[3].replaceChild(this.borderLeftCheck, checkLabels[3].querySelector('input')!);
 
+    // Add change listeners for immediate apply on checkboxes
+    for (const check of [this.borderTopCheck, this.borderRightCheck, this.borderBottomCheck, this.borderLeftCheck]) {
+      check.addEventListener('change', () => this.applyCellFormatting());
+    }
+
     cellSection.appendChild(this.createFormGroup('Borders:', borderChecks));
 
     // Border properties
     const borderPropsRow = this.createRow();
     this.borderWidthInput = this.createNumberInput({ min: 0, max: 5, value: 1 });
     this.borderColorInput = this.createColorInput('#cccccc');
+    this.addImmediateApplyListener(this.borderWidthInput, () => this.applyCellFormatting());
+    this.addImmediateApplyListener(this.borderColorInput, () => this.applyCellFormatting());
     borderPropsRow.appendChild(this.createFormGroup('Width:', this.borderWidthInput, { inline: true }));
     borderPropsRow.appendChild(this.createFormGroup('Color:', this.borderColorInput, { inline: true }));
     cellSection.appendChild(borderPropsRow);
 
+    // Style — inline
     this.borderStyleSelect = this.createSelect([
       { value: 'solid', label: 'Solid' },
       { value: 'dashed', label: 'Dashed' },
       { value: 'dotted', label: 'Dotted' },
       { value: 'none', label: 'None' }
     ], 'solid');
-    cellSection.appendChild(this.createFormGroup('Style:', this.borderStyleSelect));
-
-    const applyCellBtn = this.createButton('Apply to Cell(s)', { variant: 'primary' });
-    this.addButtonListener(applyCellBtn, () => this.applyCellFormatting());
-    cellSection.appendChild(applyCellBtn);
+    this.addImmediateApplyListener(this.borderStyleSelect, () => this.applyCellFormatting());
+    cellSection.appendChild(this.createFormGroup('Style:', this.borderStyleSelect, { inline: true }));
 
     container.appendChild(cellSection);
 

@@ -1258,18 +1258,26 @@ export class PCEditor extends EventEmitter {
       return;
     }
 
-    // If an embedded object is selected (but not being edited), arrow keys should deselect it
-    // and move the cursor in the text flow
-    const isArrowKey = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key);
-    if (isArrowKey && this.canvasManager.hasSelectedElements()) {
-      // Check if we're not in editing mode
+    // If an embedded object is selected (but not being edited), handle special keys
+    if (this.canvasManager.hasSelectedElements()) {
       const editingTextBox = this.canvasManager.getEditingTextBox();
       const focusedTable = this.canvasManager.getFocusedControl();
       const isEditing = editingTextBox?.editing || (focusedTable instanceof TableObject && focusedTable.editing);
 
       if (!isEditing) {
-        // Clear the selection and let the key be handled by the body content
-        this.canvasManager.clearSelection();
+        // Arrow keys: deselect and move cursor in text flow
+        const isArrowKey = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key);
+        if (isArrowKey) {
+          this.canvasManager.clearSelection();
+          // Fall through to normal key handling
+        }
+
+        // Backspace/Delete: delete the selected object from the text flow
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+          e.preventDefault();
+          this.deleteSelectedElements();
+          return;
+        }
       }
     }
 
@@ -1381,6 +1389,36 @@ export class PCEditor extends EventEmitter {
     // If no embedded objects found, just clear selection
     this.canvasManager.clearSelection();
     this.canvasManager.render();
+  }
+
+  /**
+   * Delete all currently selected embedded objects from the text flow.
+   */
+  private deleteSelectedElements(): void {
+    const selectedElements = this.canvasManager.getSelectedElements();
+    if (selectedElements.length === 0) return;
+
+    for (const elementId of selectedElements) {
+      const objectInfo = this.findEmbeddedObjectInfo(elementId);
+      if (objectInfo) {
+        // Delete the placeholder character at the object's text index
+        // This removes the object from the text flow
+        objectInfo.content.deleteText(objectInfo.textIndex, 1);
+
+        // Return focus to the parent flowing content
+        const cursorPos = Math.min(objectInfo.textIndex, objectInfo.content.getText().length);
+        objectInfo.content.setCursorPosition(cursorPos);
+        this.canvasManager.setFocus(objectInfo.content);
+
+        if (objectInfo.section !== this.canvasManager.getActiveSection()) {
+          this.canvasManager.setActiveSection(objectInfo.section);
+        }
+      }
+    }
+
+    this.canvasManager.clearSelection();
+    this.canvasManager.render();
+    this.emit('content-changed', {});
   }
 
   /**

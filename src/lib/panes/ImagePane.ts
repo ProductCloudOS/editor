@@ -83,15 +83,18 @@ export class ImagePane extends BasePane {
   protected createContent(): HTMLElement {
     const container = document.createElement('div');
 
-    // Position section
+    // Position section — with heading, matching TextBoxPane
     const positionSection = this.createSection('Position');
     this.positionSelect = this.createSelect([
       { value: 'inline', label: 'Inline' },
       { value: 'block', label: 'Block' },
       { value: 'relative', label: 'Relative' }
     ], 'inline');
-    this.addImmediateApplyListener(this.positionSelect, () => this.updateOffsetVisibility());
-    positionSection.appendChild(this.createFormGroup('Type:', this.positionSelect));
+    this.addImmediateApplyListener(this.positionSelect, () => {
+      this.updateOffsetVisibility();
+      this.applyChanges();
+    });
+    positionSection.appendChild(this.createFormGroup('Type:', this.positionSelect, { inline: true }));
 
     // Offset group (only visible for relative positioning)
     this.offsetGroup = document.createElement('div');
@@ -99,14 +102,20 @@ export class ImagePane extends BasePane {
     const offsetRow = this.createRow();
     this.offsetXInput = this.createNumberInput({ value: 0 });
     this.offsetYInput = this.createNumberInput({ value: 0 });
+    this.addImmediateApplyListener(this.offsetXInput, () => this.applyChanges());
+    this.addImmediateApplyListener(this.offsetYInput, () => this.applyChanges());
     offsetRow.appendChild(this.createFormGroup('X:', this.offsetXInput, { inline: true }));
     offsetRow.appendChild(this.createFormGroup('Y:', this.offsetYInput, { inline: true }));
     this.offsetGroup.appendChild(offsetRow);
     positionSection.appendChild(this.offsetGroup);
     container.appendChild(positionSection);
 
-    // Fit mode section
-    const fitSection = this.createSection('Display');
+    container.appendChild(document.createElement('hr'));
+
+    // Display section — Fit Mode and Resize Mode with aligned labels
+    const displaySection = document.createElement('div');
+    displaySection.className = 'pc-pane-image-display';
+
     this.fitModeSelect = this.createSelect([
       { value: 'contain', label: 'Contain' },
       { value: 'cover', label: 'Cover' },
@@ -114,39 +123,38 @@ export class ImagePane extends BasePane {
       { value: 'none', label: 'None (original size)' },
       { value: 'tile', label: 'Tile' }
     ], 'contain');
-    fitSection.appendChild(this.createFormGroup('Fit Mode:', this.fitModeSelect));
+    this.addImmediateApplyListener(this.fitModeSelect, () => this.applyChanges());
+    displaySection.appendChild(this.createFormGroup('Fit Mode:', this.fitModeSelect, { inline: true }));
 
     this.resizeModeSelect = this.createSelect([
       { value: 'locked-aspect-ratio', label: 'Lock Aspect Ratio' },
       { value: 'free', label: 'Free Resize' }
     ], 'locked-aspect-ratio');
-    fitSection.appendChild(this.createFormGroup('Resize Mode:', this.resizeModeSelect));
-    container.appendChild(fitSection);
+    this.addImmediateApplyListener(this.resizeModeSelect, () => this.applyChanges());
+    displaySection.appendChild(this.createFormGroup('Resize Mode:', this.resizeModeSelect, { inline: true }));
 
-    // Alt text section
-    const altSection = this.createSection('Accessibility');
+    container.appendChild(displaySection);
+
+    container.appendChild(document.createElement('hr'));
+
+    // Alt Text — inline row
     this.altTextInput = this.createTextInput({ placeholder: 'Description of the image' });
-    altSection.appendChild(this.createFormGroup('Alt Text:', this.altTextInput));
-    container.appendChild(altSection);
+    this.addImmediateApplyListener(this.altTextInput, () => this.applyChanges());
+    container.appendChild(this.createFormGroup('Alt Text:', this.altTextInput, { inline: true }));
 
-    // Source section
-    const sourceSection = this.createSection('Source');
+    container.appendChild(document.createElement('hr'));
+
+    // Source — change image button
     this.fileInput = document.createElement('input');
     this.fileInput.type = 'file';
     this.fileInput.accept = 'image/*';
     this.fileInput.style.display = 'none';
     this.fileInput.addEventListener('change', (e) => this.handleFileChange(e));
-    sourceSection.appendChild(this.fileInput);
+    container.appendChild(this.fileInput);
 
     const changeSourceBtn = this.createButton('Change Image...');
     this.addButtonListener(changeSourceBtn, () => this.fileInput?.click());
-    sourceSection.appendChild(changeSourceBtn);
-    container.appendChild(sourceSection);
-
-    // Apply button
-    const applyBtn = this.createButton('Apply Changes', { variant: 'primary' });
-    this.addButtonListener(applyBtn, () => this.applyChanges());
-    container.appendChild(applyBtn);
+    container.appendChild(changeSourceBtn);
 
     return container;
   }

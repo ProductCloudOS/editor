@@ -2162,9 +2162,9 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
     for (const loop of this._rowLoops.values()) {
       const startY = rowPositions[loop.startRowIndex] || 0;
-      let endY = startY;
+      let _endY = startY;
       for (let i = loop.startRowIndex; i <= loop.endRowIndex && i < this._rows.length; i++) {
-        endY += this._rows[i].calculatedHeight;
+        _endY += this._rows[i].calculatedHeight;
       }
 
       // Label bounds (matches rendering)
@@ -2288,9 +2288,9 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
     for (const cond of this._rowConditionals.values()) {
       const startY = rowPositions[cond.startRowIndex] || 0;
-      let endY = startY;
+      let _endY = startY;
       for (let i = cond.startRowIndex; i <= cond.endRowIndex && i < this._rows.length; i++) {
-        endY += this._rows[i].calculatedHeight;
+        _endY += this._rows[i].calculatedHeight;
       }
 
       // Label bounds (right side of table, offset from loop labels)

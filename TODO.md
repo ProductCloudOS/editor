@@ -1,7 +1,5 @@
 # Open Items
 
-* T45 Embedded objects, like images, text boxes and tables do not work properly in the header and footer.  Click events do not work properly, using relative positioning doesn't allow for movement, etc
-
 # Closed Items
 
 * T01 When a text box is double clicked it isn't edited
@@ -70,3 +68,18 @@
   * SHould not be able to cross repeating sections but can occur inside repeating sections or have repeating sections inside a conditional section
   * The predicate should be a free form text field but needs it's own executable syntax suitable for executing on the merge data
   * The execution context of a conditional section should align to repeating sections.  Fields should be referred to in the schema with dot notation (field1.field2.field2).  if field 2 is an array then the first element is assumed unless in a repeating section 
+* T45 Embedded objects, like images, text boxes and tables do not work properly in the header and footer.  Click events do not work properly, using relative positioning doesn't allow for movement, etc
+* T46 When a text box, image, substitutoin field, page number or table is selected, but not in edit mode, and the backspace or delete button is pressed then the item should be deleted from the text flow
+* T47 For the image settings page:
+  * Position Type, Fit Mode, Resize Mode, and Alt Text should all be fitted on to a single row (label and controls on single row)
+  * Remove the Apply Changes button
+  * Whenever any of the controls has their value changed the changes should take effect as soon as the control loses focus
+* T48 Make the following changes to the table settings pane:
+  * In the structure section "Rows" and "Columns" labels should be in a column and right aligned.  Also the labels should have a colon suffix
+  * There should be a break between "- Row" and "+ Column"
+  * There should be a break before "Header Cols"
+  * The Apply Headers button should be removed.  If the Header rows/cols values are changed and lose focus the change should take effect immediately
+  * In defaults section there should be a break before Border
+  * In defaults section remove "Apply Defaults" button.  Changes should take effect when the controls lose focus
+  * In Cell Formatting section the "Background:" and "Style:" properties should have the label and control on the same row
+  * In Cell Formatting section "Apply to Cell(s)" button should be removed.  CHanges should take effect when controls lose focus

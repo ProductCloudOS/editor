@@ -65,7 +65,7 @@ function initializeEditor(): void {
     loadDocumentSettings();
     initializeRulers();
     initializeLibraryPanes();
-    loadGoogleFonts();
+    void loadGoogleFonts();
     updateStatus('Editor initialized');
   });
 }

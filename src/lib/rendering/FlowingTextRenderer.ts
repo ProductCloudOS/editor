@@ -351,9 +351,6 @@ export class FlowingTextRenderer extends EventEmitter {
       // Clear table continuations when starting a new render cycle
       this.clearTableContinuations();
 
-      // Clear content hit targets - they will be re-registered during render
-      this._hitTestManager.clearCategory('content');
-
       // This is the first page, flow all text
       const flowedPages = this.flowTextForPage(page, ctx, contentBounds);
       this.flowedPages.set(page.id, flowedPages);
@@ -719,6 +716,13 @@ export class FlowingTextRenderer extends EventEmitter {
     // Get hyperlinks for rendering
     const hyperlinks = flowingContent.getAllHyperlinks();
 
+    // Track relative objects to render after all lines (so they appear on top)
+    const relativeObjects: Array<{
+      object: BaseEmbeddedObject;
+      anchorX: number;
+      anchorY: number;
+    }> = [];
+
     // Render each line
     let y = bounds.y;
     for (let lineIndex = 0; lineIndex < flowedLines.length; lineIndex++) {
@@ -733,6 +737,19 @@ export class FlowingTextRenderer extends EventEmitter {
         break;
       }
 
+      // Collect relative objects from this line
+      if (line.embeddedObjects) {
+        for (const embeddedObj of line.embeddedObjects) {
+          if (embeddedObj.isAnchor && embeddedObj.object.position === 'relative') {
+            relativeObjects.push({
+              object: embeddedObj.object,
+              anchorX: bounds.x,
+              anchorY: y
+            });
+          }
+        }
+      }
+
       this.renderFlowedLine(line, ctx, { x: bounds.x, y }, maxWidth, pageIndex, cursorTextIndex, pageCount, hyperlinks);
       y += line.height;
     }
@@ -744,6 +761,11 @@ export class FlowingTextRenderer extends EventEmitter {
 
     if (clipToBounds) {
       ctx.restore();
+    }
+
+    // Render relative objects on top of text (outside clip region)
+    if (relativeObjects.length > 0) {
+      this.renderRelativeObjects(relativeObjects, ctx, pageIndex);
     }
   }
 

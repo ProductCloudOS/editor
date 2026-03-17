@@ -212,6 +212,12 @@ export class CanvasManager extends EventEmitter {
       // 2. CONTENT: Render all text and elements
       const pageIndex = this.document.pages.findIndex(p => p.id === page.id);
 
+      // Clear content hit targets before rendering all sections (header, body, footer)
+      // so that each section's hit targets are re-registered during render
+      if (pageIndex === 0) {
+        this.flowingTextRenderer.hitTestManager.clearCategory('content');
+      }
+
       // Render header content
       const headerRegion = this.regionManager.getHeaderRegion();
       this.flowingTextRenderer.renderHeaderText(page, ctx, this._activeSection === 'header', headerRegion ?? undefined, pageIndex);
@@ -619,11 +625,10 @@ export class CanvasManager extends EventEmitter {
     if (embeddedObjectHit && embeddedObjectHit.data.type === 'embedded-object') {
       const object = embeddedObjectHit.data.object;
 
-      // Check which section the object belongs to - only interact if in active section
+      // If object is in a different section, switch to that section first
       const objectSection = this.getSectionForEmbeddedObject(object);
       if (objectSection && objectSection !== this._activeSection) {
-        // Object is in a different section - ignore the interaction
-        return;
+        this.setActiveSection(objectSection);
       }
 
       // For relative-positioned objects, prepare for potential drag
@@ -1187,16 +1192,13 @@ export class CanvasManager extends EventEmitter {
     if (embeddedObjectHit && embeddedObjectHit.data.type === 'embedded-object') {
       const clickedObject = embeddedObjectHit.data.object;
 
-      // Check which section the object belongs to
+      // If object is in a different section, switch to that section first
       const objectSection = this.getSectionForEmbeddedObject(clickedObject);
-
-      // Only allow selection if object is in the active section
       if (objectSection && objectSection !== this._activeSection) {
-        // Object is in a different section - ignore the click
-        return;
+        this.setActiveSection(objectSection);
       }
 
-      // Clicked on embedded object in the active section - clear text selection and select it
+      // Clicked on embedded object - clear text selection and select it
       const activeFlowingContent = this.getFlowingContentForActiveSection();
       if (activeFlowingContent) {
         activeFlowingContent.clearSelection();
@@ -1561,26 +1563,19 @@ export class CanvasManager extends EventEmitter {
     if (embeddedObjectHit && embeddedObjectHit.data.type === 'embedded-object') {
       const object = embeddedObjectHit.data.object;
 
-      // Only show interactive cursors for objects in the active section
-      const objectSection = this.getSectionForEmbeddedObject(object);
-      if (objectSection && objectSection !== this._activeSection) {
-        // Object is in a different section - don't show interactive cursor
-        // Fall through to text region detection
-      } else {
-        if (object.position === 'relative') {
-          canvas.style.cursor = 'move';
-          return;
-        }
-        // Show text cursor for objects in edit mode, arrow otherwise
-        if (object instanceof TextBoxObject && this.editingTextBox === object) {
-          canvas.style.cursor = CanvasManager.TEXT_CURSOR;
-        } else if (object instanceof TableObject && this._focusedControl === object) {
-          canvas.style.cursor = CanvasManager.TEXT_CURSOR;
-        } else {
-          canvas.style.cursor = 'default';
-        }
+      if (object.position === 'relative') {
+        canvas.style.cursor = 'move';
         return;
       }
+      // Show text cursor for objects in edit mode, arrow otherwise
+      if (object instanceof TextBoxObject && this.editingTextBox === object) {
+        canvas.style.cursor = CanvasManager.TEXT_CURSOR;
+      } else if (object instanceof TableObject && this._focusedControl === object) {
+        canvas.style.cursor = CanvasManager.TEXT_CURSOR;
+      } else {
+        canvas.style.cursor = 'default';
+      }
+      return;
     }
 
     // Check for table cells (show text cursor)
