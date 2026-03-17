@@ -598,7 +598,7 @@ export class PDFGenerator {
     pageHeight: number
   ): Promise<void> {
     const pdfDoc = pdfPage.doc;
-    let src = image.src;
+    const src = image.src;
 
     // Check if it's a data URL we can embed
     if (src.startsWith('data:')) {
