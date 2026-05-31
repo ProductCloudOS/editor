@@ -633,6 +633,7 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
     const formattingRuns: Array<[number, Partial<TextFormattingStyle>]> = compressedRuns.map(
       run => [run.index, run.formatting]
     );
+    const paragraphFormatting = this._flowingContent.getParagraphFormattingManager().toJSON();
 
     // Get substitution fields for serialization
     const fields = this._flowingContent.getSubstitutionFieldManager().getFieldsArray();
@@ -667,6 +668,7 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
     if (this._fontSize !== defaults.fontSize) data.fontSize = this._fontSize;
     if (this._color !== defaults.color) data.color = this._color;
     if (formattingRuns.length > 0) data.formattingRuns = formattingRuns;
+    if (paragraphFormatting.length > 0) data.paragraphFormatting = paragraphFormatting;
     if (fields.length > 0) data.substitutionFields = fields;
 
     return data;
@@ -702,6 +704,11 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
           formattingManager.applyFormatting(startIndex, nextIndex, style as TextFormattingStyle);
         }
       }
+    }
+
+    // Restore paragraph formatting (alignment, bullets, numbering)
+    if (data.paragraphFormatting && data.paragraphFormatting.length > 0) {
+      cell._flowingContent.getParagraphFormattingManager().fromJSON(data.paragraphFormatting);
     }
 
     // Restore substitution fields

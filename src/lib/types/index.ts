@@ -153,6 +153,14 @@ export interface TextFormattingRunData {
   };
 }
 
+export interface ListFormattingData {
+  listType: 'bullet' | 'number' | 'none';
+  bulletStyle?: 'disc' | 'circle' | 'square' | 'dash' | 'none';
+  numberStyle?: 'decimal' | 'lower-alpha' | 'upper-alpha' | 'lower-roman' | 'upper-roman';
+  nestingLevel: number;
+  startNumber?: number;
+}
+
 /**
  * Serialized paragraph formatting.
  */
@@ -160,6 +168,7 @@ export interface ParagraphFormattingData {
   paragraphStart: number;
   formatting: {
     alignment: 'left' | 'center' | 'right' | 'justify';
+    listFormatting?: ListFormattingData;
   };
 }
 

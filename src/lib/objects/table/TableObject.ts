@@ -82,6 +82,10 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     sliceIndex: number;
     yOffset: number;  // Y offset in full table where this slice's data rows start
     headerHeight: number;  // Height of repeated header on continuation pages
+    startRow: number;
+    endRow: number;
+    startRowOffset: number;
+    endRowOffset: number;
   }> = new Map();
 
   constructor(config: TableObjectConfig) {
@@ -259,6 +263,13 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       }
     }
     return 0;
+  }
+
+  /**
+   * Smallest useful row fragment to render when a data row is split across pages.
+   */
+  getMinDataRowFragmentHeight(): number {
+    return DEFAULT_TABLE_STYLE.minRowHeight;
   }
 
   /**
@@ -1290,6 +1301,7 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     const headerHeight = this.getHeaderHeight();
     const headerRowIndices = this.getHeaderRowIndices();
     const totalHeight = this._size.height;
+    const minFragmentHeight = this.getMinDataRowFragmentHeight();
 
     // If table fits on first page, return single slice
     if (totalHeight <= availableHeightFirstPage) {
@@ -1297,6 +1309,8 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
         slices: [{
           startRow: 0,
           endRow: this._rows.length,
+          startRowOffset: 0,
+          endRowOffset: 0,
           isContinuation: false,
           height: totalHeight,
           yOffset: 0
@@ -1307,21 +1321,31 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       };
     }
 
+    const rowPositions: number[] = [];
+    let rowY = 0;
+    for (const row of this._rows) {
+      rowPositions.push(rowY);
+      rowY += row.calculatedHeight;
+    }
+
     // Find the first non-header row index
     let firstDataRowIndex = 0;
     while (firstDataRowIndex < this._rows.length && this._rows[firstDataRowIndex].isHeader) {
       firstDataRowIndex++;
     }
 
-    // Check if at least one data row fits on the first page
+    // Check if at least one useful data row fragment fits on the first page
     // If no data rows fit, the entire table should move to the next page
     // Header rows don't count since they repeat on every page anyway
     const firstDataRowHeight = firstDataRowIndex < this._rows.length
       ? this._rows[firstDataRowIndex].calculatedHeight
       : 0;
+    const firstDataRowRequiredHeight = firstDataRowIndex < this._rows.length && this.canSplitRowAcrossPages(firstDataRowIndex)
+      ? Math.min(firstDataRowHeight, minFragmentHeight)
+      : firstDataRowHeight;
 
     // Calculate if first data row can fit after all headers on first page
-    const firstPageHasRoom = headerHeight + firstDataRowHeight <= availableHeightFirstPage;
+    const firstPageHasRoom = headerHeight + firstDataRowRequiredHeight <= availableHeightFirstPage;
 
     // If first data row doesn't fit on first page, table should start on "next page"
     // which becomes the first page of the table (not a continuation)
@@ -1332,99 +1356,128 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
     const slices: TablePageSlice[] = [];
     let currentRow = 0;
-    let yOffset = 0;
-    let isActuallyFirstSlice = true;  // Track if this is the first slice we're actually adding
+    let currentRowOffset = 0;
+    let isActuallyFirstSlice = true;
 
     while (currentRow < this._rows.length) {
       const availableHeight = isActuallyFirstSlice ? effectiveFirstPageHeight : availableHeightOtherPages;
-      // isContinuation = true only for slices after the first one we add
-      // The first slice of a table (regardless of page) should have isContinuation = false
-      // because headers are included, not repeated
       const isContinuation = !isActuallyFirstSlice;
 
-      // Find how many rows fit in this slice
-      let sliceHeight = isContinuation ? headerHeight : 0;
-      let sliceEndRow = currentRow;
-      const sliceStartY = yOffset;
-
-      // On first slice (with headers), start from row 0
-      // On continuation slices, skip to first data row (headers are rendered separately)
       if (isContinuation && currentRow < firstDataRowIndex) {
         currentRow = firstDataRowIndex;
-        sliceEndRow = currentRow;
+        currentRowOffset = 0;
       }
 
-      while (sliceEndRow < this._rows.length) {
-        const row = this._rows[sliceEndRow];
+      const sliceStartRow = currentRow;
+      const sliceStartOffset = currentRowOffset;
+      const sliceStartY = (rowPositions[currentRow] || 0) + currentRowOffset;
+      let sliceEndRow = currentRow;
+      let sliceEndOffset = currentRowOffset;
+      let sliceHeight = isContinuation ? headerHeight : 0;
+      let addedContent = false;
+      let addedDataContent = false;
 
-        // Skip header rows on continuation pages - they're handled separately
+      while (currentRow < this._rows.length) {
+        const row = this._rows[currentRow];
+
         if (isContinuation && row.isHeader) {
-          sliceEndRow++;
+          currentRow++;
+          currentRowOffset = 0;
           continue;
         }
 
         const rowHeight = row.calculatedHeight;
+        const remainingRowHeight = Math.max(0, rowHeight - currentRowOffset);
+        const spaceLeft = availableHeight - sliceHeight;
 
-        // Check if this row fits
-        if (sliceHeight + rowHeight > availableHeight) {
-          // Row doesn't fit, end this slice
-          break;
+        if (remainingRowHeight <= spaceLeft) {
+          sliceHeight += remainingRowHeight;
+          if (!row.isHeader) {
+            addedDataContent = true;
+          }
+          currentRow++;
+          currentRowOffset = 0;
+          sliceEndRow = currentRow;
+          sliceEndOffset = 0;
+          addedContent = true;
+          continue;
         }
 
-        sliceHeight += rowHeight;
-        yOffset += rowHeight;
-        sliceEndRow++;
+        if (this.canSplitRowAcrossPages(currentRow) && spaceLeft >= minFragmentHeight) {
+          currentRowOffset += spaceLeft;
+          sliceHeight += spaceLeft;
+          sliceEndRow = currentRow + 1;
+          sliceEndOffset = currentRowOffset;
+          addedContent = true;
+          addedDataContent = true;
+
+          if (currentRowOffset >= rowHeight) {
+            currentRow++;
+            currentRowOffset = 0;
+            sliceEndRow = currentRow;
+            sliceEndOffset = 0;
+          }
+        } else if (!addedContent) {
+          if (
+            isActuallyFirstSlice &&
+            spaceLeft < minFragmentHeight &&
+            rowHeight <= availableHeightOtherPages - (headerHeight > 0 ? headerHeight : 0)
+          ) {
+            break;
+          }
+
+          // Preserve legacy behavior for rows that cannot be safely split.
+          sliceHeight += remainingRowHeight;
+          currentRow++;
+          currentRowOffset = 0;
+          sliceEndRow = currentRow;
+          sliceEndOffset = 0;
+          addedContent = true;
+          addedDataContent = true;
+        }
+
+        break;
       }
 
-      // Check for merged cells that span past sliceEndRow - adjust break point
-      sliceEndRow = this.adjustSliceEndForMergedCells(currentRow, sliceEndRow);
+      if (!addedContent) {
+        if (isActuallyFirstSlice) {
+          isActuallyFirstSlice = false;
+          continue;
+        }
+        break;
+      }
 
-      // Recalculate slice height if we adjusted the end row
-      if (sliceEndRow < this._rows.length) {
-        sliceHeight = isContinuation ? headerHeight : 0;
-        yOffset = sliceStartY;
-        for (let r = currentRow; r < sliceEndRow; r++) {
-          if (!(isContinuation && this._rows[r].isHeader)) {
-            sliceHeight += this._rows[r].calculatedHeight;
-            yOffset += this._rows[r].calculatedHeight;
+      if (!addedDataContent && isActuallyFirstSlice && currentRow < this._rows.length) {
+        isActuallyFirstSlice = false;
+        continue;
+      }
+
+      if (sliceStartOffset === 0 && sliceEndOffset === 0) {
+        const adjustedEndRow = this.adjustSliceEndForMergedCells(sliceStartRow, sliceEndRow);
+        if (adjustedEndRow > sliceStartRow && adjustedEndRow < sliceEndRow) {
+          sliceEndRow = adjustedEndRow;
+          currentRow = adjustedEndRow;
+          currentRowOffset = 0;
+          sliceHeight = isContinuation ? headerHeight : 0;
+          for (let r = sliceStartRow; r < sliceEndRow; r++) {
+            if (!(isContinuation && this._rows[r].isHeader)) {
+              sliceHeight += this._rows[r].calculatedHeight;
+            }
           }
         }
       }
 
-      // Ensure we make progress (at least one data row per slice)
-      if (sliceEndRow === currentRow && currentRow < this._rows.length) {
-        // Force include at least one non-header row
-        while (sliceEndRow < this._rows.length && this._rows[sliceEndRow].isHeader) {
-          sliceEndRow++;
-        }
-        if (sliceEndRow < this._rows.length) {
-          sliceHeight += this._rows[sliceEndRow].calculatedHeight;
-          yOffset += this._rows[sliceEndRow].calculatedHeight;
-          sliceEndRow++;
-        }
-      }
+      slices.push({
+        startRow: sliceStartRow,
+        endRow: sliceEndRow,
+        startRowOffset: sliceStartOffset,
+        endRowOffset: sliceEndOffset,
+        isContinuation,
+        height: sliceHeight,
+        yOffset: sliceStartY
+      });
 
-      // Check if this slice contains any data rows
-      // (first slice should contain headers + at least one data row)
-      const hasDataRows = isActuallyFirstSlice
-        ? sliceEndRow > firstDataRowIndex
-        : sliceEndRow > currentRow;
-
-      // Only add the slice if it contains data rows
-      // (don't create header-only slices)
-      if (hasDataRows || sliceEndRow === this._rows.length) {
-        slices.push({
-          startRow: currentRow,
-          endRow: sliceEndRow,
-          isContinuation,
-          height: sliceHeight,
-          yOffset: sliceStartY
-        });
-        // Only mark as no longer first slice after we actually add one
-        isActuallyFirstSlice = false;
-      }
-
-      currentRow = sliceEndRow;
+      isActuallyFirstSlice = false;
     }
 
     return {
@@ -1462,6 +1515,20 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       }
     }
     return sliceEndRow;
+  }
+
+  private canSplitRowAcrossPages(rowIndex: number): boolean {
+    const row = this._rows[rowIndex];
+    if (!row || row.isHeader) return false;
+
+    for (let colIdx = 0; colIdx < row.cellCount; colIdx++) {
+      const cell = row.getCell(colIdx);
+      if (cell && cell.rowSpan > 1) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   /**
@@ -1532,6 +1599,13 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       // Skip header rows (already rendered above on continuation pages)
       if (slice.isContinuation && row.isHeader) continue;
 
+      const rowStartOffset = rowIdx === slice.startRow ? (slice.startRowOffset || 0) : 0;
+      const rowEndOffset = rowIdx === slice.endRow - 1 && slice.endRowOffset
+        ? slice.endRowOffset
+        : row.calculatedHeight;
+      const visibleRowHeight = Math.max(0, rowEndOffset - rowStartOffset);
+      if (visibleRowHeight <= 0) continue;
+
       // Render each cell in the row
       for (let colIdx = 0; colIdx < row.cellCount; colIdx++) {
         const key = `${rowIdx},${colIdx}`;
@@ -1546,9 +1620,12 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
           cellWidth += columnWidths[c];
         }
 
-        let cellHeight = 0;
-        for (let r = rowIdx; r < rowIdx + cell.rowSpan && r < this._rows.length; r++) {
-          cellHeight += this._rows[r].calculatedHeight;
+        let cellHeight = visibleRowHeight;
+        if (cell.rowSpan > 1) {
+          cellHeight = 0;
+          for (let r = rowIdx; r < rowIdx + cell.rowSpan && r < this._rows.length; r++) {
+            cellHeight += this._rows[r].calculatedHeight;
+          }
         }
 
         ctx.save();
@@ -1572,7 +1649,7 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
 
         ctx.restore();
       }
-      y += row.calculatedHeight;
+      y += visibleRowHeight;
     }
 
     // Render cell range selection highlight for this slice
@@ -1602,8 +1679,8 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     const x1 = columnPositions[start.col];
     const x2 = columnPositions[end.col] + columnWidths[end.col];
 
-    // Build a map of row index -> Y position in this slice's coordinate system
-    const rowYInSlice: Map<number, number> = new Map();
+    // Build a map of row index -> visible bounds in this slice's coordinate system
+    const rowBoundsInSlice: Map<number, { y: number; height: number }> = new Map();
     let y = 0;
 
     // On continuation pages, header rows are at the top
@@ -1611,7 +1688,7 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       for (const headerRowIdx of pageLayout.headerRowIndices) {
         const row = this._rows[headerRowIdx];
         if (row) {
-          rowYInSlice.set(headerRowIdx, y);
+          rowBoundsInSlice.set(headerRowIdx, { y, height: row.calculatedHeight });
           y += row.calculatedHeight;
         }
       }
@@ -1622,8 +1699,15 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
       const row = this._rows[rowIdx];
       if (!row) continue;
       if (slice.isContinuation && row.isHeader) continue; // Skip headers, already added
-      rowYInSlice.set(rowIdx, y);
-      y += row.calculatedHeight;
+      const rowStartOffset = rowIdx === slice.startRow ? (slice.startRowOffset || 0) : 0;
+      const rowEndOffset = rowIdx === slice.endRow - 1 && slice.endRowOffset
+        ? slice.endRowOffset
+        : row.calculatedHeight;
+      const visibleRowHeight = Math.max(0, rowEndOffset - rowStartOffset);
+      if (visibleRowHeight <= 0) continue;
+
+      rowBoundsInSlice.set(rowIdx, { y, height: visibleRowHeight });
+      y += visibleRowHeight;
     }
 
     // Check if any selected rows are visible in this slice
@@ -1631,13 +1715,10 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     let y2: number | null = null;
 
     for (let rowIdx = start.row; rowIdx <= end.row; rowIdx++) {
-      const rowY = rowYInSlice.get(rowIdx);
-      if (rowY !== undefined) {
-        const row = this._rows[rowIdx];
-        if (row) {
-          if (y1 === null) y1 = rowY;
-          y2 = rowY + row.calculatedHeight;
-        }
+      const rowBounds = rowBoundsInSlice.get(rowIdx);
+      if (rowBounds) {
+        if (y1 === null) y1 = rowBounds.y;
+        y2 = rowBounds.y + rowBounds.height;
       }
     }
 
@@ -1704,9 +1785,24 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     slicePosition: 'only' | 'first' | 'middle' | 'last',
     sliceIndex: number = 0,
     yOffset: number = 0,
-    headerHeight: number = 0
+    headerHeight: number = 0,
+    startRow: number = 0,
+    endRow: number = this._rows.length,
+    startRowOffset: number = 0,
+    endRowOffset: number = 0
   ): void {
-    this._renderedSlices.set(pageIndex, { position, height, slicePosition, sliceIndex, yOffset, headerHeight });
+    this._renderedSlices.set(pageIndex, {
+      position,
+      height,
+      slicePosition,
+      sliceIndex,
+      yOffset,
+      headerHeight,
+      startRow,
+      endRow,
+      startRowOffset,
+      endRowOffset
+    });
   }
 
   /**
@@ -1719,6 +1815,10 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     sliceIndex: number;
     yOffset: number;
     headerHeight: number;
+    startRow: number;
+    endRow: number;
+    startRowOffset: number;
+    endRowOffset: number;
   } | undefined {
     return this._renderedSlices.get(pageIndex);
   }

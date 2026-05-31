@@ -1538,11 +1538,7 @@ export class FlowingTextRenderer extends EventEmitter {
         const rowsToRender = table.getRowsForSlice(slice, continuation.pageLayout);
         this.renderTableCellText(table, rowsToRender, ctx, pageIndex, elementX, elementY, slice, continuation.pageLayout);
 
-        // Calculate actual slice height from the rows that were rendered
-        let actualSliceHeight = 0;
-        for (const row of rowsToRender) {
-          actualSliceHeight += row.calculatedHeight;
-        }
+        const actualSliceHeight = slice.height;
 
         // Draw selection handles with slice-specific size
         // Determine slice position: 'middle' or 'last'
@@ -1552,7 +1548,19 @@ export class FlowingTextRenderer extends EventEmitter {
         const sliceHeaderHeight = continuation.pageLayout.headerHeight;
 
         // Store slice info for hit detection
-        table.setRenderedSlice(pageIndex, { x: elementX, y: elementY }, actualSliceHeight, slicePosition, continuation.sliceIndex, sliceYOffset, sliceHeaderHeight);
+        table.setRenderedSlice(
+          pageIndex,
+          { x: elementX, y: elementY },
+          actualSliceHeight,
+          slicePosition,
+          continuation.sliceIndex,
+          sliceYOffset,
+          sliceHeaderHeight,
+          slice.startRow,
+          slice.endRow,
+          slice.startRowOffset || 0,
+          slice.endRowOffset || 0
+        );
         this.registerTableSliceHitTarget(table, pageIndex, { x: elementX, y: elementY }, actualSliceHeight);
 
         if (table.selected) {
@@ -1595,18 +1603,26 @@ export class FlowingTextRenderer extends EventEmitter {
           const rowsToRender = table.getRowsForSlice(firstSlice, pageLayout);
           this.renderTableCellText(table, rowsToRender, ctx, pageIndex, elementX, elementY, firstSlice, pageLayout);
 
-          // Calculate actual slice height from the rows that were rendered
-          let actualSliceHeight = 0;
-          for (const row of rowsToRender) {
-            actualSliceHeight += row.calculatedHeight;
-          }
+          const actualSliceHeight = firstSlice.height;
 
           // Draw selection handles with slice-specific size
           // Determine slice position for handle display
           const slicePosition = pageLayout.slices.length === 1 ? 'only' : 'first';
 
           // Store slice info for hit detection (first page: yOffset=0, no repeated header)
-          table.setRenderedSlice(pageIndex, { x: elementX, y: elementY }, actualSliceHeight, slicePosition, 0, 0, 0);
+          table.setRenderedSlice(
+            pageIndex,
+            { x: elementX, y: elementY },
+            actualSliceHeight,
+            slicePosition,
+            0,
+            firstSlice.yOffset,
+            0,
+            firstSlice.startRow,
+            firstSlice.endRow,
+            firstSlice.startRowOffset || 0,
+            firstSlice.endRowOffset || 0
+          );
           this.registerTableSliceHitTarget(table, pageIndex, { x: elementX, y: elementY }, actualSliceHeight);
 
           if (table.selected) {
@@ -1642,7 +1658,7 @@ export class FlowingTextRenderer extends EventEmitter {
           table.updateCellRenderedPositions();
 
           // Store slice info for hit detection (single page = 'only', yOffset=0, no repeated header)
-          table.setRenderedSlice(pageIndex, { x: elementX, y: elementY }, table.height, 'only', 0, 0, 0);
+          table.setRenderedSlice(pageIndex, { x: elementX, y: elementY }, table.height, 'only', 0, 0, 0, 0, table.rows.length, 0, 0);
           this.registerTableSliceHitTarget(table, pageIndex, { x: elementX, y: elementY }, table.height);
 
           ctx.save();
@@ -1676,7 +1692,7 @@ export class FlowingTextRenderer extends EventEmitter {
         table.updateCellRenderedPositions();
 
         // Store slice info for hit detection (fallback = 'only', yOffset=0, no repeated header)
-        table.setRenderedSlice(pageIndex, { x: elementX, y: elementY }, table.height, 'only', 0, 0, 0);
+        table.setRenderedSlice(pageIndex, { x: elementX, y: elementY }, table.height, 'only', 0, 0, 0, 0, table.rows.length, 0, 0);
         this.registerTableSliceHitTarget(table, pageIndex, { x: elementX, y: elementY }, table.height);
 
         ctx.save();
@@ -1795,6 +1811,14 @@ export class FlowingTextRenderer extends EventEmitter {
       // Skip header rows if already rendered
       if (renderedRowIds.has(row.id)) continue;
 
+      const rowIndex = table.rows.indexOf(row);
+      const rowStartOffset = rowIndex === slice.startRow ? (slice.startRowOffset || 0) : 0;
+      const rowEndOffset = rowIndex === slice.endRow - 1 && slice.endRowOffset
+        ? slice.endRowOffset
+        : row.calculatedHeight;
+      const visibleRowHeight = Math.max(0, rowEndOffset - rowStartOffset);
+      if (visibleRowHeight <= 0) continue;
+
       for (let colIdx = 0; colIdx < row.cellCount; colIdx++) {
         const cell = row.getCell(colIdx);
         if (!cell) continue;
@@ -1808,7 +1832,7 @@ export class FlowingTextRenderer extends EventEmitter {
         // Set cell's rendered position for text rendering
         cell.setRenderedPosition({
           x: tableX + columnPositions[colIdx],
-          y: tableY + y
+          y: tableY + y - rowStartOffset
         });
 
         // Store which page this cell was rendered on (for multi-page hit detection)
@@ -1817,19 +1841,24 @@ export class FlowingTextRenderer extends EventEmitter {
         // Update cell bounds for this slice
         cell.setBounds({
           x: columnPositions[colIdx],
-          y: y,
+          y: y - rowStartOffset,
           width: cellWidth,
           height: row.calculatedHeight
         });
 
         // Render cell text
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(tableX + columnPositions[colIdx], tableY + y, cellWidth, visibleRowHeight);
+        ctx.clip();
         this.renderRegion(cell, ctx, pageIndex, {
           renderCursor: cell.editing,
           renderSelection: cell.editing,
           clipToBounds: true
         });
+        ctx.restore();
       }
-      y += row.calculatedHeight;
+      y += visibleRowHeight;
     }
   }
 
@@ -2152,11 +2181,7 @@ export class FlowingTextRenderer extends EventEmitter {
       const rowsToRender = table.getRowsForSlice(slice, continuation.pageLayout);
       this.renderTableCellText(table, rowsToRender, ctx, pageIndex, tableX, tableY, slice, continuation.pageLayout);
 
-      // Calculate actual slice height from the rows that were rendered
-      let actualSliceHeight = 0;
-      for (const row of rowsToRender) {
-        actualSliceHeight += row.calculatedHeight;
-      }
+      const actualSliceHeight = slice.height;
 
       // Draw selection handles if selected (with slice-specific size)
       // Determine slice position: 'middle' or 'last'
@@ -2166,7 +2191,19 @@ export class FlowingTextRenderer extends EventEmitter {
       const sliceHeaderHeight = continuation.pageLayout.headerHeight;
 
       // Store slice info for hit detection
-      table.setRenderedSlice(pageIndex, { x: tableX, y: tableY }, actualSliceHeight, slicePosition, continuation.sliceIndex, sliceYOffset, sliceHeaderHeight);
+      table.setRenderedSlice(
+        pageIndex,
+        { x: tableX, y: tableY },
+        actualSliceHeight,
+        slicePosition,
+        continuation.sliceIndex,
+        sliceYOffset,
+        sliceHeaderHeight,
+        slice.startRow,
+        slice.endRow,
+        slice.startRowOffset || 0,
+        slice.endRowOffset || 0
+      );
       this.registerTableSliceHitTarget(table, pageIndex, { x: tableX, y: tableY }, actualSliceHeight);
 
       if (table.selected) {
@@ -2237,10 +2274,7 @@ export class FlowingTextRenderer extends EventEmitter {
       this.renderTableCellText(table, rowsToRender, ctx, pageIndex, tableX, tableY, slice, continuation.pageLayout);
 
       // Calculate actual slice height from the rows that were rendered
-      let actualSliceHeight = 0;
-      for (const row of rowsToRender) {
-        actualSliceHeight += row.calculatedHeight;
-      }
+      const actualSliceHeight = slice.height;
 
       totalHeight += actualSliceHeight;
 
@@ -2251,7 +2285,19 @@ export class FlowingTextRenderer extends EventEmitter {
       const sliceHeaderHeight = continuation.pageLayout.headerHeight;
 
       // Store slice info for hit detection
-      table.setRenderedSlice(pageIndex, { x: tableX, y: tableY }, actualSliceHeight, slicePosition, continuation.sliceIndex, sliceYOffset, sliceHeaderHeight);
+      table.setRenderedSlice(
+        pageIndex,
+        { x: tableX, y: tableY },
+        actualSliceHeight,
+        slicePosition,
+        continuation.sliceIndex,
+        sliceYOffset,
+        sliceHeaderHeight,
+        slice.startRow,
+        slice.endRow,
+        slice.startRowOffset || 0,
+        slice.endRowOffset || 0
+      );
       this.registerTableSliceHitTarget(table, pageIndex, { x: tableX, y: tableY }, actualSliceHeight);
 
       if (table.selected) {

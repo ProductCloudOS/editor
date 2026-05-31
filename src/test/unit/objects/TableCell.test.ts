@@ -546,6 +546,19 @@ describe('TableCell', () => {
       const formatting = restored.flowingContent.getFormattingManager().getFormattingAt(0);
       expect(formatting.fontWeight).toBe('bold');
     });
+
+    it('should serialize and restore bullet list formatting', () => {
+      cell.content = 'Bullet item';
+      cell.flowingContent.toggleBulletList();
+
+      const data = cell.toData();
+      expect(data.paragraphFormatting?.[0].formatting.listFormatting?.listType).toBe('bullet');
+
+      const restored = TableCell.fromData(data);
+      const listFormatting = restored.flowingContent.getListFormatting();
+      expect(listFormatting?.listType).toBe('bullet');
+      expect(listFormatting?.bulletStyle).toBe('disc');
+    });
   });
 
   describe('cursor events', () => {
