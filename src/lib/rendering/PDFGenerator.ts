@@ -974,8 +974,22 @@ export class PDFGenerator {
       }
     }
 
+    const isContinuationSlice = sliceInfo &&
+      sliceInfo.slicePosition !== 'first' &&
+      sliceInfo.slicePosition !== 'only';
+
     // Render each row
     for (const { row, originalIndex: rowIdx } of rowsToRender) {
+      const isRepeatedHeader = Boolean(isContinuationSlice && row.isHeader);
+      const rowStartOffset = !isRepeatedHeader && sliceInfo && rowIdx === sliceInfo.startRow
+        ? sliceInfo.startRowOffset
+        : 0;
+      const rowEndOffset = !isRepeatedHeader && sliceInfo && rowIdx === sliceInfo.endRow - 1 && sliceInfo.endRowOffset
+        ? sliceInfo.endRowOffset
+        : row.calculatedHeight;
+      const visibleRowHeight = Math.max(0, rowEndOffset - rowStartOffset);
+      if (visibleRowHeight <= 0) continue;
+
       for (let colIndex = 0; colIndex < row.cells.length; colIndex++) {
         const cell = row.cells[colIndex];
         const cellKey = `${rowIdx},${colIndex}`;
@@ -991,7 +1005,7 @@ export class PDFGenerator {
         }
 
         // For cell height, only count rows that are in our render set
-        let cellHeight = row.calculatedHeight;
+        let cellHeight = visibleRowHeight;
         if (cell.rowSpan > 1) {
           cellHeight = 0;
           for (let r = rowIdx; r < rowIdx + cell.rowSpan && r < table.rows.length; r++) {
@@ -1026,20 +1040,21 @@ export class PDFGenerator {
             const paddingV = padding.top + padding.bottom;
             const flowedPages = flowingContent.flowText(
               cellWidth - paddingH,
-              cellHeight - paddingV,
+              row.calculatedHeight - paddingV,
               ctx
             );
 
             if (flowedPages.length > 0) {
+              const fragment = this.getFlowedPageFragment(flowedPages[0], rowStartOffset, rowEndOffset);
               const contentBounds = {
                 x: cellX + padding.left,
-                y: rowY + padding.top,
+                y: rowY + padding.top - rowStartOffset + fragment.yOffset,
                 width: cellWidth - paddingH,
-                height: cellHeight - paddingV
+                height: row.calculatedHeight - paddingV
               };
               await this.renderFlowedPage(
                 pdfPage,
-                flowedPages[0],
+                fragment.page,
                 contentBounds,
                 pageHeight,
                 pageIndex,
@@ -1050,8 +1065,39 @@ export class PDFGenerator {
         }
       }
 
-      rowY += row.calculatedHeight;
+      rowY += visibleRowHeight;
     }
+  }
+
+  private getFlowedPageFragment(
+    flowedPage: FlowedPage,
+    startY: number,
+    endY: number
+  ): { page: FlowedPage; yOffset: number } {
+    const lines: FlowedLine[] = [];
+    let y = 0;
+    let yOffset = 0;
+
+    for (const line of flowedPage.lines) {
+      const lineStart = y;
+      const lineEnd = y + line.height;
+      if (lineEnd > startY && lineStart < endY) {
+        if (lines.length === 0) {
+          yOffset = lineStart;
+        }
+        lines.push(line);
+      }
+      y = lineEnd;
+    }
+
+    return {
+      page: {
+        ...flowedPage,
+        lines,
+        height: lines.reduce((sum, line) => sum + line.height, 0)
+      },
+      yOffset
+    };
   }
 
   /**
@@ -1068,6 +1114,10 @@ export class PDFGenerator {
       sliceIndex: number;
       yOffset: number;
       headerHeight: number;
+      startRow?: number;
+      endRow?: number;
+      startRowOffset?: number;
+      endRowOffset?: number;
     }
   ): { row: typeof table.rows[0]; originalIndex: number }[] {
     const result: { row: typeof table.rows[0]; originalIndex: number }[] = [];
@@ -1082,7 +1132,16 @@ export class PDFGenerator {
       }
     }
 
-    // Calculate header height
+    if (sliceInfo.startRow !== undefined && sliceInfo.endRow !== undefined) {
+      for (let i = sliceInfo.startRow; i < sliceInfo.endRow; i++) {
+        const row = table.rows[i];
+        if (row && !(isContinuation && row.isHeader)) {
+          result.push({ row, originalIndex: i });
+        }
+      }
+      return result;
+    }
+
     let headerHeight = 0;
     for (const row of table.rows) {
       if (row.isHeader) {

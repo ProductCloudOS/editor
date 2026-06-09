@@ -830,13 +830,17 @@ export class TextLayout {
           if (obj.object.objectType !== 'table' || obj.object.height <= remainingHeight) {
             return false;
           }
-          // Check if at least one data row can fit after headers
-          const table = obj.object as { getHeaderHeight?: () => number; getFirstDataRowHeight?: () => number };
+          // Check if at least a useful data-row fragment can fit after headers.
+          const table = obj.object as {
+            getHeaderHeight?: () => number;
+            getFirstDataRowHeight?: () => number;
+            getMinDataRowFragmentHeight?: () => number;
+          };
           if (table.getHeaderHeight && table.getFirstDataRowHeight) {
             const headerHeight = table.getHeaderHeight();
             const firstDataRowHeight = table.getFirstDataRowHeight();
-            // Only splittable if headers + at least one data row fit
-            return headerHeight + firstDataRowHeight <= remainingHeight;
+            const minFragmentHeight = table.getMinDataRowFragmentHeight?.() ?? firstDataRowHeight;
+            return headerHeight + Math.min(firstDataRowHeight, minFragmentHeight) <= remainingHeight;
           }
           return true; // Fall back to old behavior if methods not available
         });

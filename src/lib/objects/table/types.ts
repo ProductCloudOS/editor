@@ -3,7 +3,7 @@
  */
 
 import { BorderSide, EmbeddedObjectConfig, EmbeddedObjectData } from '../types';
-import { TextFormattingStyle } from '../../text/types';
+import { ParagraphFormatting, TextFormattingStyle } from '../../text/types';
 import type { TableCell } from './TableCell';
 
 /**
@@ -64,6 +64,7 @@ export interface TableCellData {
   fontSize?: number;
   color?: string;
   formattingRuns?: Array<[number, Partial<TextFormattingStyle>]>;
+  paragraphFormatting?: Array<{ paragraphStart: number; formatting: ParagraphFormatting }>;
   substitutionFields?: Array<unknown>;
 }
 
@@ -302,6 +303,10 @@ export interface TablePageSlice {
   startRow: number;
   /** Ending row index (exclusive) for data rows on this page */
   endRow: number;
+  /** Offset from the top of startRow where this slice begins */
+  startRowOffset?: number;
+  /** Offset from the top of the final row where this slice ends */
+  endRowOffset?: number;
   /** Whether this is a continuation page (header rows should be repeated) */
   isContinuation: boolean;
   /** Height of this slice (including repeated headers if continuation) */
