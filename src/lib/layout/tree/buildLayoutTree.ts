@@ -160,6 +160,18 @@ export function buildLayoutTree(
     const remaining = availableHeight(page.pageIndex) - page.cursorY;
     const range = lineRange(line);
 
+    // Paragraph alignment applies to block objects horizontally.
+    const alignedX = (): number => {
+      switch (line.alignment) {
+        case 'center':
+          return geometry.contentOrigin.x + (geometry.contentWidth - object.width) / 2;
+        case 'right':
+          return geometry.contentOrigin.x + (geometry.contentWidth - object.width);
+        default:
+          return geometry.contentOrigin.x;
+      }
+    };
+
     if (object instanceof TableObject) {
       // Accurate row heights before any split decision (matches the painter's
       // previous behaviour of recalculating before slicing).
@@ -206,7 +218,7 @@ export function buildLayoutTree(
           kind: 'object-slice',
           pageIndex: page.pageIndex,
           rect: {
-            x: geometry.contentOrigin.x,
+            x: alignedX(),
             y: geometry.contentOrigin.y + page.cursorY,
             width: object.width,
             height: slice.height
@@ -234,7 +246,7 @@ export function buildLayoutTree(
       kind: 'object-slice',
       pageIndex: page.pageIndex,
       rect: {
-        x: geometry.contentOrigin.x,
+        x: alignedX(),
         y: geometry.contentOrigin.y + page.cursorY,
         width: object.width,
         height: object.height

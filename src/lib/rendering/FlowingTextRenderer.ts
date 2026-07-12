@@ -3165,6 +3165,7 @@ export class FlowingTextRenderer extends EventEmitter {
     body: FlowedPage[];
     header: FlowedPage | null;
     footer: FlowedPage | null;
+    tree: LayoutTree | null;
     bodyHyperlinks?: { url: string; startIndex: number; endIndex: number }[];
     headerHyperlinks?: { url: string; startIndex: number; endIndex: number }[];
     footerHyperlinks?: { url: string; startIndex: number; endIndex: number }[];
@@ -3193,6 +3194,7 @@ export class FlowingTextRenderer extends EventEmitter {
       body: bodyPages,
       header: this.headerFlowedPage,
       footer: this.footerFlowedPage,
+      tree: this.layoutTree,
       bodyHyperlinks: bodyHyperlinks?.length ? bodyHyperlinks : undefined,
       headerHyperlinks: headerHyperlinks?.length ? headerHyperlinks : undefined,
       footerHyperlinks: footerHyperlinks?.length ? footerHyperlinks : undefined

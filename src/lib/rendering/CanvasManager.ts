@@ -5,7 +5,7 @@ import { EventEmitter } from '../events/EventEmitter';
 import { FlowingTextRenderer } from './FlowingTextRenderer';
 import { TextBoxObject, BaseEmbeddedObject } from '../objects';
 import { TableObject, TableResizeHandler } from '../objects/table';
-import { Focusable, FlowedPage } from '../text/types';
+import { Focusable } from '../text/types';
 import {
   RegionManager,
   BodyTextRegion,
@@ -2749,11 +2749,7 @@ export class CanvasManager extends EventEmitter {
   /**
    * Get a snapshot of all flowed content for PDF export.
    */
-  getFlowedPagesSnapshot(): {
-    body: FlowedPage[];
-    header: FlowedPage | null;
-    footer: FlowedPage | null;
-  } {
+  getFlowedPagesSnapshot(): ReturnType<FlowingTextRenderer['getFlowedPagesSnapshot']> {
     return this.flowingTextRenderer.getFlowedPagesSnapshot();
   }
 

@@ -12,6 +12,7 @@ import fontkit from '@pdf-lib/fontkit';
 import { Document } from '../core/Document';
 import { PDFExportOptions } from '../types';
 import { FlowedPage, FlowedLine, TextFormattingStyle } from '../text/types';
+import { LayoutTree, LayoutPage } from '../layout/tree/types';
 import { createBlobFromUint8Array } from '../utils/blob-utils';
 import {
   transformY,
@@ -42,6 +43,13 @@ export interface FlowedContentSnapshot {
   body: FlowedPage[];
   header: FlowedPage | null;
   footer: FlowedPage | null;
+  /**
+   * The layout tree from the canvas render cycle. When present, body pages
+   * are drawn from its per-page fragments so the PDF reproduces the canvas
+   * layout exactly — including table slices on continuation pages, which the
+   * legacy FlowedPage projection cannot represent.
+   */
+  tree?: LayoutTree | null;
   bodyHyperlinks?: HyperlinkInfo[];
   headerHyperlinks?: HyperlinkInfo[];
   footerHyperlinks?: HyperlinkInfo[];
@@ -129,8 +137,22 @@ export class PDFGenerator {
           );
         }
 
-        // Render body content
-        if (flowedContent?.body && flowedContent.body[pageIndex]) {
+        // Render body content. When the layout tree is available, draw from
+        // its per-page fragments so the PDF reproduces the canvas layout
+        // exactly — including table slices on continuation pages, which the
+        // legacy per-page line projection has no representation for.
+        const treePage = flowedContent?.tree?.pages[pageIndex];
+        if (treePage) {
+          await this.renderTreeBodyPage(
+            pdfPage,
+            treePage,
+            contentBounds,
+            dimensions.height,
+            pageIndex,
+            document.pages.length,
+            flowedContent?.bodyHyperlinks
+          );
+        } else if (flowedContent?.body && flowedContent.body[pageIndex]) {
           await this.renderFlowedPage(
             pdfPage,
             flowedContent.body[pageIndex],
@@ -294,6 +316,47 @@ export class PDFGenerator {
   /**
    * Render a flowed page to PDF.
    */
+  /**
+   * Draw one body page from its layout-tree fragments. Each fragment is
+   * rendered through the existing line renderer as a single-line page at the
+   * fragment's laid-out Y, so text, fields, and objects reuse the proven
+   * drawing code while positions come from the tree instead of height
+   * summation. Table fragments resolve their per-page slice via the slice
+   * records the canvas painter stored (same source as the tree), so tail
+   * slices on continuation pages are drawn — previously they were silently
+   * omitted from PDFs.
+   */
+  private async renderTreeBodyPage(
+    pdfPage: PDFPage,
+    treePage: LayoutPage,
+    bounds: { x: number; y: number; width: number; height: number },
+    pageHeight: number,
+    pageIndex: number,
+    totalPages: number,
+    hyperlinks?: HyperlinkInfo[]
+  ): Promise<void> {
+    for (const fragment of treePage.fragments) {
+      // Tail slices carry the same anchor line as the start page; the line
+      // renderer resolves the correct slice for THIS page from the table's
+      // per-page slice records.
+      const singleLinePage: FlowedPage = {
+        lines: [fragment.line],
+        height: fragment.rect.height,
+        startIndex: fragment.contentRange.start,
+        endIndex: fragment.contentRange.end
+      };
+      await this.renderFlowedPage(
+        pdfPage,
+        singleLinePage,
+        { x: bounds.x, y: fragment.rect.y, width: bounds.width, height: bounds.height },
+        pageHeight,
+        pageIndex,
+        totalPages,
+        hyperlinks
+      );
+    }
+  }
+
   private async renderFlowedPage(
     pdfPage: PDFPage,
     flowedPage: FlowedPage,
