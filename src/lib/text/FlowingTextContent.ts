@@ -15,6 +15,7 @@ import {
   SubstitutionField,
   SubstitutionFieldConfig,
   FlowedPage,
+  FlowedLine,
   RepeatingSection,
   ConditionalSection,
   OBJECT_REPLACEMENT_CHAR,
@@ -1092,6 +1093,30 @@ export class FlowingTextContent extends EventEmitter implements Focusable {
     };
 
     return this.layout.flowText(content, context);
+  }
+
+  /**
+   * Wrap the content into visual lines WITHOUT paginating — the input to the
+   * LayoutTree builder (src/lib/layout/tree), which owns pagination in the
+   * v2 architecture.
+   */
+  wrapContent(availableWidth: number, ctx: CanvasRenderingContext2D): FlowedLine[] {
+    const measurer = new TextMeasurer(ctx);
+    const content = this.textState.getText();
+
+    const context: LayoutContext = {
+      availableWidth,
+      // Pagination is not performed here; height is irrelevant to wrapping.
+      availableHeight: Number.MAX_SAFE_INTEGER,
+      measurer,
+      formatting: this.formatting,
+      paragraphFormatting: this.paragraphFormatting,
+      substitutionFields: this.substitutionFields,
+      embeddedObjects: this.embeddedObjects,
+      content
+    };
+
+    return this.layout.wrapContent(content, context);
   }
 
   /**

@@ -32,11 +32,13 @@ import {
 import { Point } from '../../types';
 
 /**
- * Vertical gap painted around block embedded objects. Matches the legacy
- * spacing constant duplicated across TextLayout/FlowingTextRenderer
- * ("+ 2" at TextLayout.ts:507 and friends).
+ * Vertical gap between a block object's final slice and the following
+ * content. Zero for now: legacy consumers still derive Y positions by
+ * summing line heights (no inter-object gap), and fragment rects must agree
+ * with that arithmetic exactly until those consumers read the tree directly
+ * (Phase 2). The inline "+ 2" spacing lives inside line metrics, not here.
  */
-export const EMBEDDED_OBJECT_SPACING = 2;
+export const EMBEDDED_OBJECT_SPACING = 0;
 
 class LayoutTreeImpl implements LayoutTree {
   constructor(public readonly pages: LayoutPage[]) {}

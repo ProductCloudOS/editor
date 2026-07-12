@@ -20,6 +20,8 @@ import { EventEmitter } from '../events/EventEmitter';
 import { BaseEmbeddedObject, TextBoxObject, TableObject } from '../objects';
 import { HitTestManager, HIT_PRIORITY } from '../hit-test';
 import { Logger } from '../utils/logger';
+import { buildLayoutTree } from '../layout/tree/buildLayoutTree';
+import { LayoutTree, ObjectSliceFragment } from '../layout/tree/types';
 
 // Control character symbols
 const CONTROL_CHAR_COLOR = '#87CEEB'; // Light blue
@@ -57,6 +59,9 @@ interface TableContinuation {
 
 export class FlowingTextRenderer extends EventEmitter {
   private document: Document;
+  // The immutable output of the layout pass — the single structure painting,
+  // hit-testing, and caret geometry derive from (docs/refactor-v2.md §3 P1).
+  private layoutTree: LayoutTree | null = null;
   private flowedPages: Map<string, FlowedPage[]> = new Map();
   private headerFlowedPage: FlowedPage | null = null;
   private footerFlowedPage: FlowedPage | null = null;
@@ -364,41 +369,44 @@ export class FlowingTextRenderer extends EventEmitter {
     ctx: CanvasRenderingContext2D,
     contentBounds: Rect
   ): void {
-    // Only flow text from the first page
     const pageIndex = this.document.pages.findIndex(p => p.id === page.id);
 
     if (pageIndex === 0) {
-      // Clear table continuations when starting a new render cycle
-      this.clearTableContinuations();
+      // Single layout pass for the render cycle: wrap the body content and
+      // build the LayoutTree. Pagination — including table slicing — happens
+      // in the tree, so pages, slices, and following-content positions are
+      // model state rather than painting side effects.
+      const body = this.document.bodyFlowingContent;
+      const lines = body.wrapContent(contentBounds.width, ctx);
+      this.layoutTree = buildLayoutTree(
+        lines,
+        {
+          contentOrigin: { x: contentBounds.x, y: contentBounds.y },
+          contentWidth: contentBounds.width,
+          availableHeightFirstPage: contentBounds.height,
+          availableHeightOtherPages: contentBounds.height
+        },
+        ctx
+      );
 
-      // This is the first page, flow all text
-      const flowedPages = this.flowTextForPage(page, ctx, contentBounds);
+      // Derive the legacy per-page structures that other consumers (cursor
+      // geometry, selection, region clicks, page management) still read.
+      // These are now projections of the tree, not independent computations.
+      const flowedPages = this.deriveFlowedPages(this.layoutTree);
       this.flowedPages.set(page.id, flowedPages);
+      this.derivePageTextOffsets(this.layoutTree, contentBounds);
 
-      // Check if we need additional pages for overflow
-      if (flowedPages.length > 1) {
-        this.emit('text-overflow', { 
-          pageId: page.id, 
+      // Request pages to match the tree's derived page requirement.
+      if (this.layoutTree.pageCount > 1) {
+        this.emit('text-overflow', {
+          pageId: page.id,
           overflowPages: flowedPages.slice(1),
-          totalPages: flowedPages.length 
+          totalPages: this.layoutTree.pageCount
         });
       }
-      
-      // Render the first flowed page
-      if (flowedPages.length > 0) {
-        this.renderFlowedPage(flowedPages[0], ctx, contentBounds, 0, this.document.bodyFlowingContent);
-      }
-    } else {
-      // For subsequent pages, get the flowed content from the first page
-      const firstPageFlowed = this.flowedPages.get(this.document.pages[0].id);
-      if (firstPageFlowed && firstPageFlowed.length > pageIndex) {
-        this.renderFlowedPage(firstPageFlowed[pageIndex], ctx, contentBounds, pageIndex, this.document.bodyFlowingContent);
-      } else {
-        // No flowed text content for this page, but check for table continuations
-        // This handles tables that span more pages than the text flow creates
-        this.renderTableContinuationsForPage(ctx, pageIndex, contentBounds);
-      }
     }
+
+    this.renderTreePage(pageIndex, ctx, contentBounds);
 
     // Render cursor if visible and on this page (only when body is active)
     // Use FlowingTextContent's isCursorVisible() for proper blink state
@@ -918,15 +926,208 @@ export class FlowingTextRenderer extends EventEmitter {
     }
   }
 
-  private flowTextForPage(
-    _page: Page,
+
+  /** The layout tree from the most recent render cycle. */
+  getLayoutTree(): LayoutTree | null {
+    return this.layoutTree;
+  }
+
+  /**
+   * Project the LayoutTree into the legacy FlowedPage[] shape still consumed
+   * by cursor geometry, selection rendering, region clicks, vertical
+   * navigation, and page management. A block object's anchor line appears
+   * once, on its start page; tail-slice-only pages have no lines (their
+   * geometry lives in the tree's fragments).
+   */
+  private deriveFlowedPages(tree: LayoutTree): FlowedPage[] {
+    return tree.pages.map(p => {
+      const lines: FlowedLine[] = [];
+      for (const f of p.fragments) {
+        if (f.kind === 'line') {
+          lines.push(f.line);
+        } else if (f.sliceIndex === 0) {
+          lines.push(f.line);
+        }
+      }
+      const first = lines[0];
+      const last = lines[lines.length - 1];
+      return {
+        lines,
+        height: p.contentHeight,
+        startIndex: first ? first.startIndex : 0,
+        endIndex: last ? last.endIndex : 0
+      };
+    });
+  }
+
+  /**
+   * Derive per-page text Y offsets from the tree. A page that starts with a
+   * table tail slice has its text pushed down by the slice height; legacy
+   * consumers compensate via getPageTextOffset. Derived at layout time —
+   * no longer a painting side effect.
+   */
+  private derivePageTextOffsets(tree: LayoutTree, bounds: Rect): void {
+    this.pageTextOffsets.clear();
+    for (const p of tree.pages) {
+      const firstFragment = p.fragments[0];
+      const firstLine = p.fragments.find(f => f.kind === 'line');
+      const startsWithTailSlice =
+        firstFragment?.kind === 'object-slice' && firstFragment.sliceIndex > 0;
+      const offset =
+        startsWithTailSlice && firstLine ? firstLine.rect.y - bounds.y : 0;
+      this.pageTextOffsets.set(p.pageIndex, offset);
+    }
+  }
+
+  /**
+   * Paint one page of the LayoutTree: each fragment at its laid-out rect.
+   * Table slices are painted directly from their fragment data — there is no
+   * render-time continuation state.
+   */
+  private renderTreePage(
+    pageIndex: number,
     ctx: CanvasRenderingContext2D,
     bounds: Rect
-  ): FlowedPage[] {
-    // Body content is document-level, not page-level
-    // The page parameter is kept for API consistency but unused
-    const flowingContent = this.document.bodyFlowingContent;
-    return flowingContent.flowText(bounds.width, bounds.height, ctx);
+  ): void {
+    const tree = this.layoutTree;
+    const treePage = tree?.pages[pageIndex];
+    if (!tree || !treePage) return;
+
+    const contentForCursor = this.document.bodyFlowingContent;
+    const hasFocus = contentForCursor?.hasFocus() ?? false;
+    const cursorTextIndex =
+      hasFocus && contentForCursor ? contentForCursor.getCursorPosition() : undefined;
+    const pageCount = tree.pageCount;
+    const hyperlinks = contentForCursor ? contentForCursor.getAllHyperlinks() : [];
+
+    // Relative objects render after all lines so they appear on top.
+    const relativeObjects: Array<{
+      object: BaseEmbeddedObject;
+      anchorX: number;
+      anchorY: number;
+    }> = [];
+
+    for (const fragment of treePage.fragments) {
+      const isTableSlice =
+        fragment.kind === 'object-slice' && fragment.object instanceof TableObject;
+
+      if (isTableSlice) {
+        this.renderTableSliceFragment(fragment, ctx, pageIndex);
+        continue;
+      }
+
+      // Line fragments and non-table block objects render through the
+      // existing line renderer at the fragment's laid-out Y.
+      const line = fragment.line;
+      if (line.embeddedObjects) {
+        for (const embeddedObj of line.embeddedObjects) {
+          if (embeddedObj.isAnchor && embeddedObj.object.position === 'relative') {
+            relativeObjects.push({
+              object: embeddedObj.object,
+              anchorX: bounds.x,
+              anchorY: fragment.rect.y
+            });
+          }
+        }
+      }
+
+      this.renderFlowedLine(
+        line,
+        ctx,
+        { x: bounds.x, y: fragment.rect.y },
+        bounds.width,
+        pageIndex,
+        cursorTextIndex,
+        pageCount,
+        hyperlinks
+      );
+    }
+
+    this.renderRelativeObjects(relativeObjects, ctx, pageIndex);
+  }
+
+  /**
+   * Paint one slice of a table from its layout fragment.
+   */
+  private renderTableSliceFragment(
+    fragment: ObjectSliceFragment,
+    ctx: CanvasRenderingContext2D,
+    pageIndex: number
+  ): void {
+    const table = fragment.object as TableObject;
+    const slice = fragment.tableSlice;
+    const pageLayout = fragment.tablePageLayout;
+    if (!slice || !pageLayout) return;
+
+    const pos = { x: fragment.rect.x, y: fragment.rect.y };
+    table.renderedPosition = pos;
+    table.renderedPageIndex = pageIndex;
+
+    if (fragment.slicePosition === 'only') {
+      // Single-page table: same painting path as the legacy fits-on-page
+      // branch (full render + per-cell region rendering).
+      table.updateCellRenderedPositions();
+      ctx.save();
+      ctx.translate(pos.x, pos.y);
+      table.render(ctx);
+      ctx.restore();
+
+      for (const row of table.rows) {
+        for (const cell of row.cells) {
+          this.renderRegion(cell, ctx, pageIndex, {
+            renderCursor: cell.editing,
+            renderSelection: cell.editing,
+            clipToBounds: true
+          });
+        }
+      }
+    } else {
+      ctx.save();
+      ctx.translate(pos.x, pos.y);
+      table.renderSlice(ctx, slice, pageLayout);
+      ctx.restore();
+
+      const rowsToRender = table.getRowsForSlice(slice, pageLayout);
+      this.renderTableCellText(
+        table,
+        rowsToRender,
+        ctx,
+        pageIndex,
+        pos.x,
+        pos.y,
+        slice,
+        pageLayout
+      );
+    }
+
+    table.setRenderedSlice(
+      pageIndex,
+      pos,
+      slice.height,
+      fragment.slicePosition,
+      fragment.sliceIndex,
+      slice.yOffset,
+      slice.isContinuation ? pageLayout.headerHeight : 0,
+      slice.startRow,
+      slice.endRow,
+      slice.startRowOffset || 0,
+      slice.endRowOffset || 0
+    );
+    this.registerTableSliceHitTarget(table, pageIndex, pos, slice.height);
+
+    if (table.selected) {
+      if (fragment.slicePosition === 'only') {
+        this.drawEmbeddedObjectHandles(ctx, table, pos);
+      } else {
+        this.drawEmbeddedObjectHandles(
+          ctx,
+          table,
+          pos,
+          { width: table.width, height: slice.height },
+          fragment.slicePosition
+        );
+      }
+    }
   }
 
   private renderFlowedPage(
@@ -936,18 +1137,9 @@ export class FlowingTextRenderer extends EventEmitter {
     pageIndex: number,
     flowingContent?: FlowingTextContent
   ): void {
+    // Body content renders via renderTreePage; this path serves header and
+    // footer regions, whose Y always starts at the region origin.
     let y = bounds.y;
-
-    // For subsequent pages, render any table continuations FIRST (before text content)
-    // This handles the case where a table spans pages AND there's text after it
-    if (pageIndex > 0 && this.tableContinuations.size > 0) {
-      const continuationHeight = this.renderTableContinuationsAtPosition(ctx, pageIndex, bounds, y);
-      y += continuationHeight;
-      // Store the offset for click handling
-      this.pageTextOffsets.set(pageIndex, continuationHeight);
-    } else {
-      this.pageTextOffsets.set(pageIndex, 0);
-    }
 
     // Get cursor position from the specified FlowingTextContent, or fall back to body
     // Only use cursor position for field selection if the content has focus
@@ -2197,190 +2389,7 @@ export class FlowingTextRenderer extends EventEmitter {
     }
   }
 
-  /**
-   * Render table continuations for a page that has no regular text flow content.
-   * This handles the case where a table spans more pages than the text flow creates.
-   */
-  private renderTableContinuationsForPage(
-    ctx: CanvasRenderingContext2D,
-    pageIndex: number,
-    contentBounds: Rect
-  ): void {
-    // Iterate through all pending continuations and render them
-    for (const [continuationKey, continuation] of this.tableContinuations.entries()) {
-      if (continuation.sliceIndex >= continuation.pageLayout.slices.length) {
-        continue;
-      }
 
-      const table = continuation.table;
-      const slice = continuation.pageLayout.slices[continuation.sliceIndex];
-
-      // Position table at top of content area for continuation pages
-      const tableX = contentBounds.x;
-      const tableY = contentBounds.y;
-
-      // Update table rendered position
-      table.renderedPosition = { x: tableX, y: tableY };
-      table.renderedPageIndex = pageIndex;
-
-      ctx.save();
-      ctx.translate(tableX, tableY);
-      table.renderSlice(ctx, slice, continuation.pageLayout);
-      ctx.restore();
-
-      // Render cell text for rows in this slice
-      const rowsToRender = table.getRowsForSlice(slice, continuation.pageLayout);
-      this.renderTableCellText(table, rowsToRender, ctx, pageIndex, tableX, tableY, slice, continuation.pageLayout);
-
-      const actualSliceHeight = slice.height;
-
-      // Draw selection handles if selected (with slice-specific size)
-      // Determine slice position: 'middle' or 'last'
-      const isLastSlice = continuation.sliceIndex === continuation.pageLayout.slices.length - 1;
-      const slicePosition = isLastSlice ? 'last' : 'middle';
-      const sliceYOffset = continuation.pageLayout.slices[continuation.sliceIndex].yOffset;
-      const sliceHeaderHeight = continuation.pageLayout.headerHeight;
-
-      // Store slice info for hit detection
-      table.setRenderedSlice(
-        pageIndex,
-        { x: tableX, y: tableY },
-        actualSliceHeight,
-        slicePosition,
-        continuation.sliceIndex,
-        sliceYOffset,
-        sliceHeaderHeight,
-        slice.startRow,
-        slice.endRow,
-        slice.startRowOffset || 0,
-        slice.endRowOffset || 0
-      );
-      this.registerTableSliceHitTarget(table, pageIndex, { x: tableX, y: tableY }, actualSliceHeight);
-
-      if (table.selected) {
-        this.drawEmbeddedObjectHandles(ctx, table, { x: tableX, y: tableY }, {
-          width: table.width,
-          height: actualSliceHeight
-        }, slicePosition);
-      }
-
-      // Update continuation for next page if there are more slices
-      if (continuation.sliceIndex + 1 < continuation.pageLayout.slices.length) {
-        this.tableContinuations.set(continuationKey, {
-          ...continuation,
-          sliceIndex: continuation.sliceIndex + 1
-        });
-
-        // Emit event to ensure we have enough pages
-        const firstPage = this.document.pages[0];
-        if (firstPage) {
-          this.emit('text-overflow', {
-            pageId: firstPage.id,
-            overflowPages: [],
-            totalPages: pageIndex + continuation.pageLayout.slices.length - continuation.sliceIndex
-          });
-        }
-      } else {
-        this.tableContinuations.delete(continuationKey);
-      }
-    }
-  }
-
-  /**
-   * Render table continuations at a specific Y position within a page.
-   * Used when there's both table continuations AND text content on the same page.
-   * Returns the total height consumed by the continuations.
-   */
-  private renderTableContinuationsAtPosition(
-    ctx: CanvasRenderingContext2D,
-    pageIndex: number,
-    contentBounds: Rect,
-    startY: number
-  ): number {
-    let totalHeight = 0;
-
-    for (const [continuationKey, continuation] of this.tableContinuations.entries()) {
-      if (continuation.sliceIndex >= continuation.pageLayout.slices.length) {
-        continue;
-      }
-
-      const table = continuation.table;
-      const slice = continuation.pageLayout.slices[continuation.sliceIndex];
-
-      // Position table at the current Y position
-      const tableX = contentBounds.x;
-      const tableY = startY + totalHeight;
-
-      // Update table rendered position
-      table.renderedPosition = { x: tableX, y: tableY };
-      table.renderedPageIndex = pageIndex;
-
-      ctx.save();
-      ctx.translate(tableX, tableY);
-      table.renderSlice(ctx, slice, continuation.pageLayout);
-      ctx.restore();
-
-      // Render cell text for rows in this slice
-      const rowsToRender = table.getRowsForSlice(slice, continuation.pageLayout);
-      this.renderTableCellText(table, rowsToRender, ctx, pageIndex, tableX, tableY, slice, continuation.pageLayout);
-
-      // Calculate actual slice height from the rows that were rendered
-      const actualSliceHeight = slice.height;
-
-      totalHeight += actualSliceHeight;
-
-      // Draw selection handles if selected
-      const isLastSlice = continuation.sliceIndex === continuation.pageLayout.slices.length - 1;
-      const slicePosition = isLastSlice ? 'last' : 'middle';
-      const sliceYOffset = continuation.pageLayout.slices[continuation.sliceIndex].yOffset;
-      const sliceHeaderHeight = continuation.pageLayout.headerHeight;
-
-      // Store slice info for hit detection
-      table.setRenderedSlice(
-        pageIndex,
-        { x: tableX, y: tableY },
-        actualSliceHeight,
-        slicePosition,
-        continuation.sliceIndex,
-        sliceYOffset,
-        sliceHeaderHeight,
-        slice.startRow,
-        slice.endRow,
-        slice.startRowOffset || 0,
-        slice.endRowOffset || 0
-      );
-      this.registerTableSliceHitTarget(table, pageIndex, { x: tableX, y: tableY }, actualSliceHeight);
-
-      if (table.selected) {
-        this.drawEmbeddedObjectHandles(ctx, table, { x: tableX, y: tableY }, {
-          width: table.width,
-          height: actualSliceHeight
-        }, slicePosition);
-      }
-
-      // Update continuation for next page if there are more slices
-      if (continuation.sliceIndex + 1 < continuation.pageLayout.slices.length) {
-        this.tableContinuations.set(continuationKey, {
-          ...continuation,
-          sliceIndex: continuation.sliceIndex + 1
-        });
-
-        // Emit event to ensure we have enough pages
-        const firstPage = this.document.pages[0];
-        if (firstPage) {
-          this.emit('text-overflow', {
-            pageId: firstPage.id,
-            overflowPages: [],
-            totalPages: pageIndex + continuation.pageLayout.slices.length - continuation.sliceIndex
-          });
-        }
-      } else {
-        this.tableContinuations.delete(continuationKey);
-      }
-    }
-
-    return totalHeight;
-  }
 
   /**
    * Draw selection border and resize handles for an embedded object.
