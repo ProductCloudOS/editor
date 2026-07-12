@@ -1,6 +1,11 @@
 # PC Editor v2 Refactor Proposal
 
-**Status:** Proposed
+**Status:** Implemented (v2.0.0) — all phases delivered except the physical
+InputController file extraction (§3 P2 organisation step), which is deferred
+until interaction E2E coverage exists; its functional payload (page-qualified
+DocPoint input, single hit-test authority) shipped. Phase P6 shipped as the
+eager-registration fix for undo content sources; the full change-record
+rework remains internal-debt for a future minor release.
 **Target:** Major version increment (v1.0.x → v2.0.0)
 **Date:** July 2026
 

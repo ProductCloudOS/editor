@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-12
+
+Architectural release. The layout, rendering, hit-testing, and interaction
+state subsystems were rebuilt around a single immutable layout structure
+(see docs/refactor-v2.md). The persisted document JSON format is unchanged
+in both directions.
+
+### Fixed
+
+- Clicking a point on page 2+ no longer selects an object at the same
+  in-page coordinates on an earlier page (hit-testing is page-qualified
+  end to end; stale per-page state is invalidated on every relayout).
+- Text can be added after a table that spans a page boundary: the caret
+  binds after the table, clicking a continuation page no longer jumps to
+  the document start, and the continuation page is no longer deleted out
+  from under the table.
+- Tables can span three or more pages (the old layout model could not
+  represent this).
+- Exported PDFs now include the continuation-page slices of page-spanning
+  tables, and text after such tables is positioned to match the canvas;
+  both are drawn from the same layout structure as the screen.
+- Typing in a table cell is recorded by undo/redo (the cell registration
+  path was never wired).
+- A text selection left in one section is no longer painted at its old
+  offsets when another section is active.
+
+### Changed
+
+- Layout is a pure pass producing an immutable per-page fragment tree;
+  the canvas painter and PDF generator both consume it. Pages are added
+  and removed synchronously inside the render cycle from the tree's
+  derived page count — the event/timeout machinery this replaces
+  (text-overflow round-trip, deferred renders, empty-page checks and
+  their suppress flags) is deleted.
+- Selection and active-section state are derived from the model on demand
+  instead of being mirrored by event listeners. A freshly initialised or
+  loaded editor reports the caret at position 0 rather than a 'none'
+  selection, and getSelectionFormatting() returns the caret's formatting.
+- addPage()/removePage() are legacy page-list mutations: the page count is
+  re-derived from content on the next render cycle, so an added empty page
+  is reconciled away (use insertPageBreak()) and removing a
+  content-required page is undone.
+
+### Removed (BREAKING)
+
+- The package no longer exports internal machinery (text model, layout,
+  regions, clipboard, PDF-import pipeline classes, EventEmitter,
+  Document/Page, and associated types). The supported surface is:
+  PCEditor; the options/events/selection/document-format types; the
+  embedded-object classes and their config types; content-facing types
+  used in PCEditor signatures; the ruler controls; all property-editor
+  panes; PDF-import option/result/error types; font-registration types.
+
 ## [0.1.0] - 2024-01-13
 
 ### Added

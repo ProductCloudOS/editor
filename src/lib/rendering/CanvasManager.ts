@@ -506,13 +506,13 @@ export class CanvasManager extends EventEmitter {
       const dispatch = (handler: (e: MouseEvent, at: DocPoint) => void) =>
         (e: MouseEvent) => {
           const at = this.docPointFromEvent(e, pageId);
-          if (at) handler.call(this, e, at);
+          if (at) handler(e, at);
         };
-      canvas.addEventListener('mousedown', dispatch(this.handleMouseDown));
-      canvas.addEventListener('mousemove', dispatch(this.handleMouseMove));
-      canvas.addEventListener('mouseup', dispatch(this.handleMouseUp));
-      canvas.addEventListener('mouseleave', dispatch(this.handleMouseLeave));
-      canvas.addEventListener('click', dispatch(this.handleClick));
+      canvas.addEventListener('mousedown', dispatch((e, at) => this.handleMouseDown(e, at)));
+      canvas.addEventListener('mousemove', dispatch((e, at) => this.handleMouseMove(e, at)));
+      canvas.addEventListener('mouseup', dispatch((e, at) => this.handleMouseUp(e, at)));
+      canvas.addEventListener('mouseleave', dispatch((e, at) => this.handleMouseLeave(e, at)));
+      canvas.addEventListener('click', dispatch((e, at) => this.handleClick(e, at)));
     });
   }
 
