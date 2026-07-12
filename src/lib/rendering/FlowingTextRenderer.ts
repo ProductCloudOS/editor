@@ -66,7 +66,6 @@ export class FlowingTextRenderer extends EventEmitter {
   private headerFlowedPage: FlowedPage | null = null;
   private footerFlowedPage: FlowedPage | null = null;
   private _focusedRegion: EditableTextRegion | null = null;
-  private selectedText: { start: number; end: number } | null = null;
   private showControlCharacters: boolean = false;
   // Track tables that continue onto subsequent pages
   private tableContinuations: Map<string, TableContinuation> = new Map();
@@ -307,6 +306,22 @@ export class FlowingTextRenderer extends EventEmitter {
     return this.document.bodyFlowingContent;
   }
 
+  /**
+   * The active section's text selection, derived from the model on demand
+   * (Phase 3c). Replaces the event-synced `selectedText` mirror, which went
+   * stale when the active section changed while a selection existed — e.g.
+   * a body selection left behind could be painted onto the header at body
+   * offsets.
+   */
+  private getActiveTextSelection(): { start: number; end: number } | null {
+    const selection = this.getActiveFlowingContent()?.getSelection();
+    if (!selection || selection.start === selection.end) return null;
+    return {
+      start: Math.min(selection.start, selection.end),
+      end: Math.max(selection.start, selection.end)
+    };
+  }
+
   private setupFlowingContentListeners(): void {
     // Listen to content changes from the document's body flowing content
     const bodyFlowingContent = this.document.bodyFlowingContent;
@@ -318,13 +333,8 @@ export class FlowingTextRenderer extends EventEmitter {
 
     bodyFlowingContent.on('selection-changed', (data) => {
       if (this.getActiveSection() === 'body') {
-        // Update the selection display
-        if (data.selection) {
-          this.setTextSelection(data.selection.start, data.selection.end);
-        } else {
-          this.clearTextSelection();
-        }
-        // Trigger a render to show the updated selection
+        // Selection display is derived from the model at render time
+        // (getActiveTextSelection); just forward so a render is triggered.
         this.emit('selection-changed', data);
       }
     });
@@ -337,11 +347,8 @@ export class FlowingTextRenderer extends EventEmitter {
 
     this.document.headerFlowingContent.on('selection-changed', (data) => {
       if (this.getActiveSection() === 'header') {
-        if (data.selection) {
-          this.setTextSelection(data.selection.start, data.selection.end);
-        } else {
-          this.clearTextSelection();
-        }
+        // Selection display is derived from the model at render time
+        // (getActiveTextSelection); just forward so a render is triggered.
         this.emit('selection-changed', data);
       }
     });
@@ -354,11 +361,8 @@ export class FlowingTextRenderer extends EventEmitter {
 
     this.document.footerFlowingContent.on('selection-changed', (data) => {
       if (this.getActiveSection() === 'footer') {
-        if (data.selection) {
-          this.setTextSelection(data.selection.start, data.selection.end);
-        } else {
-          this.clearTextSelection();
-        }
+        // Selection display is derived from the model at render time
+        // (getActiveTextSelection); just forward so a render is triggered.
         this.emit('selection-changed', data);
       }
     });
@@ -417,7 +421,7 @@ export class FlowingTextRenderer extends EventEmitter {
     }
 
     // Render selection if any (only when body is active)
-    if (this.getActiveSection() === 'body' && this.selectedText) {
+    if (this.getActiveSection() === 'body' && this.getActiveTextSelection()) {
       const flowedPagesForSelection = pageIndex === 0
         ? this.flowedPages.get(page.id)
         : this.flowedPages.get(this.document.pages[0].id);
@@ -487,7 +491,7 @@ export class FlowingTextRenderer extends EventEmitter {
         }
 
         // Render selection if any and header is active
-        if (isActive && this.selectedText) {
+        if (isActive && this.getActiveTextSelection()) {
           this.renderTextSelection(flowedPages[0], ctx, bounds);
         }
       }
@@ -549,7 +553,7 @@ export class FlowingTextRenderer extends EventEmitter {
         }
 
         // Render selection if any and footer is active
-        if (isActive && this.selectedText) {
+        if (isActive && this.getActiveTextSelection()) {
           this.renderTextSelection(flowedPages[0], ctx, bounds);
         }
       }
@@ -2583,15 +2587,16 @@ export class FlowingTextRenderer extends EventEmitter {
     ctx: CanvasRenderingContext2D,
     bounds: Rect
   ): void {
-    if (!this.selectedText) return;
+    const selectedText = this.getActiveTextSelection();
+    if (!selectedText) return;
 
     ctx.save();
     ctx.fillStyle = 'rgba(0, 100, 255, 0.3)';
 
     let y = bounds.y;
     for (const line of flowedPage.lines) {
-      if (this.lineContainsSelection(line, this.selectedText)) {
-        const selectionBounds = this.getSelectionBoundsInLine(line, this.selectedText);
+      if (this.lineContainsSelection(line, selectedText)) {
+        const selectionBounds = this.getSelectionBoundsInLine(line, selectedText);
         // Account for list indentation - must match renderFlowedLine calculation
         const listIndent = line.listMarker?.indent ?? 0;
         // Calculate alignment offset using effective width (excluding list indent)
@@ -3120,16 +3125,6 @@ export class FlowingTextRenderer extends EventEmitter {
     const alignmentOffset = this.getAlignmentOffset(line, maxWidth);
     const textX = visualX - alignmentOffset;
     return this.getTextIndexInLine(line, textX);
-  }
-
-  setTextSelection(start: number, end: number): void {
-    this.selectedText = { start: Math.min(start, end), end: Math.max(start, end) };
-    this.emit('selection-changed', this.selectedText);
-  }
-
-  clearTextSelection(): void {
-    this.selectedText = null;
-    this.emit('selection-cleared');
   }
 
   getFlowedPagesForPage(pageId: string): FlowedPage[] {
