@@ -68,6 +68,19 @@ export class TextLayout {
     if (!content) {
       return [this.createEmptyPage(context)];
     }
+    return this.paginateLines(this.wrapContent(content, context), context.availableHeight);
+  }
+
+  /**
+   * Wrap content into visual lines WITHOUT paginating. This is the input to
+   * the LayoutTree builder (src/lib/layout/tree), which owns pagination —
+   * including table slicing — in the v2 architecture.
+   */
+  wrapContent(content: string, context: LayoutContext): FlowedLine[] {
+    if (!content) {
+      const formatting = context.paragraphFormatting.getFormattingForParagraph(0);
+      return [this.createEmptyLine(0, context.formatting, formatting.alignment)];
+    }
 
     // Split content by explicit newlines and page breaks into logical lines
     const logicalLines = this.splitIntoLogicalLines(content);
@@ -134,8 +147,7 @@ export class TextLayout {
       );
     }
 
-    // Paginate the lines
-    return this.paginateLines(allLines, context.availableHeight);
+    return allLines;
   }
 
   /**
