@@ -2264,6 +2264,16 @@ export class CanvasManager extends EventEmitter {
     return this.flowingTextRenderer.getActiveSection();
   }
 
+  /** The repeating-section indicator currently selected, if any. */
+  getSelectedRepeatingSectionId(): string | null {
+    return this.selectedSectionId;
+  }
+
+  /** The conditional-section indicator currently selected, if any. */
+  getSelectedConditionalSectionId(): string | null {
+    return this.selectedConditionalSectionId;
+  }
+
   /**
    * Set the active editing section.
    * This changes which section receives keyboard input and cursor positioning.

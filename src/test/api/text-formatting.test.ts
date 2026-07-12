@@ -138,13 +138,17 @@ describe('PCEditor Text Formatting', () => {
       // This is expected behavior - the API relies on canvas interaction
     });
 
-    it('should return null when selection type is none', () => {
-      // With no cursor position set, selection is 'none'
+    it('should return the caret formatting on a fresh editor', () => {
+      // Phase 3c: selection is derived from the model, so a fresh editor
+      // reports the caret at 0 rather than 'none', and
+      // getSelectionFormatting() returns the formatting typing would use
+      // there — which is what a formatting toolbar wants to display.
       const selection = editor.getSelection();
-      expect(selection.type).toBe('none');
+      expect(selection.type).toBe('cursor');
 
       const formatting = editor.getSelectionFormatting();
-      expect(formatting).toBeNull();
+      expect(formatting).not.toBeNull();
+      expect(formatting?.fontSize).toBeGreaterThan(0);
     });
   });
 

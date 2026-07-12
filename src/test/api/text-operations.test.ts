@@ -144,9 +144,14 @@ describe('PCEditor Text Operations', () => {
   });
 
   describe('getSelection', () => {
-    it('should return none initially', () => {
+    it('should report the caret at the document start initially', () => {
+      // Phase 3c: selection is derived from the model rather than an
+      // event-synced mirror. A freshly initialised editor has the body
+      // focused with the caret at 0 (visibly blinking), so that is what
+      // getSelection() reports — 'none' was the old mirror's blind spot,
+      // not the editor's real state.
       const selection = editor.getSelection();
-      expect(selection.type).toBe('none');
+      expect(selection).toEqual({ type: 'cursor', position: 0, section: 'body' });
     });
 
     it('should return cursor type after setCursorPosition', () => {

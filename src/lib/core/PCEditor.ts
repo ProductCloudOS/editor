@@ -49,7 +49,6 @@ export class PCEditor extends EventEmitter {
   private mutationUndo!: MutationUndo;
   private _isReady: boolean = false;
   private keyboardListenerActive: boolean = false;
-  private currentSelection: EditorSelection = { type: 'none' };
   private _wasTextEditing: boolean = false;
   private _textEditingSource: 'body' | 'textbox' | 'tablecell' | null = null;
   private clipboardManager: ClipboardManager;
@@ -198,14 +197,8 @@ export class PCEditor extends EventEmitter {
         const hasSelection = flowingContent?.hasSelection() ?? false;
 
         if (!hasSelection) {
-          // Resolve the section for this selection. Active section is derived
-          // from the canvas manager — there is no local mirror to keep in sync.
-          const section = data.section || this.getActiveSection();
-          this.currentSelection = {
-            type: 'cursor',
-            position: data.textIndex,
-            section
-          };
+          // Selection state is derived from the model at read time; this
+          // event is just the trigger to notify listeners.
           this.emitSelectionChange();
         }
       }
@@ -215,14 +208,7 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.on('text-selection-changed', (data: any) => {
       // Text selection changed
       if (data.selection && data.selection.start !== data.selection.end) {
-        // Active section is derived from the canvas manager — no local mirror.
-        const section = data.section || this.getActiveSection();
-        this.currentSelection = {
-          type: 'text',
-          start: data.selection.start,
-          end: data.selection.end,
-          section
-        };
+        // Selection state is derived from the model at read time.
         this.emitSelectionChange();
       }
       // Note: cursor-changed handles the case when selection is cleared
@@ -246,10 +232,7 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.on('repeating-section-clicked', (data: any) => {
       // Repeating section clicked - update selection state
       if (data.section && data.section.id) {
-        this.currentSelection = {
-          type: 'repeating-section',
-          sectionId: data.section.id
-        };
+        // Indicator selection lives in the canvas manager; derived at read time.
         this.emitSelectionChange();
       }
     });
@@ -257,10 +240,7 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.on('conditional-section-clicked', (data: any) => {
       // Conditional section clicked - update selection state
       if (data.section && data.section.id) {
-        this.currentSelection = {
-          type: 'conditional-section',
-          sectionId: data.section.id
-        };
+        // Indicator selection lives in the canvas manager; derived at read time.
         this.emitSelectionChange();
       }
     });
@@ -540,7 +520,42 @@ export class PCEditor extends EventEmitter {
    * Returns a union type indicating text selection, element selection, or no selection.
    */
   getSelection(): EditorSelection {
-    return this.currentSelection;
+    return this.computeSelection();
+  }
+
+  /**
+   * Derive the current selection from the underlying state on demand
+   * (Phase 3c). Replaces the event-synced `currentSelection` mirror.
+   * Precedence: a selected section indicator (its state lives in the canvas
+   * manager), then the text selection or cursor of the content being edited
+   * (focused table cell / text box first, then the active section).
+   */
+  private computeSelection(): EditorSelection {
+    const repeatingId = this.canvasManager?.getSelectedRepeatingSectionId();
+    if (repeatingId) {
+      return { type: 'repeating-section', sectionId: repeatingId };
+    }
+    const conditionalId = this.canvasManager?.getSelectedConditionalSectionId();
+    if (conditionalId) {
+      return { type: 'conditional-section', sectionId: conditionalId };
+    }
+
+    const content = this.getEditingFlowingContent() || this.getActiveFlowingContent();
+    if (!content) {
+      return { type: 'none' };
+    }
+
+    const section = this.getActiveSection();
+    const selection = content.getSelection();
+    if (selection && selection.start !== selection.end) {
+      return {
+        type: 'text',
+        start: Math.min(selection.start, selection.end),
+        end: Math.max(selection.start, selection.end),
+        section
+      };
+    }
+    return { type: 'cursor', position: content.getCursorPosition(), section };
   }
 
   /**
@@ -596,7 +611,7 @@ export class PCEditor extends EventEmitter {
    */
   private emitSelectionChange(): void {
     this.emit('selection-change', {
-      selection: this.currentSelection
+      selection: this.getSelection()
     });
   }
 
@@ -673,9 +688,8 @@ export class PCEditor extends EventEmitter {
     this.document = new Document(documentData);
     this.canvasManager.setDocument(this.document);
 
-    // Reset editing state (section state lives in the canvas manager, which
-    // setDocument has already reset to body).
-    this.currentSelection = { type: 'none' };
+    // Editing state (section, selection) lives in the canvas manager and the
+    // content model; setDocument has already reset it.
 
     // Clear undo history on document load
     this.clearUndoHistory();
@@ -2015,13 +2029,6 @@ export class PCEditor extends EventEmitter {
 
     if (flowingContent) {
       flowingContent.setCursorPosition(position);
-
-      // Update currentSelection to reflect the new cursor position
-      this.currentSelection = {
-        type: 'cursor',
-        position: position,
-        section: this.getActiveSection()
-      };
       this.emitSelectionChange();
     }
   }
@@ -2032,7 +2039,7 @@ export class PCEditor extends EventEmitter {
    * or 0 if no text content is selected.
    */
   getCursorPosition(): number {
-    const selection = this.currentSelection;
+    const selection = this.getSelection();
 
     if (selection.type === 'cursor') {
       return selection.position;
@@ -2233,7 +2240,7 @@ export class PCEditor extends EventEmitter {
    * @returns The substitution field if the cursor/selection is on a field, or null
    */
   getSelectedField(): SubstitutionField | null {
-    const selection = this.currentSelection;
+    const selection = this.getSelection();
 
     if (selection.type === 'cursor') {
       return this.getFieldAt(selection.position);
@@ -3217,7 +3224,7 @@ export class PCEditor extends EventEmitter {
       return null;
     }
 
-    const selection = this.currentSelection;
+    const selection = this.getSelection();
     let position: number;
 
     if (selection.type === 'text') {
@@ -3266,7 +3273,7 @@ export class PCEditor extends EventEmitter {
       throw new Error('Editor is not ready');
     }
 
-    const selection = this.currentSelection;
+    const selection = this.getSelection();
     const flowingContent = this.getActiveFlowingContent();
     if (!flowingContent) return;
 
@@ -3289,7 +3296,7 @@ export class PCEditor extends EventEmitter {
       return 'left';
     }
 
-    const selection = this.currentSelection;
+    const selection = this.getSelection();
     const flowingContent = this.getActiveFlowingContent();
     if (!flowingContent) return 'left';
 
