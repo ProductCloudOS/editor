@@ -552,3 +552,80 @@ describe('PCEditor Undo/Redo', () => {
     });
   });
 });
+
+describe('table cell text undo (Phase 4 regression)', () => {
+  let editor: PCEditor;
+  let container: HTMLElement;
+
+  beforeEach(async () => {
+    ({ editor, container } = await createEditor());
+  });
+
+  afterEach(() => {
+    cleanupEditor(container);
+  });
+
+  function insertTable(id: string): TableObject {
+    const table = new TableObject({
+      id,
+      columns: 2,
+      rowData: [
+        { height: 30, cells: [{ content: 'A1' }, { content: 'B1' }] },
+        { height: 30, cells: [{ content: 'A2' }, { content: 'B2' }] }
+      ]
+    });
+    editor.insertEmbeddedObject(table, 'block');
+    return table;
+  }
+
+  it('records and undoes typing in a table cell', async () => {
+    // The former focus-event registration path for cells was dead (nothing
+    // emitted 'tablecell-focused'), so cell typing was never recorded and
+    // undo silently skipped it. Cells are now registered eagerly when the
+    // table is observed.
+    const table = insertTable('undo-cell-table');
+    const cell = table.getCell(0, 0)!;
+    const before = cell.flowingContent.getText();
+
+    cell.flowingContent.setCursorPosition(before.length);
+    cell.flowingContent.insertText('TYPED');
+    expect(cell.flowingContent.getText()).toBe(before + 'TYPED');
+    await nextTick();
+
+    editor.undo();
+
+    expect(cell.flowingContent.getText()).toBe(before);
+  });
+
+  it('redoes typing in a table cell', async () => {
+    const table = insertTable('redo-cell-table');
+    const cell = table.getCell(1, 1)!;
+    const before = cell.flowingContent.getText();
+
+    cell.flowingContent.setCursorPosition(before.length);
+    cell.flowingContent.insertText('X');
+    await nextTick();
+
+    editor.undo();
+    expect(cell.flowingContent.getText()).toBe(before);
+    editor.redo();
+    expect(cell.flowingContent.getText()).toBe(before + 'X');
+  });
+
+  it('records typing in a cell of a newly inserted row', async () => {
+    // Structural ops create new cells (and shift addresses); registration is
+    // refreshed after each op so the new cells are undo-tracked too.
+    const table = insertTable('newrow-cell-table');
+    editor.tableInsertRow(table, 2);
+    const newCell = table.getCell(2, 0)!;
+    const before = newCell.flowingContent.getText();
+
+    newCell.flowingContent.setCursorPosition(before.length);
+    newCell.flowingContent.insertText('NEWROW');
+    await nextTick();
+
+    editor.undo();
+
+    expect(newCell.flowingContent.getText()).toBe(before);
+  });
+});

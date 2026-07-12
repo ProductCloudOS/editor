@@ -110,55 +110,28 @@ describe('ContentDiscovery', () => {
     });
   });
 
-  describe('tablecell-focused event', () => {
-    it('should register table cell content on focus', () => {
-      const mockCell = {
-        flowingContent: new FlowingTextContent('Cell content')
-      };
-      const mockTable = { id: 'table-1' } as TableObject;
-
-      focusEventSource.emit('tablecell-focused', {
-        table: mockTable,
-        cell: mockCell,
-        row: 1,
-        col: 2
+  describe('eager cell registration (Phase 4)', () => {
+    // The former 'tablecell-focused' focus-event registration path was dead
+    // (nothing ever emitted the event). Cell content is now registered
+    // eagerly via registerObject() when a table is observed.
+    it('registerObject registers every cell of a table', () => {
+      const table = new TableObject({
+        id: 'table-1',
+        columns: 2,
+        rowData: [
+          { height: 30, cells: [{ content: 'A1' }, { content: 'B1' }] },
+          { height: 30, cells: [{ content: 'A2' }, { content: 'B2' }] }
+        ]
       });
 
-      expect(mutationObserver.isObserving(mockCell.flowingContent)).toBe(true);
-    });
+      discovery.registerObject(table);
 
-    it('should set current focus to table cell', () => {
-      const mockCell = {
-        flowingContent: new FlowingTextContent('Cell content')
-      };
-      const mockTable = { id: 'table-1' } as TableObject;
-
-      focusEventSource.emit('tablecell-focused', {
-        table: mockTable,
-        cell: mockCell,
-        row: 1,
-        col: 2
-      });
-
-      const focus = discovery.getCurrentFocus();
-      expect(focus).not.toBeNull();
-      expect(focus?.sourceId.type).toBe('tablecell');
-      expect(focus?.sourceId.objectId).toBe('table-1');
-      expect(focus?.sourceId.cellAddress).toEqual({ row: 1, col: 2 });
-    });
-
-    it('should handle cell without flowingContent', () => {
-      const mockTable = { id: 'table-1' } as TableObject;
-
-      // Should not throw
-      expect(() => {
-        focusEventSource.emit('tablecell-focused', {
-          table: mockTable,
-          cell: {},
-          row: 0,
-          col: 0
-        });
-      }).not.toThrow();
+      for (let row = 0; row < 2; row++) {
+        for (let col = 0; col < 2; col++) {
+          const cell = table.getCell(row, col)!;
+          expect(mutationObserver.isObserving(cell.flowingContent)).toBe(true);
+        }
+      }
     });
   });
 
@@ -209,26 +182,6 @@ describe('ContentDiscovery', () => {
       expect(discovery.getCurrentFocus()).not.toBeNull();
 
       focusEventSource.emit('textbox-editing-ended', {});
-      expect(discovery.getCurrentFocus()).toBeNull();
-    });
-  });
-
-  describe('table-editing-ended event', () => {
-    it('should clear current focus', () => {
-      const mockCell = {
-        flowingContent: new FlowingTextContent('Cell content')
-      };
-      const mockTable = { id: 'table-1' } as TableObject;
-
-      focusEventSource.emit('tablecell-focused', {
-        table: mockTable,
-        cell: mockCell,
-        row: 0,
-        col: 0
-      });
-      expect(discovery.getCurrentFocus()).not.toBeNull();
-
-      focusEventSource.emit('table-editing-ended', {});
       expect(discovery.getCurrentFocus()).toBeNull();
     });
   });

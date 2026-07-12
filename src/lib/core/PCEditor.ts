@@ -418,9 +418,6 @@ export class PCEditor extends EventEmitter {
     // Create ObjectMutationObserver
     this.objectMutationObserver = new ObjectMutationObserver(this.transactionManager);
 
-    // Observe all existing embedded objects
-    this.observeAllEmbeddedObjects();
-
     // Create MutationUndo
     this.mutationUndo = new MutationUndo(
       (sourceId) => this.transactionManager.getContent(sourceId),
@@ -452,10 +449,10 @@ export class PCEditor extends EventEmitter {
       this.canvasManager as any // Cast to FocusEventSource
     );
 
-    // Log initialization success (also ensures _contentDiscovery is "used")
-    if (this._contentDiscovery) {
-      // ContentDiscovery is active and listening for focus events
-    }
+    // Observe all existing embedded objects — AFTER ContentDiscovery exists,
+    // so their inner text content (table cells, text boxes) is registered
+    // with the undo system too (Phase 4).
+    this.observeAllEmbeddedObjects();
   }
 
   /**
@@ -484,19 +481,14 @@ export class PCEditor extends EventEmitter {
    * Observe all embedded objects for undo/redo tracking.
    */
   private observeAllEmbeddedObjects(): void {
-    // Observe body objects
     for (const [, obj] of this.document.bodyFlowingContent.getEmbeddedObjects()) {
-      this.objectMutationObserver.observe(obj);
+      this.observeEmbeddedObject(obj);
     }
-
-    // Observe header objects
     for (const [, obj] of this.document.headerFlowingContent.getEmbeddedObjects()) {
-      this.objectMutationObserver.observe(obj);
+      this.observeEmbeddedObject(obj);
     }
-
-    // Observe footer objects
     for (const [, obj] of this.document.footerFlowingContent.getEmbeddedObjects()) {
-      this.objectMutationObserver.observe(obj);
+      this.observeEmbeddedObject(obj);
     }
   }
 
@@ -506,6 +498,14 @@ export class PCEditor extends EventEmitter {
   private observeEmbeddedObject(object: BaseEmbeddedObject): void {
     if (this.objectMutationObserver) {
       this.objectMutationObserver.observe(object);
+    }
+    // Register the object's inner text content (text-box content, every
+    // table cell) with the undo system (Phase 4). The old focus-event
+    // registration path for cells was dead — nothing ever emitted
+    // 'tablecell-focused' — so typing in a table cell was never recorded
+    // and could not be undone.
+    if (this._contentDiscovery) {
+      this._contentDiscovery.registerObject(object);
     }
   }
 
@@ -2546,6 +2546,8 @@ export class PCEditor extends EventEmitter {
   tableInsertRow(table: TableObject, rowIndex: number, config?: TableRowConfig): void {
     if (!this._isReady) return;
     table.insertRow(rowIndex, config);
+    // Register new cells / refresh shifted cell addresses with the undo system
+    this._contentDiscovery.registerObject(table);
     this.canvasManager.render();
   }
 
@@ -2558,6 +2560,7 @@ export class PCEditor extends EventEmitter {
   tableRemoveRow(table: TableObject, rowIndex: number): void {
     if (!this._isReady) return;
     table.removeRow(rowIndex);
+    this._contentDiscovery.registerObject(table);
     this.canvasManager.render();
   }
 
@@ -2571,6 +2574,7 @@ export class PCEditor extends EventEmitter {
   tableInsertColumn(table: TableObject, colIndex: number, width?: number): void {
     if (!this._isReady) return;
     table.insertColumn(colIndex, width);
+    this._contentDiscovery.registerObject(table);
     this.canvasManager.render();
   }
 
@@ -2583,6 +2587,7 @@ export class PCEditor extends EventEmitter {
   tableRemoveColumn(table: TableObject, colIndex: number): void {
     if (!this._isReady) return;
     table.removeColumn(colIndex);
+    this._contentDiscovery.registerObject(table);
     this.canvasManager.render();
   }
 
@@ -2597,6 +2602,7 @@ export class PCEditor extends EventEmitter {
     if (!this._isReady) return false;
     const result = table.mergeCells();
     if (result.success) {
+      this._contentDiscovery.registerObject(table);
       this.canvasManager.render();
     }
     return result.success;
@@ -2614,6 +2620,7 @@ export class PCEditor extends EventEmitter {
     if (!this._isReady) return false;
     const result = table.splitCell(row, col);
     if (result.success) {
+      this._contentDiscovery.registerObject(table);
       this.canvasManager.render();
     }
     return result.success;
