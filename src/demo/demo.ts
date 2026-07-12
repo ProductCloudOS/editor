@@ -1,4 +1,6 @@
-import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, EditingSection, HorizontalRuler, VerticalRuler, Logger } from '../lib';
+import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, EditingSection, HorizontalRuler, VerticalRuler } from '../lib';
+// Logger is internal to the library; the in-repo demo deep-imports it.
+import { Logger } from '../lib/utils/logger';
 
 // Import library panes
 import {

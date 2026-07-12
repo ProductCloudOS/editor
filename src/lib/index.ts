@@ -1,65 +1,30 @@
+/**
+ * @productcloudos/editor — public API surface.
+ *
+ * v2.0.0 deliberately narrows this surface to the supported contract
+ * (docs/refactor-v2.md §4): the editor class, the optional UI modules
+ * (panes and rulers), the embedded-object classes consumers type-check
+ * against, and the document/serialisation types. Internal machinery —
+ * layout, rendering, text model, regions, undo, clipboard — is no longer
+ * exported; it is not part of the compatibility contract and changes
+ * without notice.
+ */
+
+// The editor
 export { PCEditor } from './core/PCEditor';
 
+// Public types: options, events, selection, document/serialisation format
 export * from './types';
 
-export { Document } from './core/Document';
-export { Page } from './core/Page';
-
-export { EventEmitter } from './events/EventEmitter';
-
-// Text module exports
-export {
-  FlowingTextContent,
-  TextState,
-  TextFormattingManager,
-  SubstitutionFieldManager,
-  EmbeddedObjectManager,
-  RepeatingSectionManager,
-  ConditionalSectionManager,
-  PredicateEvaluator,
-  TextMeasurer,
-  TextLayout,
-  TextPositionCalculator,
-  BaseTextRegion,
-  RegionManager,
-  BodyTextRegion,
-  HeaderTextRegion,
-  FooterTextRegion
-} from './text';
-
-export type {
-  TextFormattingStyle,
-  TextRun,
-  SubstitutionField,
-  SubstitutionFieldConfig,
-  RepeatingSection,
-  RepeatingSectionVisualState,
-  ConditionalSection,
-  ConditionalSectionVisualState,
-  FlowedLine,
-  FlowedPage,
-  FlowedSubstitutionField,
-  FlowedEmbeddedObject,
-  ObjectPosition,
-  TextAlignment,
-  ParagraphFormatting,
-  EditableTextRegion,
-  RegionType,
-  LineAtYResult,
-  PageBoundsProvider,
-  HeaderBoundsProvider,
-  FooterBoundsProvider
-} from './text';
-
-// Objects module exports
+// Embedded object classes (returned by selection/focus APIs; instanceof
+// checks in hosts) and their configuration/serialisation types
 export {
   BaseEmbeddedObject,
   ImageObject,
   TextBoxObject,
   TableObject,
   TableRow,
-  TableCell,
-  EmbeddedObjectFactory
+  TableCell
 } from './objects';
 
 export type {
@@ -73,34 +38,26 @@ export type {
   TableColumnConfig,
   CellAddress,
   CellRange,
-  ResizeHandle,
-  Size,
-  Point,
-  Rect,
   ImageFitMode
 } from './objects';
 
-// Clipboard module exports
-export {
-  ClipboardManager,
-  HtmlConverter
-} from './clipboard';
-
+// Content-facing types used in PCEditor method signatures
 export type {
-  ClipboardContent,
-  ClipboardReadResult,
-  PCEditorClipboardData,
-  ClipboardContentType,
-  CopyOptions,
-  PasteOptions
-} from './clipboard';
+  TextFormattingStyle,
+  SubstitutionField,
+  SubstitutionFieldConfig,
+  RepeatingSection,
+  ConditionalSection,
+  ObjectPosition,
+  TextAlignment,
+  ParagraphFormatting
+} from './text';
 
-// Controls module exports (optional components)
+// Optional ruler controls
 export {
   BaseControl,
   HorizontalRuler,
-  VerticalRuler,
-  RulerControl
+  VerticalRuler
 } from './controls';
 
 export type {
@@ -109,11 +66,10 @@ export type {
   ControlOptions,
   Units,
   RulerOptions,
-  RulerOrientation,
-  TickMark
+  RulerOrientation
 } from './controls';
 
-// Panes module exports (optional property editor components)
+// Optional property-editor panes
 export {
   BasePane,
   DocumentInfoPane,
@@ -157,37 +113,14 @@ export type {
   TablePaneOptions
 } from './panes';
 
-// PDF Import module exports
-export {
-  PDFImporter,
-  PDFParser,
-  ContentAnalyzer,
-  DocumentBuilder,
-  PDFImportError,
-  PDFImportErrorCode,
-  DEFAULT_IMPORT_OPTIONS
-} from './import';
-
+// PDF import: the pipeline runs behind PCEditor.importPDF; only the option,
+// progress/result, and error types are part of the contract
+export { PDFImportError, PDFImportErrorCode, DEFAULT_IMPORT_OPTIONS } from './import';
 export type {
   PDFImportProgress,
   PDFImportResult,
-  PDFImportOptions,
-  PDFExtractedContent,
-  PDFExtractedPage,
-  PDFTextItem,
-  PDFImage,
-  PDFMetadata,
-  AnalyzedContent,
-  AnalyzedParagraph,
-  AnalyzedImage,
-  AnalyzedTable,
-  FormattingRun,
-  PageInfo
+  PDFImportOptions
 } from './import';
 
-// Font management
-export { FontManager } from './fonts';
+// Font registration types (PCEditor.registerFont)
 export type { RegisterFontOptions, FontRegistration, FontVariant } from './fonts';
-
-// Utilities
-export { Logger } from './utils/logger';
