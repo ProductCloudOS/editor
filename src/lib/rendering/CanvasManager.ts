@@ -42,7 +42,6 @@ export class CanvasManager extends EventEmitter {
   private textSelectionStartPageId: string | null = null;
   private selectedSectionId: string | null = null;
   private selectedConditionalSectionId: string | null = null;
-  private _activeSection: EditingSection = 'body';
   private lastClickTime: number = 0;
   private lastClickPosition: Point | null = null;
   private clickCount: number = 0;
@@ -152,7 +151,6 @@ export class CanvasManager extends EventEmitter {
     this.updateCanvasScale(); // Apply current zoom to newly created canvases
 
     // Reset editing state
-    this._activeSection = 'body';
     this.selectedElements.clear();
     this.editingTextBox = null;
     this._editingTextBoxPageId = null;
@@ -220,7 +218,7 @@ export class CanvasManager extends EventEmitter {
 
       // Render header content
       const headerRegion = this.regionManager.getHeaderRegion();
-      this.flowingTextRenderer.renderHeaderText(page, ctx, this._activeSection === 'header', headerRegion ?? undefined, pageIndex);
+      this.flowingTextRenderer.renderHeaderText(page, ctx, this.getActiveSection() === 'header', headerRegion ?? undefined, pageIndex);
 
       // Render body (flowing text content)
       const contentBounds = page.getContentBounds();
@@ -234,7 +232,7 @@ export class CanvasManager extends EventEmitter {
 
       // Render footer content
       const footerRegion = this.regionManager.getFooterRegion();
-      this.flowingTextRenderer.renderFooterText(page, ctx, this._activeSection === 'footer', footerRegion ?? undefined, pageIndex);
+      this.flowingTextRenderer.renderFooterText(page, ctx, this.getActiveSection() === 'footer', footerRegion ?? undefined, pageIndex);
 
       // Render repeating section indicators (only in body)
       // Always get sections from the first page's flowingContent since body text flows from page 0
@@ -309,17 +307,17 @@ export class CanvasManager extends EventEmitter {
     const footerHeight = pageDimensions.height - footerY;
 
     // Draw overlay on header if not active
-    if (this._activeSection !== 'header') {
+    if (this.getActiveSection() !== 'header') {
       ctx.fillRect(0, 0, pageDimensions.width, headerHeight);
     }
 
     // Draw overlay on body if not active
-    if (this._activeSection !== 'body') {
+    if (this.getActiveSection() !== 'body') {
       ctx.fillRect(0, headerHeight, pageDimensions.width, contentBounds.size.height);
     }
 
     // Draw overlay on footer if not active
-    if (this._activeSection !== 'footer') {
+    if (this.getActiveSection() !== 'footer') {
       ctx.fillRect(0, footerY, pageDimensions.width, footerHeight);
     }
 
@@ -602,7 +600,7 @@ export class CanvasManager extends EventEmitter {
 
       // If object is in a different section, switch to that section first
       const objectSection = this.getSectionForEmbeddedObject(object);
-      if (objectSection && objectSection !== this._activeSection) {
+      if (objectSection && objectSection !== this.getActiveSection()) {
         this.setActiveSection(objectSection);
       }
 
@@ -642,7 +640,7 @@ export class CanvasManager extends EventEmitter {
             // Emit selection changed event
             this.emit('text-selection-changed', {
               selection: flowingContentForSection.getSelection(),
-              section: this._activeSection
+              section: this.getActiveSection()
             });
             this.isSelectingText = true;
             this.textSelectionStartPageId = pageId;
@@ -1129,7 +1127,7 @@ export class CanvasManager extends EventEmitter {
 
       // If object is in a different section, switch to that section first
       const objectSection = this.getSectionForEmbeddedObject(clickedObject);
-      if (objectSection && objectSection !== this._activeSection) {
+      if (objectSection && objectSection !== this.getActiveSection()) {
         this.setActiveSection(objectSection);
       }
 
@@ -1258,7 +1256,7 @@ export class CanvasManager extends EventEmitter {
     if (ctx && pageIndex >= 0 && page) {
       // Detect which section was clicked and update active section
       const targetSection = this.getSectionAtPoint(point, page);
-      if (targetSection !== this._activeSection) {
+      if (targetSection !== this.getActiveSection()) {
         this.setActiveSection(targetSection);
       }
 
@@ -1305,7 +1303,7 @@ export class CanvasManager extends EventEmitter {
    * Get the EditableTextRegion for the currently active section.
    */
   private getRegionForActiveSection() {
-    switch (this._activeSection) {
+    switch (this.getActiveSection()) {
       case 'header':
         return this.regionManager.getHeaderRegion();
       case 'footer':
@@ -1320,7 +1318,7 @@ export class CanvasManager extends EventEmitter {
    * Get the FlowingTextContent for the currently active section.
    */
   getFlowingContentForActiveSection(): FlowingTextContent | null {
-    switch (this._activeSection) {
+    switch (this.getActiveSection()) {
       case 'header':
         return this.document.headerFlowingContent;
       case 'footer':
@@ -2260,7 +2258,10 @@ export class CanvasManager extends EventEmitter {
    * Get the currently active editing section.
    */
   getActiveSection(): EditingSection {
-    return this._activeSection;
+    // Derived from the renderer's focused region — the single source of truth
+    // for which section is active (Phase 3b). setFocusedRegion is only ever
+    // called with body/header/footer regions, so this is always one of those.
+    return this.flowingTextRenderer.getActiveSection();
   }
 
   /**
@@ -2269,11 +2270,10 @@ export class CanvasManager extends EventEmitter {
    * Uses the unified focus system for cursor blink management.
    */
   setActiveSection(section: EditingSection): void {
-    if (this._activeSection !== section) {
-      const previousSection = this._activeSection;
-      this._activeSection = section;
-
-      // Get the appropriate region and set it as focused
+    const previousSection = this.getActiveSection();
+    if (previousSection !== section) {
+      // Get the appropriate region and set it as focused. The focused region
+      // is the source of truth that getActiveSection() derives from.
       let region = null;
       if (section === 'body') {
         region = this.regionManager.getBodyRegion();
@@ -2440,7 +2440,7 @@ export class CanvasManager extends EventEmitter {
 
     const targetSection = this.getSectionAtPoint(point, page);
 
-    if (targetSection !== this._activeSection) {
+    if (targetSection !== this.getActiveSection()) {
       this.setActiveSection(targetSection);
     }
 
@@ -2477,7 +2477,7 @@ export class CanvasManager extends EventEmitter {
       activeFlowingContent.selectWord();
       this.emit('text-selection-changed', {
         selection: activeFlowingContent.getSelection(),
-        section: this._activeSection
+        section: this.getActiveSection()
       });
       this.render();
     }
@@ -2513,7 +2513,7 @@ export class CanvasManager extends EventEmitter {
       flowingContent.selectParagraph();
       this.emit('text-selection-changed', {
         selection: flowingContent.getSelection(),
-        section: this._activeSection
+        section: this.getActiveSection()
       });
       this.render();
     }
