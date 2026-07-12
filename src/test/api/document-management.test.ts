@@ -73,8 +73,10 @@ describe('PCEditor Document Management', () => {
 
       editor.loadDocument(minimalDocument);
 
+      // Phase 3c: selection is derived from the model. A freshly loaded
+      // document has the body focused with the caret reset to 0.
       const selection = editor.getSelection();
-      expect(selection.type).toBe('none');
+      expect(selection).toEqual({ type: 'cursor', position: 0, section: 'body' });
     });
 
     it('should clear undo history when loading document', () => {

@@ -64,7 +64,7 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
   // Layout state (set by parent table during layout calculation)
   private _bounds: Rect | null = null;           // Position within table (local)
   private _renderedPosition: Point | null = null; // Global position on canvas
-  private _renderedPageIndex: number = 0;        // Page index where cell was rendered
+  private _renderedPageIndex: number = -1;       // Page index where cell was rendered (-1 = not yet rendered)
 
   // Editing state
   private _editing: boolean = false;
@@ -352,8 +352,16 @@ export class TableCell extends EventEmitter implements EditableTextRegion, Focus
   /**
    * Get the bounds of this cell's text area in canvas coordinates.
    */
-  getRegionBounds(_pageIndex: number): Rect | null {
+  getRegionBounds(pageIndex: number): Rect | null {
     if (!this._renderedPosition || !this._bounds) return null;
+
+    // The rendered position is only valid for the page the cell was last
+    // painted on — page-local coordinates overlap across pages, so answering
+    // for a different page resolves cursor/hit queries against the wrong
+    // page (e.g. a page-1 cell capturing clicks made on page 2).
+    if (this._renderedPageIndex >= 0 && this._renderedPageIndex !== pageIndex) {
+      return null;
+    }
 
     const borderLeft = this._border.left.style !== 'none' ? this._border.left.width : 0;
     const borderTop = this._border.top.style !== 'none' ? this._border.top.width : 0;

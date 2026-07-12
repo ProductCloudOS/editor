@@ -34,6 +34,13 @@ export interface FocusEventSource extends EventEmitter {
 /**
  * ContentDiscovery manages automatic content registration.
  */
+/*
+ * Phase 4 note: table-cell and text-box contents are registered EAGERLY by
+ * PCEditor.observeEmbeddedObject via registerObject() — the former
+ * 'tablecell-focused'/'table-editing-ended' focus-event listeners were dead
+ * (nothing ever emitted those events), which meant typing in a table cell
+ * was never recorded for undo.
+ */
 export class ContentDiscovery {
   private mutationObserver: TextMutationObserver;
   private document: DocumentProvider;
@@ -77,24 +84,6 @@ export class ContentDiscovery {
    * Set up tracking for dynamic content (tables, text boxes).
    */
   private setupFocusTracking(): void {
-    // When a table cell gains focus, register its content
-    this.focusEventSource.on('tablecell-focused', (data: {
-      table: TableObject;
-      cell: any;
-      row: number;
-      col: number;
-    }) => {
-      if (data.cell && 'flowingContent' in data.cell) {
-        const content = data.cell.flowingContent as FlowingTextContent;
-        const sourceId: ContentSourceId = {
-          type: 'tablecell',
-          objectId: data.table.id,
-          cellAddress: { row: data.row, col: data.col }
-        };
-        this.registerContent(content, sourceId);
-        this.setCurrentFocus(content, sourceId);
-      }
-    });
 
     // When a text box gains focus, register its content
     this.focusEventSource.on('textbox-editing-started', (data: { textBox: TextBoxObject }) => {
@@ -115,9 +104,6 @@ export class ContentDiscovery {
     });
 
     // When table editing ends, clear focus
-    this.focusEventSource.on('table-editing-ended', () => {
-      this.clearCurrentFocus();
-    });
 
     // Track section focus changes
     this.focusEventSource.on('section-focused', (data: { section: 'body' | 'header' | 'footer' }) => {

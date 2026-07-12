@@ -68,6 +68,19 @@ export class TextLayout {
     if (!content) {
       return [this.createEmptyPage(context)];
     }
+    return this.paginateLines(this.wrapContent(content, context), context.availableHeight);
+  }
+
+  /**
+   * Wrap content into visual lines WITHOUT paginating. This is the input to
+   * the LayoutTree builder (src/lib/layout/tree), which owns pagination —
+   * including table slicing — in the v2 architecture.
+   */
+  wrapContent(content: string, context: LayoutContext): FlowedLine[] {
+    if (!content) {
+      const formatting = context.paragraphFormatting.getFormattingForParagraph(0);
+      return [this.createEmptyLine(0, context.formatting, formatting.alignment)];
+    }
 
     // Split content by explicit newlines and page breaks into logical lines
     const logicalLines = this.splitIntoLogicalLines(content);
@@ -120,8 +133,21 @@ export class TextLayout {
       globalIndex = lineEndIndex + (delimiter !== 'end' ? 1 : 0);
     }
 
-    // Paginate the lines
-    return this.paginateLines(allLines, context.availableHeight);
+    // A document that ends with a block object still needs a caret home
+    // after it — a block-object line spans [T, T+1] and index T+1 ("after
+    // the object") must have a real line to bind to, otherwise the caret can
+    // only attach to the object's own line and nothing can be typed after a
+    // document-final table.
+    const lastLine = allLines[allLines.length - 1];
+    if (lastLine?.isBlockObjectLine) {
+      const trailingFormatting =
+        context.paragraphFormatting.getFormattingForParagraph(lastLine.endIndex);
+      allLines.push(
+        this.createEmptyLine(lastLine.endIndex, context.formatting, trailingFormatting.alignment)
+      );
+    }
+
+    return allLines;
   }
 
   /**

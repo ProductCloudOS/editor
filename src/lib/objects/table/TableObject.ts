@@ -1278,6 +1278,9 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
             x: this._renderedPosition.x + columnPositions[colIdx],
             y: this._renderedPosition.y + y
           });
+          // Cell positions are page-local; hit queries validate against the
+          // page, so the cells must carry the same page as the table.
+          cell.renderedPageIndex = this._renderedPageIndex;
         }
       }
       y += row.calculatedHeight;
@@ -1298,6 +1301,11 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     availableHeightFirstPage: number,
     availableHeightOtherPages: number
   ): TablePageLayout {
+    // A new layout invalidates every previously rendered slice. Without this,
+    // slice records accumulate across relayouts and pages the table no longer
+    // occupies keep answering hit queries for it (T20 recurrence).
+    this._renderedSlices.clear();
+
     const headerHeight = this.getHeaderHeight();
     const headerRowIndices = this.getHeaderRowIndices();
     const totalHeight = this._size.height;
@@ -1828,6 +1836,39 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
    */
   clearRenderedSlices(): void {
     this._renderedSlices.clear();
+  }
+
+  /**
+   * Resolve a page-local point against this table's slice on the given page.
+   * Returns table-local coordinates (full-table space, suitable for
+   * getCellAtPoint), or null when the point is outside the slice on that
+   * page. Continuation slices are transformed for the repeated header and
+   * the slice's row offset. This is the single point-in-table authority —
+   * page-qualified by construction.
+   */
+  getLocalPointInSlice(pageIndex: number, point: Point): Point | null {
+    const slice = this._renderedSlices.get(pageIndex);
+    const position = slice?.position ??
+      (this._renderedPageIndex === pageIndex ? this._renderedPosition : null);
+    if (!position) return null;
+
+    const height = slice?.height ?? this._size.height;
+    if (
+      point.x < position.x || point.x > position.x + this._size.width ||
+      point.y < position.y || point.y > position.y + height
+    ) {
+      return null;
+    }
+
+    const local = { x: point.x - position.x, y: point.y - position.y };
+    if (slice && (slice.slicePosition === 'middle' || slice.slicePosition === 'last')) {
+      if (local.y >= slice.headerHeight) {
+        // Below the repeated header: transform into full-table row space.
+        local.y = slice.yOffset + (local.y - slice.headerHeight);
+      }
+      // Within the repeated header no adjustment is needed.
+    }
+    return local;
   }
 
   /**

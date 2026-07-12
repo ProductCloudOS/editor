@@ -13,7 +13,6 @@ import { EventEmitter } from '../events/EventEmitter';
 import { CanvasManager } from '../rendering/CanvasManager';
 import { DataBinder } from '../data/DataBinder';
 import { PDFGenerator } from '../rendering/PDFGenerator';
-import { LayoutEngine } from '../layout/LayoutEngine';
 import { BaseEmbeddedObject, ObjectPosition, TextBoxObject, TableObject, ImageObject, TableRowConfig, EmbeddedObjectFactory, EmbeddedObjectData } from '../objects';
 import { SubstitutionFieldConfig, TextFormattingStyle, SubstitutionField, RepeatingSection, ConditionalSection, FlowingTextContent, TextAlignment, Focusable } from '../text';
 import { PredicateEvaluator } from '../text/PredicateEvaluator';
@@ -42,7 +41,6 @@ export class PCEditor extends EventEmitter {
   private dataBinder: DataBinder;
   private pdfGenerator: PDFGenerator;
   private fontManager: FontManager;
-  private layoutEngine!: LayoutEngine;
   // Transaction-based undo system
   private transactionManager!: TransactionManager;
   private textMutationObserver!: TextMutationObserver;
@@ -51,8 +49,6 @@ export class PCEditor extends EventEmitter {
   private mutationUndo!: MutationUndo;
   private _isReady: boolean = false;
   private keyboardListenerActive: boolean = false;
-  private currentSelection: EditorSelection = { type: 'none' };
-  private _activeEditingSection: EditingSection = 'body';
   private _wasTextEditing: boolean = false;
   private _textEditingSource: 'body' | 'textbox' | 'tablecell' | null = null;
   private clipboardManager: ClipboardManager;
@@ -107,11 +103,6 @@ export class PCEditor extends EventEmitter {
     try {
       this.setupContainer();
       this.canvasManager = new CanvasManager(this.container, this.document, this.options);
-      this.layoutEngine = new LayoutEngine(this.document, {
-        autoFlow: true,
-        snapToGrid: this.options.showGrid,
-        gridSize: this.options.gridSize
-      });
 
       this.canvasManager.initialize();
       this.setupEventListeners();
@@ -153,11 +144,9 @@ export class PCEditor extends EventEmitter {
       // 3. Check if pages need to be added/removed
       if (this.canvasManager) {
         this.canvasManager.updateCanvasSizes();
+        // The render cycle reconciles the page count itself (Phase 3d);
+        // no deferred page check is needed.
         this.canvasManager.render();
-        // Defer the page check to allow reflow to complete
-        setTimeout(() => {
-          this.canvasManager.checkForEmptyPages();
-        }, 50);
       }
       // Forward to external controls (rulers)
       this.emit('settings-changed');
@@ -176,22 +165,6 @@ export class PCEditor extends EventEmitter {
       this.emit('element-removed', data);
     });
 
-    // Layout engine events
-    this.layoutEngine.on('page-added', (data: any) => {
-      this.canvasManager.setDocument(this.document);
-      this.emit('page-added', data);
-    });
-
-    this.layoutEngine.on('page-break-created', (data: any) => {
-      this.canvasManager.setDocument(this.document);
-      this.emit('page-break-created', data);
-    });
-
-    this.layoutEngine.on('layout-complete', (data: any) => {
-      this.canvasManager.render();
-      this.emit('layout-complete', data);
-    });
-    
     // Flowing text events
     this.canvasManager.on('text-clicked', (data: any) => {
       this.enableTextInput();
@@ -222,16 +195,8 @@ export class PCEditor extends EventEmitter {
         const hasSelection = flowingContent?.hasSelection() ?? false;
 
         if (!hasSelection) {
-          // Update active editing section if provided in the event
-          const section = data.section || this._activeEditingSection;
-          if (section !== this._activeEditingSection) {
-            this._activeEditingSection = section;
-          }
-          this.currentSelection = {
-            type: 'cursor',
-            position: data.textIndex,
-            section
-          };
+          // Selection state is derived from the model at read time; this
+          // event is just the trigger to notify listeners.
           this.emitSelectionChange();
         }
       }
@@ -241,17 +206,7 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.on('text-selection-changed', (data: any) => {
       // Text selection changed
       if (data.selection && data.selection.start !== data.selection.end) {
-        // Update active editing section if provided in the event
-        const section = data.section || this._activeEditingSection;
-        if (section !== this._activeEditingSection) {
-          this._activeEditingSection = section;
-        }
-        this.currentSelection = {
-          type: 'text',
-          start: data.selection.start,
-          end: data.selection.end,
-          section
-        };
+        // Selection state is derived from the model at read time.
         this.emitSelectionChange();
       }
       // Note: cursor-changed handles the case when selection is cleared
@@ -275,10 +230,7 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.on('repeating-section-clicked', (data: any) => {
       // Repeating section clicked - update selection state
       if (data.section && data.section.id) {
-        this.currentSelection = {
-          type: 'repeating-section',
-          sectionId: data.section.id
-        };
+        // Indicator selection lives in the canvas manager; derived at read time.
         this.emitSelectionChange();
       }
     });
@@ -286,21 +238,16 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.on('conditional-section-clicked', (data: any) => {
       // Conditional section clicked - update selection state
       if (data.section && data.section.id) {
-        this.currentSelection = {
-          type: 'conditional-section',
-          sectionId: data.section.id
-        };
+        // Indicator selection lives in the canvas manager; derived at read time.
         this.emitSelectionChange();
       }
     });
 
-    // Listen for section focus changes from CanvasManager (double-click)
+    // Listen for section focus changes from CanvasManager (double-click).
+    // The canvas manager only emits this on an actual change, and active
+    // section is derived from it, so just forward to external listeners.
     this.canvasManager.on('section-focus-changed', (data: any) => {
-      // Update our internal state to match the canvas manager
-      if (data.section && data.section !== this._activeEditingSection) {
-        this._activeEditingSection = data.section;
-        this.emit('section-focus-changed', data);
-      }
+      this.emit('section-focus-changed', data);
     });
 
     // Listen for focus changes to enable keyboard input for tables and other focusable controls
@@ -364,7 +311,7 @@ export class PCEditor extends EventEmitter {
     const focusTracker = new FocusTracker(
       // getActiveContent callback
       () => {
-        const section = this._activeEditingSection;
+        const section = this.getActiveSection();
         const focusedControl = this.canvasManager?.getFocusedControl();
 
         // Check if editing a table cell
@@ -406,8 +353,10 @@ export class PCEditor extends EventEmitter {
       },
       // restoreFocus callback
       (state) => {
-        // Restore the focus state after undo/redo
-        this._activeEditingSection = state.activeSection;
+        // Restore the focus state after undo/redo. Drive the canvas manager
+        // (the owner of section state) rather than a local mirror; it no-ops
+        // when unchanged.
+        this.canvasManager.setActiveSection(state.activeSection);
 
         // If there was a focused object, try to focus it
         if (state.focusedObjectId) {
@@ -469,9 +418,6 @@ export class PCEditor extends EventEmitter {
     // Create ObjectMutationObserver
     this.objectMutationObserver = new ObjectMutationObserver(this.transactionManager);
 
-    // Observe all existing embedded objects
-    this.observeAllEmbeddedObjects();
-
     // Create MutationUndo
     this.mutationUndo = new MutationUndo(
       (sourceId) => this.transactionManager.getContent(sourceId),
@@ -503,10 +449,10 @@ export class PCEditor extends EventEmitter {
       this.canvasManager as any // Cast to FocusEventSource
     );
 
-    // Log initialization success (also ensures _contentDiscovery is "used")
-    if (this._contentDiscovery) {
-      // ContentDiscovery is active and listening for focus events
-    }
+    // Observe all existing embedded objects — AFTER ContentDiscovery exists,
+    // so their inner text content (table cells, text boxes) is registered
+    // with the undo system too (Phase 4).
+    this.observeAllEmbeddedObjects();
   }
 
   /**
@@ -535,19 +481,14 @@ export class PCEditor extends EventEmitter {
    * Observe all embedded objects for undo/redo tracking.
    */
   private observeAllEmbeddedObjects(): void {
-    // Observe body objects
     for (const [, obj] of this.document.bodyFlowingContent.getEmbeddedObjects()) {
-      this.objectMutationObserver.observe(obj);
+      this.observeEmbeddedObject(obj);
     }
-
-    // Observe header objects
     for (const [, obj] of this.document.headerFlowingContent.getEmbeddedObjects()) {
-      this.objectMutationObserver.observe(obj);
+      this.observeEmbeddedObject(obj);
     }
-
-    // Observe footer objects
     for (const [, obj] of this.document.footerFlowingContent.getEmbeddedObjects()) {
-      this.objectMutationObserver.observe(obj);
+      this.observeEmbeddedObject(obj);
     }
   }
 
@@ -557,6 +498,14 @@ export class PCEditor extends EventEmitter {
   private observeEmbeddedObject(object: BaseEmbeddedObject): void {
     if (this.objectMutationObserver) {
       this.objectMutationObserver.observe(object);
+    }
+    // Register the object's inner text content (text-box content, every
+    // table cell) with the undo system (Phase 4). The old focus-event
+    // registration path for cells was dead — nothing ever emitted
+    // 'tablecell-focused' — so typing in a table cell was never recorded
+    // and could not be undone.
+    if (this._contentDiscovery) {
+      this._contentDiscovery.registerObject(object);
     }
   }
 
@@ -569,7 +518,42 @@ export class PCEditor extends EventEmitter {
    * Returns a union type indicating text selection, element selection, or no selection.
    */
   getSelection(): EditorSelection {
-    return this.currentSelection;
+    return this.computeSelection();
+  }
+
+  /**
+   * Derive the current selection from the underlying state on demand
+   * (Phase 3c). Replaces the event-synced `currentSelection` mirror.
+   * Precedence: a selected section indicator (its state lives in the canvas
+   * manager), then the text selection or cursor of the content being edited
+   * (focused table cell / text box first, then the active section).
+   */
+  private computeSelection(): EditorSelection {
+    const repeatingId = this.canvasManager?.getSelectedRepeatingSectionId();
+    if (repeatingId) {
+      return { type: 'repeating-section', sectionId: repeatingId };
+    }
+    const conditionalId = this.canvasManager?.getSelectedConditionalSectionId();
+    if (conditionalId) {
+      return { type: 'conditional-section', sectionId: conditionalId };
+    }
+
+    const content = this.getEditingFlowingContent() || this.getActiveFlowingContent();
+    if (!content) {
+      return { type: 'none' };
+    }
+
+    const section = this.getActiveSection();
+    const selection = content.getSelection();
+    if (selection && selection.start !== selection.end) {
+      return {
+        type: 'text',
+        start: Math.min(selection.start, selection.end),
+        end: Math.max(selection.start, selection.end),
+        section
+      };
+    }
+    return { type: 'cursor', position: content.getCursorPosition(), section };
   }
 
   /**
@@ -589,7 +573,9 @@ export class PCEditor extends EventEmitter {
    * Get the currently active editing section (header, body, or footer).
    */
   getActiveSection(): EditingSection {
-    return this._activeEditingSection;
+    // Derived from the canvas manager, which derives it from the renderer's
+    // focused region — the single source of truth (Phase 3b). No local mirror.
+    return this.canvasManager?.getActiveSection() ?? 'body';
   }
 
   /**
@@ -598,18 +584,16 @@ export class PCEditor extends EventEmitter {
    */
   setActiveSection(section: EditingSection): void {
     Logger.log('[pc-editor] setActiveSection', section);
-    if (this._activeEditingSection !== section) {
-      this._activeEditingSection = section;
-      // Delegate to canvas manager which handles the section change and emits events
-      this.canvasManager.setActiveSection(section);
-    }
+    // The canvas manager owns section state (it no-ops when unchanged and
+    // emits section-focus-changed); no local mirror to update.
+    this.canvasManager.setActiveSection(section);
   }
 
   /**
    * Get the FlowingTextContent for the currently active section.
    */
   private getActiveFlowingContent(): FlowingTextContent {
-    switch (this._activeEditingSection) {
+    switch (this.getActiveSection()) {
       case 'header':
         return this.document.headerFlowingContent;
       case 'footer':
@@ -625,7 +609,7 @@ export class PCEditor extends EventEmitter {
    */
   private emitSelectionChange(): void {
     this.emit('selection-change', {
-      selection: this.currentSelection
+      selection: this.getSelection()
     });
   }
 
@@ -702,20 +686,11 @@ export class PCEditor extends EventEmitter {
     this.document = new Document(documentData);
     this.canvasManager.setDocument(this.document);
 
-    // Reset editing state
-    this._activeEditingSection = 'body';
-    this.currentSelection = { type: 'none' };
+    // Editing state (section, selection) lives in the canvas manager and the
+    // content model; setDocument has already reset it.
 
     // Clear undo history on document load
     this.clearUndoHistory();
-
-    // Update layout engine with new document
-    this.layoutEngine.destroy();
-    this.layoutEngine = new LayoutEngine(this.document, {
-      autoFlow: true,
-      snapToGrid: this.options.showGrid,
-      gridSize: this.options.gridSize
-    });
 
     this.setupEventListeners();
     this.setupTransactionUndo();
@@ -1107,13 +1082,15 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.fitToPage();
   }
 
-  // Layout control methods
+  // Layout control methods.
+  // Layout is recomputed on every render from the LayoutTree, so autoFlow and
+  // snapToGrid (a control for the removed free-positioned elements) no longer
+  // gate anything. These remain as no-ops for API compatibility.
   setAutoFlow(enabled: boolean): void {
     Logger.log('[pc-editor] setAutoFlow', enabled);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
-    this.layoutEngine.setAutoFlow(enabled);
   }
 
   reflowDocument(): void {
@@ -1121,14 +1098,15 @@ export class PCEditor extends EventEmitter {
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
-    this.layoutEngine.reflowDocument();
+    // A reflow is just a fresh render now — the layout pass runs inside it.
+    this.canvasManager.render();
   }
 
   setSnapToGrid(enabled: boolean): void {
+    Logger.log('[pc-editor] setSnapToGrid', enabled);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
-    this.layoutEngine.setSnapToGrid(enabled, this.options.gridSize);
   }
 
   getDocumentMetrics(): {
@@ -1172,6 +1150,11 @@ export class PCEditor extends EventEmitter {
     };
   }
 
+  /**
+   * Legacy page-list mutation. Since Phase 3d the page count is derived from
+   * the layout tree on every render cycle, so a manually added empty page is
+   * reconciled away again — use insertPageBreak() to add a durable page.
+   */
   addPage(): void {
     Logger.log('[pc-editor] addPage');
     if (!this._isReady) {
@@ -1187,6 +1170,12 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.setDocument(this.document);
   }
 
+  /**
+   * Legacy page-list mutation. Since Phase 3d the page count is derived from
+   * the layout tree on every render cycle, so removing a page the content
+   * still requires is undone by reconciliation — remove the content (or its
+   * page break) instead.
+   */
   removePage(pageId: string): void {
     Logger.log('[pc-editor] removePage', pageId);
     if (!this._isReady) {
@@ -2049,13 +2038,6 @@ export class PCEditor extends EventEmitter {
 
     if (flowingContent) {
       flowingContent.setCursorPosition(position);
-
-      // Update currentSelection to reflect the new cursor position
-      this.currentSelection = {
-        type: 'cursor',
-        position: position,
-        section: this._activeEditingSection
-      };
       this.emitSelectionChange();
     }
   }
@@ -2066,7 +2048,7 @@ export class PCEditor extends EventEmitter {
    * or 0 if no text content is selected.
    */
   getCursorPosition(): number {
-    const selection = this.currentSelection;
+    const selection = this.getSelection();
 
     if (selection.type === 'cursor') {
       return selection.position;
@@ -2117,7 +2099,7 @@ export class PCEditor extends EventEmitter {
     this.observeEmbeddedObject(object);
 
     this.canvasManager.render();
-    this.emit('embedded-object-added', { object, position, section: this._activeEditingSection });
+    this.emit('embedded-object-added', { object, position, section: this.getActiveSection() });
   }
 
   /**
@@ -2148,7 +2130,7 @@ export class PCEditor extends EventEmitter {
     const field = flowingContent.insertSubstitutionField(fieldName, config);
 
     this.canvasManager.render();
-    this.emit('substitution-field-added', { field, section: this._activeEditingSection });
+    this.emit('substitution-field-added', { field, section: this.getActiveSection() });
   }
 
   /**
@@ -2181,7 +2163,7 @@ export class PCEditor extends EventEmitter {
     const field = flowingContent.insertPageNumberField(displayFormat);
 
     this.canvasManager.render();
-    this.emit('page-number-field-added', { field, section: this._activeEditingSection });
+    this.emit('page-number-field-added', { field, section: this.getActiveSection() });
   }
 
   /**
@@ -2214,7 +2196,7 @@ export class PCEditor extends EventEmitter {
     const field = flowingContent.insertPageCountField(displayFormat);
 
     this.canvasManager.render();
-    this.emit('page-count-field-added', { field, section: this._activeEditingSection });
+    this.emit('page-count-field-added', { field, section: this.getActiveSection() });
   }
 
   /**
@@ -2267,7 +2249,7 @@ export class PCEditor extends EventEmitter {
    * @returns The substitution field if the cursor/selection is on a field, or null
    */
   getSelectedField(): SubstitutionField | null {
-    const selection = this.currentSelection;
+    const selection = this.getSelection();
 
     if (selection.type === 'cursor') {
       return this.getFieldAt(selection.position);
@@ -2564,6 +2546,8 @@ export class PCEditor extends EventEmitter {
   tableInsertRow(table: TableObject, rowIndex: number, config?: TableRowConfig): void {
     if (!this._isReady) return;
     table.insertRow(rowIndex, config);
+    // Register new cells / refresh shifted cell addresses with the undo system
+    this._contentDiscovery.registerObject(table);
     this.canvasManager.render();
   }
 
@@ -2576,6 +2560,7 @@ export class PCEditor extends EventEmitter {
   tableRemoveRow(table: TableObject, rowIndex: number): void {
     if (!this._isReady) return;
     table.removeRow(rowIndex);
+    this._contentDiscovery.registerObject(table);
     this.canvasManager.render();
   }
 
@@ -2589,6 +2574,7 @@ export class PCEditor extends EventEmitter {
   tableInsertColumn(table: TableObject, colIndex: number, width?: number): void {
     if (!this._isReady) return;
     table.insertColumn(colIndex, width);
+    this._contentDiscovery.registerObject(table);
     this.canvasManager.render();
   }
 
@@ -2601,6 +2587,7 @@ export class PCEditor extends EventEmitter {
   tableRemoveColumn(table: TableObject, colIndex: number): void {
     if (!this._isReady) return;
     table.removeColumn(colIndex);
+    this._contentDiscovery.registerObject(table);
     this.canvasManager.render();
   }
 
@@ -2615,6 +2602,7 @@ export class PCEditor extends EventEmitter {
     if (!this._isReady) return false;
     const result = table.mergeCells();
     if (result.success) {
+      this._contentDiscovery.registerObject(table);
       this.canvasManager.render();
     }
     return result.success;
@@ -2632,6 +2620,7 @@ export class PCEditor extends EventEmitter {
     if (!this._isReady) return false;
     const result = table.splitCell(row, col);
     if (result.success) {
+      this._contentDiscovery.registerObject(table);
       this.canvasManager.render();
     }
     return result.success;
@@ -2682,7 +2671,7 @@ export class PCEditor extends EventEmitter {
     if (success) {
       // Field updates are captured by TextMutationObserver via 'substitution-field-updated' event
       this.canvasManager.render();
-      this.emit('substitution-field-updated', { textIndex, updates, section: this._activeEditingSection });
+      this.emit('substitution-field-updated', { textIndex, updates, section: this.getActiveSection() });
     }
 
     return success;
@@ -3251,7 +3240,7 @@ export class PCEditor extends EventEmitter {
       return null;
     }
 
-    const selection = this.currentSelection;
+    const selection = this.getSelection();
     let position: number;
 
     if (selection.type === 'text') {
@@ -3286,7 +3275,7 @@ export class PCEditor extends EventEmitter {
     if (flowingContent) {
       flowingContent.setAlignment(alignment);
       this.canvasManager.render();
-      this.emit('alignment-changed', { alignment, section: this._activeEditingSection });
+      this.emit('alignment-changed', { alignment, section: this.getActiveSection() });
     }
   }
 
@@ -3300,7 +3289,7 @@ export class PCEditor extends EventEmitter {
       throw new Error('Editor is not ready');
     }
 
-    const selection = this.currentSelection;
+    const selection = this.getSelection();
     const flowingContent = this.getActiveFlowingContent();
     if (!flowingContent) return;
 
@@ -3311,7 +3300,7 @@ export class PCEditor extends EventEmitter {
     }
 
     this.canvasManager.render();
-    this.emit('alignment-changed', { alignment, section: this._activeEditingSection });
+    this.emit('alignment-changed', { alignment, section: this.getActiveSection() });
   }
 
   /**
@@ -3323,7 +3312,7 @@ export class PCEditor extends EventEmitter {
       return 'left';
     }
 
-    const selection = this.currentSelection;
+    const selection = this.getSelection();
     const flowingContent = this.getActiveFlowingContent();
     if (!flowingContent) return 'left';
 
@@ -3354,7 +3343,7 @@ export class PCEditor extends EventEmitter {
 
     flowingContent.toggleBulletList();
     this.canvasManager.render();
-    this.emit('list-changed', { type: 'bullet', section: this._activeEditingSection });
+    this.emit('list-changed', { type: 'bullet', section: this.getActiveSection() });
   }
 
   /**
@@ -3368,7 +3357,7 @@ export class PCEditor extends EventEmitter {
 
     flowingContent.toggleNumberedList();
     this.canvasManager.render();
-    this.emit('list-changed', { type: 'number', section: this._activeEditingSection });
+    this.emit('list-changed', { type: 'number', section: this.getActiveSection() });
   }
 
   /**
@@ -3382,7 +3371,7 @@ export class PCEditor extends EventEmitter {
 
     flowingContent.indentParagraph();
     this.canvasManager.render();
-    this.emit('indent-changed', { section: this._activeEditingSection });
+    this.emit('indent-changed', { section: this.getActiveSection() });
   }
 
   /**
@@ -3396,7 +3385,7 @@ export class PCEditor extends EventEmitter {
 
     flowingContent.outdentParagraph();
     this.canvasManager.render();
-    this.emit('indent-changed', { section: this._activeEditingSection });
+    this.emit('indent-changed', { section: this.getActiveSection() });
   }
 
   /**
@@ -4131,7 +4120,7 @@ export class PCEditor extends EventEmitter {
       this.canvasManager.render();
       this.emit('text-selection-changed', {
         selection: flowingContent.getSelection(),
-        section: this._activeEditingSection
+        section: this.getActiveSection()
       });
     }
   }
@@ -4310,9 +4299,6 @@ export class PCEditor extends EventEmitter {
     this.disableTextInput();
     if (this.canvasManager) {
       this.canvasManager.destroy();
-    }
-    if (this.layoutEngine) {
-      this.layoutEngine.destroy();
     }
     this.document.clear();
     this.removeAllListeners();

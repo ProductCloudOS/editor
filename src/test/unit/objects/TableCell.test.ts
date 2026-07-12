@@ -303,8 +303,11 @@ describe('TableCell', () => {
       expect(cell.getRenderedPosition()).toEqual({ x: 100, y: 200 });
     });
 
-    it('should get default renderedPageIndex', () => {
-      expect(cell.renderedPageIndex).toBe(0);
+    it('should get default renderedPageIndex of -1 (not yet rendered)', () => {
+      // -1 means "not yet rendered": page-qualified hit checks are skipped
+      // until the renderer assigns a real page. A default of 0 made
+      // never-rendered cells claim page 0 and fail hit checks elsewhere.
+      expect(cell.renderedPageIndex).toBe(-1);
     });
 
     it('should set renderedPageIndex', () => {

@@ -1,4 +1,6 @@
-import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, EditingSection, HorizontalRuler, VerticalRuler, Logger } from '../lib';
+import { PCEditor, DocumentData, ImageObject, TextBoxObject, TableObject, EditorSelection, EditingSection, HorizontalRuler, VerticalRuler } from '../lib';
+// Logger is internal to the library; the in-repo demo deep-imports it.
+import { Logger } from '../lib/utils/logger';
 
 // Import library panes
 import {
@@ -57,6 +59,9 @@ function initializeEditor(): void {
 
   // Set up logging for all editor events
   setupEditorEventLogging();
+
+  // Expose the editor instance for scripted/manual testing from the console.
+  (window as unknown as { pcEditor: PCEditor }).pcEditor = editor;
 
   editor.on('ready', () => {
     Logger.log('[Editor Event] ready');

@@ -735,10 +735,21 @@ export class TextBoxObject extends BaseEmbeddedObject implements Focusable, Edit
    * double-click to enter edit mode works on the entire text box area,
    * not just the inner text area.
    * @param point Point in canvas coordinates
-   * @param _pageIndex The page index (ignored for text boxes)
+   * @param pageIndex The page index the point belongs to
    */
-  containsPointInRegion(point: Point, _pageIndex: number): boolean {
+  containsPointInRegion(point: Point, pageIndex: number): boolean {
     if (!this._renderedPosition) return false;
+
+    // Pages have independent canvases whose local coordinates overlap, so a
+    // body text box only exists at its rendered page's coordinates — without
+    // this check a text box on page 1 swallows clicks made at the same
+    // in-page coordinates on page 2. Header/footer objects repeat identically
+    // on every page and are marked page-invariant by the renderer.
+    if (!this._renderedPageInvariant &&
+        this._renderedPageIndex >= 0 &&
+        this._renderedPageIndex !== pageIndex) {
+      return false;
+    }
 
     return point.x >= this._renderedPosition.x &&
            point.x <= this._renderedPosition.x + this._size.width &&

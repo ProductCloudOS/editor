@@ -279,28 +279,40 @@ describe('PCEditor Document Settings', () => {
   });
 
   describe('page management', () => {
-    it('should add page', () => {
-      const docBefore = editor.getDocument();
-      const pageCountBefore = docBefore.pages.length;
+    it('re-derives the page count after a manual addPage', () => {
+      // Phase 3d: the page count is derived from the layout tree on every
+      // render cycle, so the add and remove paths can never disagree (the
+      // §2.3 defect class). A manually added EMPTY page is reconciled away
+      // again; insertPageBreak is the durable way to add a page.
+      const pageCountBefore = editor.getDocument().pages.length;
 
       editor.addPage();
 
-      const docAfter = editor.getDocument();
-      expect(docAfter.pages.length).toBe(pageCountBefore + 1);
+      expect(editor.getDocument().pages.length).toBe(pageCountBefore);
     });
 
-    it('should remove page by id', () => {
-      // Add a page first to ensure we have multiple
-      editor.addPage();
+    it('adds a durable page via insertPageBreak', () => {
+      editor.setFlowingText('Page one');
+      editor.setCursorPosition(editor.getFlowingText().length);
+      const pageCountBefore = editor.getDocument().pages.length;
 
-      const docBefore = editor.getDocument();
-      const pageCountBefore = docBefore.pages.length;
-      const pageToRemove = docBefore.pages[1].id;
+      editor.insertPageBreak();
 
-      editor.removePage(pageToRemove);
+      expect(editor.getDocument().pages.length).toBe(pageCountBefore + 1);
+    });
 
-      const docAfter = editor.getDocument();
-      expect(docAfter.pages.length).toBe(pageCountBefore - 1);
+    it('re-derives the page count after removing a content-required page', () => {
+      editor.setFlowingText('Page one');
+      editor.setCursorPosition(editor.getFlowingText().length);
+      editor.insertPageBreak();
+      const pageCountBefore = editor.getDocument().pages.length;
+      expect(pageCountBefore).toBeGreaterThanOrEqual(2);
+
+      // Removing a page the content still requires is undone by the next
+      // render cycle's reconciliation.
+      editor.removePage(editor.getDocument().pages[1].id);
+
+      expect(editor.getDocument().pages.length).toBe(pageCountBefore);
     });
 
     it('should throw when removing last page', () => {

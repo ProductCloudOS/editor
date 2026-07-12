@@ -20,6 +20,8 @@ import { EventEmitter } from '../events/EventEmitter';
 import { BaseEmbeddedObject, TextBoxObject, TableObject } from '../objects';
 import { HitTestManager, HIT_PRIORITY } from '../hit-test';
 import { Logger } from '../utils/logger';
+import { buildLayoutTree } from '../layout/tree/buildLayoutTree';
+import { LayoutTree, ObjectSliceFragment } from '../layout/tree/types';
 
 // Control character symbols
 const CONTROL_CHAR_COLOR = '#87CEEB'; // Light blue
@@ -57,11 +59,13 @@ interface TableContinuation {
 
 export class FlowingTextRenderer extends EventEmitter {
   private document: Document;
+  // The immutable output of the layout pass — the single structure painting,
+  // hit-testing, and caret geometry derive from (docs/refactor-v2.md §3 P1).
+  private layoutTree: LayoutTree | null = null;
   private flowedPages: Map<string, FlowedPage[]> = new Map();
   private headerFlowedPage: FlowedPage | null = null;
   private footerFlowedPage: FlowedPage | null = null;
   private _focusedRegion: EditableTextRegion | null = null;
-  private selectedText: { start: number; end: number } | null = null;
   private showControlCharacters: boolean = false;
   // Track tables that continue onto subsequent pages
   private tableContinuations: Map<string, TableContinuation> = new Map();
@@ -110,14 +114,34 @@ export class FlowingTextRenderer extends EventEmitter {
     const flowedPages = this.flowedPages.get(firstPage.id);
     if (!flowedPages || flowedPages.length === 0) return null;
 
+    // A block-object line spans [T, T+1] and shares its end boundary with the
+    // start of the following line. Index T+1 means "after the object", so it
+    // must bind to the following line — binding to the object's own line
+    // renders the caret at the object's top-right corner on its start page.
+    // Keep the block line as a fallback for when nothing follows the object.
+    let blockLineFallback: {
+      pageIndex: number;
+      lineIndex: number;
+      line: FlowedLine;
+      flowedPage: FlowedPage;
+    } | null = null;
+
     for (let pageIndex = 0; pageIndex < flowedPages.length; pageIndex++) {
       const flowedPage = flowedPages[pageIndex];
       for (let lineIndex = 0; lineIndex < flowedPage.lines.length; lineIndex++) {
         const line = flowedPage.lines[lineIndex];
         if (textIndex >= line.startIndex && textIndex <= line.endIndex) {
+          if (line.isBlockObjectLine && textIndex === line.endIndex) {
+            blockLineFallback = { pageIndex, lineIndex, line, flowedPage };
+            continue;
+          }
           return { pageIndex, lineIndex, line, flowedPage };
         }
       }
+    }
+
+    if (blockLineFallback) {
+      return blockLineFallback;
     }
 
     // Cursor at end of text - return last line
@@ -282,6 +306,22 @@ export class FlowingTextRenderer extends EventEmitter {
     return this.document.bodyFlowingContent;
   }
 
+  /**
+   * The active section's text selection, derived from the model on demand
+   * (Phase 3c). Replaces the event-synced `selectedText` mirror, which went
+   * stale when the active section changed while a selection existed — e.g.
+   * a body selection left behind could be painted onto the header at body
+   * offsets.
+   */
+  private getActiveTextSelection(): { start: number; end: number } | null {
+    const selection = this.getActiveFlowingContent()?.getSelection();
+    if (!selection || selection.start === selection.end) return null;
+    return {
+      start: Math.min(selection.start, selection.end),
+      end: Math.max(selection.start, selection.end)
+    };
+  }
+
   private setupFlowingContentListeners(): void {
     // Listen to content changes from the document's body flowing content
     const bodyFlowingContent = this.document.bodyFlowingContent;
@@ -293,13 +333,8 @@ export class FlowingTextRenderer extends EventEmitter {
 
     bodyFlowingContent.on('selection-changed', (data) => {
       if (this.getActiveSection() === 'body') {
-        // Update the selection display
-        if (data.selection) {
-          this.setTextSelection(data.selection.start, data.selection.end);
-        } else {
-          this.clearTextSelection();
-        }
-        // Trigger a render to show the updated selection
+        // Selection display is derived from the model at render time
+        // (getActiveTextSelection); just forward so a render is triggered.
         this.emit('selection-changed', data);
       }
     });
@@ -312,11 +347,8 @@ export class FlowingTextRenderer extends EventEmitter {
 
     this.document.headerFlowingContent.on('selection-changed', (data) => {
       if (this.getActiveSection() === 'header') {
-        if (data.selection) {
-          this.setTextSelection(data.selection.start, data.selection.end);
-        } else {
-          this.clearTextSelection();
-        }
+        // Selection display is derived from the model at render time
+        // (getActiveTextSelection); just forward so a render is triggered.
         this.emit('selection-changed', data);
       }
     });
@@ -329,14 +361,45 @@ export class FlowingTextRenderer extends EventEmitter {
 
     this.document.footerFlowingContent.on('selection-changed', (data) => {
       if (this.getActiveSection() === 'footer') {
-        if (data.selection) {
-          this.setTextSelection(data.selection.start, data.selection.end);
-        } else {
-          this.clearTextSelection();
-        }
+        // Selection display is derived from the model at render time
+        // (getActiveTextSelection); just forward so a render is triggered.
         this.emit('selection-changed', data);
       }
     });
+  }
+
+  /**
+   * The layout step of the render cycle (Phase 3d): wrap the body content
+   * and build the LayoutTree. Pagination — including table slicing — happens
+   * in the tree, so pages, slices, and following-content positions are model
+   * state rather than painting side effects. The caller (CanvasManager's
+   * render cycle) reconciles the document's page count against
+   * tree.pageCount BEFORE painting; there is no overflow event round-trip.
+   */
+  layoutBody(ctx: CanvasRenderingContext2D, contentBounds: Rect): LayoutTree {
+    const body = this.document.bodyFlowingContent;
+    const lines = body.wrapContent(contentBounds.width, ctx);
+    this.layoutTree = buildLayoutTree(
+      lines,
+      {
+        contentOrigin: { x: contentBounds.x, y: contentBounds.y },
+        contentWidth: contentBounds.width,
+        availableHeightFirstPage: contentBounds.height,
+        availableHeightOtherPages: contentBounds.height
+      },
+      ctx
+    );
+
+    // Derive the legacy per-page structures that other consumers (cursor
+    // geometry, selection, region clicks) still read. These are projections
+    // of the tree, not independent computations.
+    const firstPage = this.document.pages[0];
+    if (firstPage) {
+      this.flowedPages.set(firstPage.id, this.deriveFlowedPages(this.layoutTree));
+    }
+    this.derivePageTextOffsets(this.layoutTree, contentBounds);
+
+    return this.layoutTree;
   }
 
   renderPageFlowingText(
@@ -344,41 +407,9 @@ export class FlowingTextRenderer extends EventEmitter {
     ctx: CanvasRenderingContext2D,
     contentBounds: Rect
   ): void {
-    // Only flow text from the first page
     const pageIndex = this.document.pages.findIndex(p => p.id === page.id);
 
-    if (pageIndex === 0) {
-      // Clear table continuations when starting a new render cycle
-      this.clearTableContinuations();
-
-      // This is the first page, flow all text
-      const flowedPages = this.flowTextForPage(page, ctx, contentBounds);
-      this.flowedPages.set(page.id, flowedPages);
-
-      // Check if we need additional pages for overflow
-      if (flowedPages.length > 1) {
-        this.emit('text-overflow', { 
-          pageId: page.id, 
-          overflowPages: flowedPages.slice(1),
-          totalPages: flowedPages.length 
-        });
-      }
-      
-      // Render the first flowed page
-      if (flowedPages.length > 0) {
-        this.renderFlowedPage(flowedPages[0], ctx, contentBounds, 0, this.document.bodyFlowingContent);
-      }
-    } else {
-      // For subsequent pages, get the flowed content from the first page
-      const firstPageFlowed = this.flowedPages.get(this.document.pages[0].id);
-      if (firstPageFlowed && firstPageFlowed.length > pageIndex) {
-        this.renderFlowedPage(firstPageFlowed[pageIndex], ctx, contentBounds, pageIndex, this.document.bodyFlowingContent);
-      } else {
-        // No flowed text content for this page, but check for table continuations
-        // This handles tables that span more pages than the text flow creates
-        this.renderTableContinuationsForPage(ctx, pageIndex, contentBounds);
-      }
-    }
+    this.renderTreePage(pageIndex, ctx, contentBounds);
 
     // Render cursor if visible and on this page (only when body is active)
     // Use FlowingTextContent's isCursorVisible() for proper blink state
@@ -389,7 +420,7 @@ export class FlowingTextRenderer extends EventEmitter {
     }
 
     // Render selection if any (only when body is active)
-    if (this.getActiveSection() === 'body' && this.selectedText) {
+    if (this.getActiveSection() === 'body' && this.getActiveTextSelection()) {
       const flowedPagesForSelection = pageIndex === 0
         ? this.flowedPages.get(page.id)
         : this.flowedPages.get(this.document.pages[0].id);
@@ -430,6 +461,14 @@ export class FlowingTextRenderer extends EventEmitter {
 
     // Flow the header content
     const headerContent = this.document.headerFlowingContent;
+
+    // Header objects repeat at identical page-local coordinates on every
+    // page, so they are exempt from the page-index hit check that body
+    // objects need (their renderedPageIndex is just the last page painted).
+    for (const [, obj] of headerContent.getEmbeddedObjects()) {
+      obj.renderedPageInvariant = true;
+    }
+
     const flowedPages = headerContent.flowText(bounds.width, bounds.height, ctx);
 
     if (flowedPages.length > 0) {
@@ -451,7 +490,7 @@ export class FlowingTextRenderer extends EventEmitter {
         }
 
         // Render selection if any and header is active
-        if (isActive && this.selectedText) {
+        if (isActive && this.getActiveTextSelection()) {
           this.renderTextSelection(flowedPages[0], ctx, bounds);
         }
       }
@@ -485,6 +524,13 @@ export class FlowingTextRenderer extends EventEmitter {
 
     // Flow the footer content
     const footerContent = this.document.footerFlowingContent;
+
+    // Footer objects repeat at identical page-local coordinates on every
+    // page — same page-invariance exemption as header objects.
+    for (const [, obj] of footerContent.getEmbeddedObjects()) {
+      obj.renderedPageInvariant = true;
+    }
+
     const flowedPages = footerContent.flowText(bounds.width, bounds.height, ctx);
 
     if (flowedPages.length > 0) {
@@ -506,7 +552,7 @@ export class FlowingTextRenderer extends EventEmitter {
         }
 
         // Render selection if any and footer is active
-        if (isActive && this.selectedText) {
+        if (isActive && this.getActiveTextSelection()) {
           this.renderTextSelection(flowedPages[0], ctx, bounds);
         }
       }
@@ -550,14 +596,24 @@ export class FlowingTextRenderer extends EventEmitter {
     const flowedLines = this.getFlowedLinesForRegion(region, pageIndex);
     const maxWidth = this.getAvailableWidthForRegion(region, pageIndex);
 
-    // Handle empty content - cursor at position 0
+    // Handle pages with no text lines of their own
     if (flowedLines.length === 0) {
-      region.flowingContent.setCursorPosition(0);
+      // A continuation-only page exists solely for the tail slices of a
+      // page-spanning object (the text flow model keeps such an object on its
+      // start page). Clicking it means "after that object", not "start of
+      // document" — jumping the caret to index 0 was the cause of not being
+      // able to type after a table that ends the document.
+      let textIndex = 0;
+      if (region.type === 'body' && pageIndex > 0) {
+        textIndex = region.flowingContent.getText().length;
+      }
+
+      region.flowingContent.setCursorPosition(textIndex);
       region.flowingContent.resetCursorBlink();
 
-      this.emit('text-clicked', { textIndex: 0, line: 0, section: region.type });
-      this.emit('cursor-changed', { textIndex: 0, section: region.type });
-      return { textIndex: 0, lineIndex: 0 };
+      this.emit('text-clicked', { textIndex, line: 0, section: region.type });
+      this.emit('cursor-changed', { textIndex, section: region.type });
+      return { textIndex, lineIndex: 0 };
     }
 
     // Find line at Y position using TextPositionCalculator
@@ -873,15 +929,208 @@ export class FlowingTextRenderer extends EventEmitter {
     }
   }
 
-  private flowTextForPage(
-    _page: Page,
+
+  /** The layout tree from the most recent render cycle. */
+  getLayoutTree(): LayoutTree | null {
+    return this.layoutTree;
+  }
+
+  /**
+   * Project the LayoutTree into the legacy FlowedPage[] shape still consumed
+   * by cursor geometry, selection rendering, region clicks, vertical
+   * navigation, and page management. A block object's anchor line appears
+   * once, on its start page; tail-slice-only pages have no lines (their
+   * geometry lives in the tree's fragments).
+   */
+  private deriveFlowedPages(tree: LayoutTree): FlowedPage[] {
+    return tree.pages.map(p => {
+      const lines: FlowedLine[] = [];
+      for (const f of p.fragments) {
+        if (f.kind === 'line') {
+          lines.push(f.line);
+        } else if (f.sliceIndex === 0) {
+          lines.push(f.line);
+        }
+      }
+      const first = lines[0];
+      const last = lines[lines.length - 1];
+      return {
+        lines,
+        height: p.contentHeight,
+        startIndex: first ? first.startIndex : 0,
+        endIndex: last ? last.endIndex : 0
+      };
+    });
+  }
+
+  /**
+   * Derive per-page text Y offsets from the tree. A page that starts with a
+   * table tail slice has its text pushed down by the slice height; legacy
+   * consumers compensate via getPageTextOffset. Derived at layout time —
+   * no longer a painting side effect.
+   */
+  private derivePageTextOffsets(tree: LayoutTree, bounds: Rect): void {
+    this.pageTextOffsets.clear();
+    for (const p of tree.pages) {
+      const firstFragment = p.fragments[0];
+      const firstLine = p.fragments.find(f => f.kind === 'line');
+      const startsWithTailSlice =
+        firstFragment?.kind === 'object-slice' && firstFragment.sliceIndex > 0;
+      const offset =
+        startsWithTailSlice && firstLine ? firstLine.rect.y - bounds.y : 0;
+      this.pageTextOffsets.set(p.pageIndex, offset);
+    }
+  }
+
+  /**
+   * Paint one page of the LayoutTree: each fragment at its laid-out rect.
+   * Table slices are painted directly from their fragment data — there is no
+   * render-time continuation state.
+   */
+  private renderTreePage(
+    pageIndex: number,
     ctx: CanvasRenderingContext2D,
     bounds: Rect
-  ): FlowedPage[] {
-    // Body content is document-level, not page-level
-    // The page parameter is kept for API consistency but unused
-    const flowingContent = this.document.bodyFlowingContent;
-    return flowingContent.flowText(bounds.width, bounds.height, ctx);
+  ): void {
+    const tree = this.layoutTree;
+    const treePage = tree?.pages[pageIndex];
+    if (!tree || !treePage) return;
+
+    const contentForCursor = this.document.bodyFlowingContent;
+    const hasFocus = contentForCursor?.hasFocus() ?? false;
+    const cursorTextIndex =
+      hasFocus && contentForCursor ? contentForCursor.getCursorPosition() : undefined;
+    const pageCount = tree.pageCount;
+    const hyperlinks = contentForCursor ? contentForCursor.getAllHyperlinks() : [];
+
+    // Relative objects render after all lines so they appear on top.
+    const relativeObjects: Array<{
+      object: BaseEmbeddedObject;
+      anchorX: number;
+      anchorY: number;
+    }> = [];
+
+    for (const fragment of treePage.fragments) {
+      const isTableSlice =
+        fragment.kind === 'object-slice' && fragment.object instanceof TableObject;
+
+      if (isTableSlice) {
+        this.renderTableSliceFragment(fragment, ctx, pageIndex);
+        continue;
+      }
+
+      // Line fragments and non-table block objects render through the
+      // existing line renderer at the fragment's laid-out Y.
+      const line = fragment.line;
+      if (line.embeddedObjects) {
+        for (const embeddedObj of line.embeddedObjects) {
+          if (embeddedObj.isAnchor && embeddedObj.object.position === 'relative') {
+            relativeObjects.push({
+              object: embeddedObj.object,
+              anchorX: bounds.x,
+              anchorY: fragment.rect.y
+            });
+          }
+        }
+      }
+
+      this.renderFlowedLine(
+        line,
+        ctx,
+        { x: bounds.x, y: fragment.rect.y },
+        bounds.width,
+        pageIndex,
+        cursorTextIndex,
+        pageCount,
+        hyperlinks
+      );
+    }
+
+    this.renderRelativeObjects(relativeObjects, ctx, pageIndex);
+  }
+
+  /**
+   * Paint one slice of a table from its layout fragment.
+   */
+  private renderTableSliceFragment(
+    fragment: ObjectSliceFragment,
+    ctx: CanvasRenderingContext2D,
+    pageIndex: number
+  ): void {
+    const table = fragment.object as TableObject;
+    const slice = fragment.tableSlice;
+    const pageLayout = fragment.tablePageLayout;
+    if (!slice || !pageLayout) return;
+
+    const pos = { x: fragment.rect.x, y: fragment.rect.y };
+    table.renderedPosition = pos;
+    table.renderedPageIndex = pageIndex;
+
+    if (fragment.slicePosition === 'only') {
+      // Single-page table: same painting path as the legacy fits-on-page
+      // branch (full render + per-cell region rendering).
+      table.updateCellRenderedPositions();
+      ctx.save();
+      ctx.translate(pos.x, pos.y);
+      table.render(ctx);
+      ctx.restore();
+
+      for (const row of table.rows) {
+        for (const cell of row.cells) {
+          this.renderRegion(cell, ctx, pageIndex, {
+            renderCursor: cell.editing,
+            renderSelection: cell.editing,
+            clipToBounds: true
+          });
+        }
+      }
+    } else {
+      ctx.save();
+      ctx.translate(pos.x, pos.y);
+      table.renderSlice(ctx, slice, pageLayout);
+      ctx.restore();
+
+      const rowsToRender = table.getRowsForSlice(slice, pageLayout);
+      this.renderTableCellText(
+        table,
+        rowsToRender,
+        ctx,
+        pageIndex,
+        pos.x,
+        pos.y,
+        slice,
+        pageLayout
+      );
+    }
+
+    table.setRenderedSlice(
+      pageIndex,
+      pos,
+      slice.height,
+      fragment.slicePosition,
+      fragment.sliceIndex,
+      slice.yOffset,
+      slice.isContinuation ? pageLayout.headerHeight : 0,
+      slice.startRow,
+      slice.endRow,
+      slice.startRowOffset || 0,
+      slice.endRowOffset || 0
+    );
+    this.registerTableSliceHitTarget(table, pageIndex, pos, slice.height);
+
+    if (table.selected) {
+      if (fragment.slicePosition === 'only') {
+        this.drawEmbeddedObjectHandles(ctx, table, pos);
+      } else {
+        this.drawEmbeddedObjectHandles(
+          ctx,
+          table,
+          pos,
+          { width: table.width, height: slice.height },
+          fragment.slicePosition
+        );
+      }
+    }
   }
 
   private renderFlowedPage(
@@ -891,18 +1140,9 @@ export class FlowingTextRenderer extends EventEmitter {
     pageIndex: number,
     flowingContent?: FlowingTextContent
   ): void {
+    // Body content renders via renderTreePage; this path serves header and
+    // footer regions, whose Y always starts at the region origin.
     let y = bounds.y;
-
-    // For subsequent pages, render any table continuations FIRST (before text content)
-    // This handles the case where a table spans pages AND there's text after it
-    if (pageIndex > 0 && this.tableContinuations.size > 0) {
-      const continuationHeight = this.renderTableContinuationsAtPosition(ctx, pageIndex, bounds, y);
-      y += continuationHeight;
-      // Store the offset for click handling
-      this.pageTextOffsets.set(pageIndex, continuationHeight);
-    } else {
-      this.pageTextOffsets.set(pageIndex, 0);
-    }
 
     // Get cursor position from the specified FlowingTextContent, or fall back to body
     // Only use cursor position for field selection if the content has focus
@@ -1580,6 +1820,11 @@ export class FlowingTextRenderer extends EventEmitter {
           this.tableContinuations.delete(continuationKey);
         }
       } else if (contentBounds) {
+        // First render of this table in this pass (continuations re-enter the
+        // branch above): drop slice records from previous layouts so pages
+        // the table no longer occupies stop answering hit queries for it.
+        table.clearRenderedSlices();
+
         const availableHeight = contentBounds.position.y + contentBounds.size.height - elementY;
 
         if (table.needsPageSplit(availableHeight)) {
@@ -1687,6 +1932,7 @@ export class FlowingTextRenderer extends EventEmitter {
         }
       } else {
         // No content bounds available - render normally (fallback)
+        table.clearRenderedSlices();
         table.renderedPosition = { x: elementX, y: elementY };
         table.renderedPageIndex = pageIndex;
         table.updateCellRenderedPositions();
@@ -2146,190 +2392,7 @@ export class FlowingTextRenderer extends EventEmitter {
     }
   }
 
-  /**
-   * Render table continuations for a page that has no regular text flow content.
-   * This handles the case where a table spans more pages than the text flow creates.
-   */
-  private renderTableContinuationsForPage(
-    ctx: CanvasRenderingContext2D,
-    pageIndex: number,
-    contentBounds: Rect
-  ): void {
-    // Iterate through all pending continuations and render them
-    for (const [continuationKey, continuation] of this.tableContinuations.entries()) {
-      if (continuation.sliceIndex >= continuation.pageLayout.slices.length) {
-        continue;
-      }
 
-      const table = continuation.table;
-      const slice = continuation.pageLayout.slices[continuation.sliceIndex];
-
-      // Position table at top of content area for continuation pages
-      const tableX = contentBounds.x;
-      const tableY = contentBounds.y;
-
-      // Update table rendered position
-      table.renderedPosition = { x: tableX, y: tableY };
-      table.renderedPageIndex = pageIndex;
-
-      ctx.save();
-      ctx.translate(tableX, tableY);
-      table.renderSlice(ctx, slice, continuation.pageLayout);
-      ctx.restore();
-
-      // Render cell text for rows in this slice
-      const rowsToRender = table.getRowsForSlice(slice, continuation.pageLayout);
-      this.renderTableCellText(table, rowsToRender, ctx, pageIndex, tableX, tableY, slice, continuation.pageLayout);
-
-      const actualSliceHeight = slice.height;
-
-      // Draw selection handles if selected (with slice-specific size)
-      // Determine slice position: 'middle' or 'last'
-      const isLastSlice = continuation.sliceIndex === continuation.pageLayout.slices.length - 1;
-      const slicePosition = isLastSlice ? 'last' : 'middle';
-      const sliceYOffset = continuation.pageLayout.slices[continuation.sliceIndex].yOffset;
-      const sliceHeaderHeight = continuation.pageLayout.headerHeight;
-
-      // Store slice info for hit detection
-      table.setRenderedSlice(
-        pageIndex,
-        { x: tableX, y: tableY },
-        actualSliceHeight,
-        slicePosition,
-        continuation.sliceIndex,
-        sliceYOffset,
-        sliceHeaderHeight,
-        slice.startRow,
-        slice.endRow,
-        slice.startRowOffset || 0,
-        slice.endRowOffset || 0
-      );
-      this.registerTableSliceHitTarget(table, pageIndex, { x: tableX, y: tableY }, actualSliceHeight);
-
-      if (table.selected) {
-        this.drawEmbeddedObjectHandles(ctx, table, { x: tableX, y: tableY }, {
-          width: table.width,
-          height: actualSliceHeight
-        }, slicePosition);
-      }
-
-      // Update continuation for next page if there are more slices
-      if (continuation.sliceIndex + 1 < continuation.pageLayout.slices.length) {
-        this.tableContinuations.set(continuationKey, {
-          ...continuation,
-          sliceIndex: continuation.sliceIndex + 1
-        });
-
-        // Emit event to ensure we have enough pages
-        const firstPage = this.document.pages[0];
-        if (firstPage) {
-          this.emit('text-overflow', {
-            pageId: firstPage.id,
-            overflowPages: [],
-            totalPages: pageIndex + continuation.pageLayout.slices.length - continuation.sliceIndex
-          });
-        }
-      } else {
-        this.tableContinuations.delete(continuationKey);
-      }
-    }
-  }
-
-  /**
-   * Render table continuations at a specific Y position within a page.
-   * Used when there's both table continuations AND text content on the same page.
-   * Returns the total height consumed by the continuations.
-   */
-  private renderTableContinuationsAtPosition(
-    ctx: CanvasRenderingContext2D,
-    pageIndex: number,
-    contentBounds: Rect,
-    startY: number
-  ): number {
-    let totalHeight = 0;
-
-    for (const [continuationKey, continuation] of this.tableContinuations.entries()) {
-      if (continuation.sliceIndex >= continuation.pageLayout.slices.length) {
-        continue;
-      }
-
-      const table = continuation.table;
-      const slice = continuation.pageLayout.slices[continuation.sliceIndex];
-
-      // Position table at the current Y position
-      const tableX = contentBounds.x;
-      const tableY = startY + totalHeight;
-
-      // Update table rendered position
-      table.renderedPosition = { x: tableX, y: tableY };
-      table.renderedPageIndex = pageIndex;
-
-      ctx.save();
-      ctx.translate(tableX, tableY);
-      table.renderSlice(ctx, slice, continuation.pageLayout);
-      ctx.restore();
-
-      // Render cell text for rows in this slice
-      const rowsToRender = table.getRowsForSlice(slice, continuation.pageLayout);
-      this.renderTableCellText(table, rowsToRender, ctx, pageIndex, tableX, tableY, slice, continuation.pageLayout);
-
-      // Calculate actual slice height from the rows that were rendered
-      const actualSliceHeight = slice.height;
-
-      totalHeight += actualSliceHeight;
-
-      // Draw selection handles if selected
-      const isLastSlice = continuation.sliceIndex === continuation.pageLayout.slices.length - 1;
-      const slicePosition = isLastSlice ? 'last' : 'middle';
-      const sliceYOffset = continuation.pageLayout.slices[continuation.sliceIndex].yOffset;
-      const sliceHeaderHeight = continuation.pageLayout.headerHeight;
-
-      // Store slice info for hit detection
-      table.setRenderedSlice(
-        pageIndex,
-        { x: tableX, y: tableY },
-        actualSliceHeight,
-        slicePosition,
-        continuation.sliceIndex,
-        sliceYOffset,
-        sliceHeaderHeight,
-        slice.startRow,
-        slice.endRow,
-        slice.startRowOffset || 0,
-        slice.endRowOffset || 0
-      );
-      this.registerTableSliceHitTarget(table, pageIndex, { x: tableX, y: tableY }, actualSliceHeight);
-
-      if (table.selected) {
-        this.drawEmbeddedObjectHandles(ctx, table, { x: tableX, y: tableY }, {
-          width: table.width,
-          height: actualSliceHeight
-        }, slicePosition);
-      }
-
-      // Update continuation for next page if there are more slices
-      if (continuation.sliceIndex + 1 < continuation.pageLayout.slices.length) {
-        this.tableContinuations.set(continuationKey, {
-          ...continuation,
-          sliceIndex: continuation.sliceIndex + 1
-        });
-
-        // Emit event to ensure we have enough pages
-        const firstPage = this.document.pages[0];
-        if (firstPage) {
-          this.emit('text-overflow', {
-            pageId: firstPage.id,
-            overflowPages: [],
-            totalPages: pageIndex + continuation.pageLayout.slices.length - continuation.sliceIndex
-          });
-        }
-      } else {
-        this.tableContinuations.delete(continuationKey);
-      }
-    }
-
-    return totalHeight;
-  }
 
   /**
    * Draw selection border and resize handles for an embedded object.
@@ -2523,15 +2586,16 @@ export class FlowingTextRenderer extends EventEmitter {
     ctx: CanvasRenderingContext2D,
     bounds: Rect
   ): void {
-    if (!this.selectedText) return;
+    const selectedText = this.getActiveTextSelection();
+    if (!selectedText) return;
 
     ctx.save();
     ctx.fillStyle = 'rgba(0, 100, 255, 0.3)';
 
     let y = bounds.y;
     for (const line of flowedPage.lines) {
-      if (this.lineContainsSelection(line, this.selectedText)) {
-        const selectionBounds = this.getSelectionBoundsInLine(line, this.selectedText);
+      if (this.lineContainsSelection(line, selectedText)) {
+        const selectionBounds = this.getSelectionBoundsInLine(line, selectedText);
         // Account for list indentation - must match renderFlowedLine calculation
         const listIndent = line.listMarker?.indent ?? 0;
         // Calculate alignment offset using effective width (excluding list indent)
@@ -2739,27 +2803,6 @@ export class FlowingTextRenderer extends EventEmitter {
     return null;
   }
 
-  /**
-   * Get an embedded object at a specific point in a line.
-   * Note: lineY is the TOP of the line (same as position.y in render methods).
-   * lineStartX is the content area's left edge (includes margin offset).
-   */
-  getEmbeddedObjectAtPoint(line: FlowedLine, point: Point, lineY: number, lineStartX: number): BaseEmbeddedObject | null {
-    if (!line.embeddedObjects) return null;
-
-    for (const embeddedObj of line.embeddedObjects) {
-      const object = embeddedObj.object;
-      // Calculate absolute object position (embeddedObj.x is relative to line start)
-      const objectX = embeddedObj.x + lineStartX;
-      const objectY = lineY + (line.height - object.height) / 2;
-
-      if (object.containsPoint(point, { x: objectX, y: objectY })) {
-        return object;
-      }
-    }
-
-    return null;
-  }
 
   /**
    * Get a substitution field at a specific point in a line.
@@ -3083,16 +3126,6 @@ export class FlowingTextRenderer extends EventEmitter {
     return this.getTextIndexInLine(line, textX);
   }
 
-  setTextSelection(start: number, end: number): void {
-    this.selectedText = { start: Math.min(start, end), end: Math.max(start, end) };
-    this.emit('selection-changed', this.selectedText);
-  }
-
-  clearTextSelection(): void {
-    this.selectedText = null;
-    this.emit('selection-cleared');
-  }
-
   getFlowedPagesForPage(pageId: string): FlowedPage[] {
     return this.flowedPages.get(pageId) || [];
   }
@@ -3105,6 +3138,7 @@ export class FlowingTextRenderer extends EventEmitter {
     body: FlowedPage[];
     header: FlowedPage | null;
     footer: FlowedPage | null;
+    tree: LayoutTree | null;
     bodyHyperlinks?: { url: string; startIndex: number; endIndex: number }[];
     headerHyperlinks?: { url: string; startIndex: number; endIndex: number }[];
     footerHyperlinks?: { url: string; startIndex: number; endIndex: number }[];
@@ -3133,6 +3167,7 @@ export class FlowingTextRenderer extends EventEmitter {
       body: bodyPages,
       header: this.headerFlowedPage,
       footer: this.footerFlowedPage,
+      tree: this.layoutTree,
       bodyHyperlinks: bodyHyperlinks?.length ? bodyHyperlinks : undefined,
       headerHyperlinks: headerHyperlinks?.length ? headerHyperlinks : undefined,
       footerHyperlinks: footerHyperlinks?.length ? footerHyperlinks : undefined

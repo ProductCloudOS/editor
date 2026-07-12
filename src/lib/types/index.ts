@@ -3,6 +3,18 @@ export interface Point {
   y: number;
 }
 
+/**
+ * A page-qualified point (Phase 2b, refactor doc §3 P2): page-local
+ * coordinates plus the identity of the page they belong to. Pages have
+ * independent canvases whose local coordinates numerically overlap, so
+ * below the DOM event boundary a point without page identity is
+ * meaningless. Structurally assignable wherever a plain Point is expected.
+ */
+export interface DocPoint extends Point {
+  pageIndex: number;
+  pageId: string;
+}
+
 export interface Size {
   width: number;
   height: number;
