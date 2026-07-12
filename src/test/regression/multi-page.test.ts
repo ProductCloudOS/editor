@@ -195,3 +195,57 @@ describe('regression: page-spanning table', () => {
     expect(after.slice(anchorIndex + 1, anchorIndex + 6)).toBe('After');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 2: the single point-in-table authority
+// ---------------------------------------------------------------------------
+
+describe('TableObject.getLocalPointInSlice', () => {
+  function makeSlicedTable(): TableObject {
+    const table = new TableObject({
+      id: 'slice-auth',
+      columns: 1,
+      rowData: Array.from({ length: 10 }, (_, i) => ({
+        height: 60,
+        cells: [{ content: `Row ${i + 1}` }]
+      }))
+    });
+    // Simulate the painter's records: first slice on page 0 (rows 0-4),
+    // continuation slice on page 1 (repeated 20px header, rows 5-9,
+    // yOffset 300 into full-table space).
+    table.setRenderedSlice(0, { x: 50, y: 100 }, 300, 'first', 0, 0, 0, 0, 5, 0, 0);
+    table.setRenderedSlice(1, { x: 50, y: 40 }, 320, 'last', 1, 300, 20, 5, 10, 0, 0);
+    return table;
+  }
+
+  it('resolves a point in the first slice to plain table-local coordinates', () => {
+    const table = makeSlicedTable();
+    const local = table.getLocalPointInSlice(0, { x: 80, y: 190 });
+    expect(local).toEqual({ x: 30, y: 90 });
+  });
+
+  it('transforms a continuation-slice point below the repeated header into full-table row space', () => {
+    const table = makeSlicedTable();
+    // Page-local y 100 => slice-local 60; past the 20px header, so
+    // full-table y = yOffset 300 + (60 - 20) = 340
+    const local = table.getLocalPointInSlice(1, { x: 80, y: 100 });
+    expect(local).toEqual({ x: 30, y: 340 });
+  });
+
+  it('leaves a point within the repeated header untransformed', () => {
+    const table = makeSlicedTable();
+    // Slice-local y 10 < headerHeight 20
+    const local = table.getLocalPointInSlice(1, { x: 80, y: 50 });
+    expect(local).toEqual({ x: 30, y: 10 });
+  });
+
+  it('returns null for a page the table has no slice on', () => {
+    const table = makeSlicedTable();
+    expect(table.getLocalPointInSlice(3, { x: 80, y: 190 })).toBeNull();
+  });
+
+  it('returns null for a point outside the slice rect on a valid page', () => {
+    const table = makeSlicedTable();
+    expect(table.getLocalPointInSlice(0, { x: 80, y: 900 })).toBeNull();
+  });
+});

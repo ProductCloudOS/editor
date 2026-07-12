@@ -2799,27 +2799,6 @@ export class FlowingTextRenderer extends EventEmitter {
     return null;
   }
 
-  /**
-   * Get an embedded object at a specific point in a line.
-   * Note: lineY is the TOP of the line (same as position.y in render methods).
-   * lineStartX is the content area's left edge (includes margin offset).
-   */
-  getEmbeddedObjectAtPoint(line: FlowedLine, point: Point, lineY: number, lineStartX: number): BaseEmbeddedObject | null {
-    if (!line.embeddedObjects) return null;
-
-    for (const embeddedObj of line.embeddedObjects) {
-      const object = embeddedObj.object;
-      // Calculate absolute object position (embeddedObj.x is relative to line start)
-      const objectX = embeddedObj.x + lineStartX;
-      const objectY = lineY + (line.height - object.height) / 2;
-
-      if (object.containsPoint(point, { x: objectX, y: objectY })) {
-        return object;
-      }
-    }
-
-    return null;
-  }
 
   /**
    * Get a substitution field at a specific point in a line.

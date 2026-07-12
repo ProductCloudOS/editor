@@ -466,35 +466,10 @@ export class CanvasManager extends EventEmitter {
       const table = this._focusedControl;
       const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
 
-      // Get the slice for this page (for multi-page tables)
-      const slice = table.getRenderedSlice(pageIndex);
-      const tablePosition = slice?.position ||
-        (table.renderedPageIndex === pageIndex ? table.renderedPosition : null);
-      const sliceHeight = slice?.height || table.height;
+      // Single page-qualified point-in-table authority (handles slices)
+      const localPoint = table.getLocalPointInSlice(pageIndex, point);
 
-      // Check if point is within the table slice on this page
-      const isInsideTable = tablePosition &&
-        point.x >= tablePosition.x &&
-        point.x <= tablePosition.x + table.width &&
-        point.y >= tablePosition.y &&
-        point.y <= tablePosition.y + sliceHeight;
-
-      if (isInsideTable && tablePosition) {
-        const localPoint = {
-          x: point.x - tablePosition.x,
-          y: point.y - tablePosition.y
-        };
-
-        // If this is a continuation slice, adjust y for the slice offset
-        if (slice && (slice.slicePosition === 'middle' || slice.slicePosition === 'last')) {
-          const headerHeight = slice.headerHeight;
-          if (localPoint.y >= headerHeight) {
-            // Click is in the data rows area - transform coordinates
-            localPoint.y = slice.yOffset + (localPoint.y - headerHeight);
-          }
-          // If y < headerHeight, click is in repeated header - no adjustment needed
-        }
-
+      if (localPoint) {
         const cellAddr = table.getCellAtPoint(localPoint);
         if (cellAddr) {
           const ctx = this.contexts.get(pageId);
@@ -823,46 +798,18 @@ export class CanvasManager extends EventEmitter {
       const table = this.tableCellSelectionTable;
       const currentPageIndex = this.document.pages.findIndex(p => p.id === pageId);
 
-      // Get the slice for the current page (for multi-page tables)
-      const slice = table.getRenderedSlice(currentPageIndex);
-      const tablePosition = slice?.position ||
-        (table.renderedPageIndex === currentPageIndex ? table.renderedPosition : null);
-      const sliceHeight = slice?.height || table.height;
-
-      if (tablePosition) {
-        // Check if point is within the table slice on this page
-        const isInsideTable =
-          point.x >= tablePosition.x &&
-          point.x <= tablePosition.x + table.width &&
-          point.y >= tablePosition.y &&
-          point.y <= tablePosition.y + sliceHeight;
-
-        if (isInsideTable) {
-          const localPoint = {
-            x: point.x - tablePosition.x,
-            y: point.y - tablePosition.y
-          };
-
-          // If this is a continuation slice, adjust y for the slice offset
-          if (slice && (slice.slicePosition === 'middle' || slice.slicePosition === 'last')) {
-            const headerHeight = slice.headerHeight;
-            if (localPoint.y >= headerHeight) {
-              // Click is in the data rows area - transform coordinates
-              localPoint.y = slice.yOffset + (localPoint.y - headerHeight);
-            }
-            // If y < headerHeight, click is in repeated header - no adjustment needed
-          }
-
-          const cellAddr = table.getCellAtPoint(localPoint);
-          if (cellAddr) {
-            // Update selection range
-            table.selectRange({
-              start: this.tableCellSelectionStart,
-              end: cellAddr
-            });
-            this.render();
-            this.emit('table-cell-selection-changed', { table });
-          }
+      // Single page-qualified point-in-table authority (handles slices)
+      const localPoint = table.getLocalPointInSlice(currentPageIndex, point);
+      if (localPoint) {
+        const cellAddr = table.getCellAtPoint(localPoint);
+        if (cellAddr) {
+          // Update selection range
+          table.selectRange({
+            start: this.tableCellSelectionStart,
+            end: cellAddr
+          });
+          this.render();
+          this.emit('table-cell-selection-changed', { table });
         }
       }
       e.preventDefault();
@@ -1113,20 +1060,8 @@ export class CanvasManager extends EventEmitter {
       const table = this._focusedControl;
       const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
 
-      // Check if click is inside any slice of the table
-      let isInsideTable = false;
-      const slice = table.getRenderedSlice(pageIndex);
-      if (slice) {
-        const sliceHeight = slice.height;
-        isInsideTable =
-          point.x >= slice.position.x &&
-          point.x <= slice.position.x + table.width &&
-          point.y >= slice.position.y &&
-          point.y <= slice.position.y + sliceHeight;
-      } else if (table.renderedPosition && table.renderedPageIndex === pageIndex) {
-        // Fallback to renderedPosition if no slice info
-        isInsideTable = table.containsPoint(point, table.renderedPosition);
-      }
+      // Single page-qualified point-in-table authority (handles slices)
+      const isInsideTable = table.getLocalPointInSlice(pageIndex, point) !== null;
 
       if (isInsideTable) {
         // Click inside focused table - already handled by mousedown
@@ -1578,22 +1513,9 @@ export class CanvasManager extends EventEmitter {
       return;
     }
 
-    // Check for table cells (show text cursor)
-    const tableCellHit = hitTestManager.queryByType(pageIndex, point, 'table-cell');
-    if (tableCellHit && tableCellHit.data.type === 'table-cell') {
-      canvas.style.cursor = CanvasManager.TEXT_CURSOR;
-      return;
-    }
-
-    // Check for text regions (body, header, footer - show text cursor)
-    const textRegionHit = hitTestManager.queryByType(pageIndex, point, 'text-region');
-    if (textRegionHit && textRegionHit.data.type === 'text-region') {
-      canvas.style.cursor = CanvasManager.TEXT_CURSOR;
-      return;
-    }
-
-    // Also check if point is within any editable region (body, header, footer)
-    // This catches cases where text region hit targets may not cover empty space
+    // Check if point is within any editable region (body, header, footer).
+    // (Former 'table-cell'/'text-region' registry queries were dead code —
+    // nothing ever registered those target types.)
     const bodyRegion = this.regionManager.getBodyRegion();
     if (bodyRegion && bodyRegion.containsPointInRegion(point, pageIndex)) {
       canvas.style.cursor = CanvasManager.TEXT_CURSOR;
@@ -2478,46 +2400,13 @@ export class CanvasManager extends EventEmitter {
 
         // Handle TableObject double-clicks (enter editing mode)
         if (obj instanceof TableObject) {
-          // For multi-page tables, check if this page has a rendered slice
-          const slice = obj.getRenderedSlice(pageIndex);
-          // Only use renderedPosition if the table was actually rendered on this page
-          const tablePosition = slice?.position ||
-            (obj.renderedPageIndex === pageIndex ? obj.renderedPosition : null);
+          // Single page-qualified point-in-table authority (handles slices)
+          const localPoint = obj.getLocalPointInSlice(pageIndex, point);
 
-          if (tablePosition) {
-            // Check if point is inside the table slice on this page
-            const sliceHeight = slice?.height || obj.height;
-            const isInsideTable =
-              point.x >= tablePosition.x &&
-              point.x <= tablePosition.x + obj.width &&
-              point.y >= tablePosition.y &&
-              point.y <= tablePosition.y + sliceHeight;
-
-            if (isInsideTable) {
+          {
+            if (localPoint) {
               const ctx = this.contexts.get(pageId);
               if (ctx && pageIndex >= 0) {
-                // Convert point to table-local coordinates
-                // For multi-page tables, we need to adjust the y coordinate based on which slice we're in
-                const localPoint = {
-                  x: point.x - tablePosition.x,
-                  y: point.y - tablePosition.y
-                };
-
-                // If this is a continuation slice (middle or last), adjust y for rows already on previous pages
-                if (slice && (slice.slicePosition === 'middle' || slice.slicePosition === 'last')) {
-                  // On continuation pages, headers are repeated at the top
-                  // The visual layout is: [repeated headers][data rows starting from startRow]
-                  const headerHeight = slice.headerHeight;
-
-                  if (localPoint.y >= headerHeight) {
-                    // Click is in the data rows area
-                    // Transform: subtract header height, add offset where data rows start in full table
-                    localPoint.y = slice.yOffset + (localPoint.y - headerHeight);
-                  }
-                  // If y < headerHeight, click is in repeated header - no adjustment needed
-                  // as row 0 is at y=0 in getCellAtPoint
-                }
-
                 // Find which cell was double-clicked
                 const cellAddr = obj.getCellAtPoint(localPoint);
                 if (cellAddr) {
