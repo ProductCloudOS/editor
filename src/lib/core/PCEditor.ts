@@ -13,7 +13,6 @@ import { EventEmitter } from '../events/EventEmitter';
 import { CanvasManager } from '../rendering/CanvasManager';
 import { DataBinder } from '../data/DataBinder';
 import { PDFGenerator } from '../rendering/PDFGenerator';
-import { LayoutEngine } from '../layout/LayoutEngine';
 import { BaseEmbeddedObject, ObjectPosition, TextBoxObject, TableObject, ImageObject, TableRowConfig, EmbeddedObjectFactory, EmbeddedObjectData } from '../objects';
 import { SubstitutionFieldConfig, TextFormattingStyle, SubstitutionField, RepeatingSection, ConditionalSection, FlowingTextContent, TextAlignment, Focusable } from '../text';
 import { PredicateEvaluator } from '../text/PredicateEvaluator';
@@ -42,7 +41,6 @@ export class PCEditor extends EventEmitter {
   private dataBinder: DataBinder;
   private pdfGenerator: PDFGenerator;
   private fontManager: FontManager;
-  private layoutEngine!: LayoutEngine;
   // Transaction-based undo system
   private transactionManager!: TransactionManager;
   private textMutationObserver!: TextMutationObserver;
@@ -107,11 +105,6 @@ export class PCEditor extends EventEmitter {
     try {
       this.setupContainer();
       this.canvasManager = new CanvasManager(this.container, this.document, this.options);
-      this.layoutEngine = new LayoutEngine(this.document, {
-        autoFlow: true,
-        snapToGrid: this.options.showGrid,
-        gridSize: this.options.gridSize
-      });
 
       this.canvasManager.initialize();
       this.setupEventListeners();
@@ -176,22 +169,6 @@ export class PCEditor extends EventEmitter {
       this.emit('element-removed', data);
     });
 
-    // Layout engine events
-    this.layoutEngine.on('page-added', (data: any) => {
-      this.canvasManager.setDocument(this.document);
-      this.emit('page-added', data);
-    });
-
-    this.layoutEngine.on('page-break-created', (data: any) => {
-      this.canvasManager.setDocument(this.document);
-      this.emit('page-break-created', data);
-    });
-
-    this.layoutEngine.on('layout-complete', (data: any) => {
-      this.canvasManager.render();
-      this.emit('layout-complete', data);
-    });
-    
     // Flowing text events
     this.canvasManager.on('text-clicked', (data: any) => {
       this.enableTextInput();
@@ -709,14 +686,6 @@ export class PCEditor extends EventEmitter {
     // Clear undo history on document load
     this.clearUndoHistory();
 
-    // Update layout engine with new document
-    this.layoutEngine.destroy();
-    this.layoutEngine = new LayoutEngine(this.document, {
-      autoFlow: true,
-      snapToGrid: this.options.showGrid,
-      gridSize: this.options.gridSize
-    });
-
     this.setupEventListeners();
     this.setupTransactionUndo();
     this.emit('document-loaded', { document: documentData });
@@ -1107,13 +1076,15 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.fitToPage();
   }
 
-  // Layout control methods
+  // Layout control methods.
+  // Layout is recomputed on every render from the LayoutTree, so autoFlow and
+  // snapToGrid (a control for the removed free-positioned elements) no longer
+  // gate anything. These remain as no-ops for API compatibility.
   setAutoFlow(enabled: boolean): void {
     Logger.log('[pc-editor] setAutoFlow', enabled);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
-    this.layoutEngine.setAutoFlow(enabled);
   }
 
   reflowDocument(): void {
@@ -1121,14 +1092,15 @@ export class PCEditor extends EventEmitter {
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
-    this.layoutEngine.reflowDocument();
+    // A reflow is just a fresh render now — the layout pass runs inside it.
+    this.canvasManager.render();
   }
 
   setSnapToGrid(enabled: boolean): void {
+    Logger.log('[pc-editor] setSnapToGrid', enabled);
     if (!this._isReady) {
       throw new Error('Editor is not ready');
     }
-    this.layoutEngine.setSnapToGrid(enabled, this.options.gridSize);
   }
 
   getDocumentMetrics(): {
@@ -4310,9 +4282,6 @@ export class PCEditor extends EventEmitter {
     this.disableTextInput();
     if (this.canvasManager) {
       this.canvasManager.destroy();
-    }
-    if (this.layoutEngine) {
-      this.layoutEngine.destroy();
     }
     this.document.clear();
     this.removeAllListeners();
