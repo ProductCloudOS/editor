@@ -2254,8 +2254,22 @@ export class CanvasManager extends EventEmitter {
     // Get the current text flow to determine needed pages
     const firstPageFlowed = this.flowingTextRenderer.getFlowedPagesForPage(this.document.pages[0].id);
     if (!firstPageFlowed) return;
-    
-    const neededPages = firstPageFlowed.length;
+
+    // Page-spanning tables occupy pages beyond the text-flow page count (the
+    // flow model keeps a spanning table on its start page; the renderer emits
+    // its tail slices onto later pages). Those pages must be counted as
+    // needed, otherwise this remove path deletes the very page the overflow
+    // path created for the table and the tail slices have nowhere to render.
+    let tablePages = 0;
+    for (const [, obj] of this.document.bodyFlowingContent.getEmbeddedObjects()) {
+      if (obj instanceof TableObject) {
+        for (const slicePageIndex of obj.getRenderedPageIndices()) {
+          tablePages = Math.max(tablePages, slicePageIndex + 1);
+        }
+      }
+    }
+
+    const neededPages = Math.max(firstPageFlowed.length, tablePages);
     const currentPages = this.document.pages.length;
     
     if (currentPages === neededPages) return; // Nothing to do

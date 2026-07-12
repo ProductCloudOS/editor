@@ -110,14 +110,34 @@ export class FlowingTextRenderer extends EventEmitter {
     const flowedPages = this.flowedPages.get(firstPage.id);
     if (!flowedPages || flowedPages.length === 0) return null;
 
+    // A block-object line spans [T, T+1] and shares its end boundary with the
+    // start of the following line. Index T+1 means "after the object", so it
+    // must bind to the following line — binding to the object's own line
+    // renders the caret at the object's top-right corner on its start page.
+    // Keep the block line as a fallback for when nothing follows the object.
+    let blockLineFallback: {
+      pageIndex: number;
+      lineIndex: number;
+      line: FlowedLine;
+      flowedPage: FlowedPage;
+    } | null = null;
+
     for (let pageIndex = 0; pageIndex < flowedPages.length; pageIndex++) {
       const flowedPage = flowedPages[pageIndex];
       for (let lineIndex = 0; lineIndex < flowedPage.lines.length; lineIndex++) {
         const line = flowedPage.lines[lineIndex];
         if (textIndex >= line.startIndex && textIndex <= line.endIndex) {
+          if (line.isBlockObjectLine && textIndex === line.endIndex) {
+            blockLineFallback = { pageIndex, lineIndex, line, flowedPage };
+            continue;
+          }
           return { pageIndex, lineIndex, line, flowedPage };
         }
       }
+    }
+
+    if (blockLineFallback) {
+      return blockLineFallback;
     }
 
     // Cursor at end of text - return last line
@@ -430,6 +450,14 @@ export class FlowingTextRenderer extends EventEmitter {
 
     // Flow the header content
     const headerContent = this.document.headerFlowingContent;
+
+    // Header objects repeat at identical page-local coordinates on every
+    // page, so they are exempt from the page-index hit check that body
+    // objects need (their renderedPageIndex is just the last page painted).
+    for (const [, obj] of headerContent.getEmbeddedObjects()) {
+      obj.renderedPageInvariant = true;
+    }
+
     const flowedPages = headerContent.flowText(bounds.width, bounds.height, ctx);
 
     if (flowedPages.length > 0) {
@@ -485,6 +513,13 @@ export class FlowingTextRenderer extends EventEmitter {
 
     // Flow the footer content
     const footerContent = this.document.footerFlowingContent;
+
+    // Footer objects repeat at identical page-local coordinates on every
+    // page — same page-invariance exemption as header objects.
+    for (const [, obj] of footerContent.getEmbeddedObjects()) {
+      obj.renderedPageInvariant = true;
+    }
+
     const flowedPages = footerContent.flowText(bounds.width, bounds.height, ctx);
 
     if (flowedPages.length > 0) {
@@ -550,14 +585,24 @@ export class FlowingTextRenderer extends EventEmitter {
     const flowedLines = this.getFlowedLinesForRegion(region, pageIndex);
     const maxWidth = this.getAvailableWidthForRegion(region, pageIndex);
 
-    // Handle empty content - cursor at position 0
+    // Handle pages with no text lines of their own
     if (flowedLines.length === 0) {
-      region.flowingContent.setCursorPosition(0);
+      // A continuation-only page exists solely for the tail slices of a
+      // page-spanning object (the text flow model keeps such an object on its
+      // start page). Clicking it means "after that object", not "start of
+      // document" — jumping the caret to index 0 was the cause of not being
+      // able to type after a table that ends the document.
+      let textIndex = 0;
+      if (region.type === 'body' && pageIndex > 0) {
+        textIndex = region.flowingContent.getText().length;
+      }
+
+      region.flowingContent.setCursorPosition(textIndex);
       region.flowingContent.resetCursorBlink();
 
-      this.emit('text-clicked', { textIndex: 0, line: 0, section: region.type });
-      this.emit('cursor-changed', { textIndex: 0, section: region.type });
-      return { textIndex: 0, lineIndex: 0 };
+      this.emit('text-clicked', { textIndex, line: 0, section: region.type });
+      this.emit('cursor-changed', { textIndex, section: region.type });
+      return { textIndex, lineIndex: 0 };
     }
 
     // Find line at Y position using TextPositionCalculator
@@ -1580,6 +1625,11 @@ export class FlowingTextRenderer extends EventEmitter {
           this.tableContinuations.delete(continuationKey);
         }
       } else if (contentBounds) {
+        // First render of this table in this pass (continuations re-enter the
+        // branch above): drop slice records from previous layouts so pages
+        // the table no longer occupies stop answering hit queries for it.
+        table.clearRenderedSlices();
+
         const availableHeight = contentBounds.position.y + contentBounds.size.height - elementY;
 
         if (table.needsPageSplit(availableHeight)) {
@@ -1687,6 +1737,7 @@ export class FlowingTextRenderer extends EventEmitter {
         }
       } else {
         // No content bounds available - render normally (fallback)
+        table.clearRenderedSlices();
         table.renderedPosition = { x: elementX, y: elementY };
         table.renderedPageIndex = pageIndex;
         table.updateCellRenderedPositions();

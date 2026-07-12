@@ -120,6 +120,20 @@ export class TextLayout {
       globalIndex = lineEndIndex + (delimiter !== 'end' ? 1 : 0);
     }
 
+    // A document that ends with a block object still needs a caret home
+    // after it — a block-object line spans [T, T+1] and index T+1 ("after
+    // the object") must have a real line to bind to, otherwise the caret can
+    // only attach to the object's own line and nothing can be typed after a
+    // document-final table.
+    const lastLine = allLines[allLines.length - 1];
+    if (lastLine?.isBlockObjectLine) {
+      const trailingFormatting =
+        context.paragraphFormatting.getFormattingForParagraph(lastLine.endIndex);
+      allLines.push(
+        this.createEmptyLine(lastLine.endIndex, context.formatting, trailingFormatting.alignment)
+      );
+    }
+
     // Paginate the lines
     return this.paginateLines(allLines, context.availableHeight);
   }

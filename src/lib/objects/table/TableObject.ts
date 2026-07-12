@@ -1278,6 +1278,9 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
             x: this._renderedPosition.x + columnPositions[colIdx],
             y: this._renderedPosition.y + y
           });
+          // Cell positions are page-local; hit queries validate against the
+          // page, so the cells must carry the same page as the table.
+          cell.renderedPageIndex = this._renderedPageIndex;
         }
       }
       y += row.calculatedHeight;
@@ -1298,6 +1301,11 @@ export class TableObject extends BaseEmbeddedObject implements Focusable {
     availableHeightFirstPage: number,
     availableHeightOtherPages: number
   ): TablePageLayout {
+    // A new layout invalidates every previously rendered slice. Without this,
+    // slice records accumulate across relayouts and pages the table no longer
+    // occupies keep answering hit queries for it (T20 recurrence).
+    this._renderedSlices.clear();
+
     const headerHeight = this.getHeaderHeight();
     const headerRowIndices = this.getHeaderRowIndices();
     const totalHeight = this._size.height;

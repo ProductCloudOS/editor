@@ -24,6 +24,7 @@ export abstract class BaseEmbeddedObject extends EventEmitter {
   protected _locked: boolean = false;
   protected _renderedPosition: Point | null = null;
   protected _renderedPageIndex: number = -1;
+  protected _renderedPageInvariant: boolean = false;
 
   constructor(config: EmbeddedObjectConfig) {
     super();
@@ -173,6 +174,20 @@ export abstract class BaseEmbeddedObject extends EventEmitter {
    */
   set renderedPageIndex(value: number) {
     this._renderedPageIndex = value;
+  }
+
+  /**
+   * Whether this object renders at the same page-local coordinates on every
+   * page (header/footer content). Page-invariant objects are exempt from
+   * page-index checks during hit detection; body objects are not, because
+   * each page's canvas has its own overlapping local coordinate space.
+   */
+  get renderedPageInvariant(): boolean {
+    return this._renderedPageInvariant;
+  }
+
+  set renderedPageInvariant(value: boolean) {
+    this._renderedPageInvariant = value;
   }
 
   // ============ Common Methods ============
