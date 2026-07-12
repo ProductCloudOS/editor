@@ -37,7 +37,11 @@ export class CanvasManager extends EventEmitter {
   private resizingElementId: string | null = null;
   private flowingTextRenderer: FlowingTextRenderer;
   private showMargins: boolean = true;
-  private isHandlingOverflow: boolean = false;
+  // Render-cycle scheduler state (Phase 3d): re-entrant render() calls
+  // (e.g. from document 'change' events fired while reconciling pages inside
+  // the cycle) coalesce into one queued follow-up pass instead of recursing.
+  private isRendering: boolean = false;
+  private renderQueued: boolean = false;
   private isSelectingText: boolean = false;
   private textSelectionStartPageId: string | null = null;
   private selectedSectionId: string | null = null;
@@ -191,6 +195,84 @@ export class CanvasManager extends EventEmitter {
   }
 
   render(): void {
+    // Coalesce re-entrant calls into a single follow-up pass.
+    if (this.isRendering) {
+      this.renderQueued = true;
+      return;
+    }
+    this.isRendering = true;
+    try {
+      do {
+        this.renderQueued = false;
+        this.renderCycle();
+      } while (this.renderQueued);
+    } finally {
+      this.isRendering = false;
+    }
+  }
+
+  /**
+   * One deterministic update cycle (Phase 3d): layout, then page-count
+   * reconciliation, then paint. Pages are added/removed synchronously from
+   * the tree's derived pageCount — there is no overflow-event round-trip,
+   * no deferred re-render, and no re-entrancy guard flag beyond the
+   * scheduler's own queueing.
+   */
+  private renderCycle(): void {
+    // 1. LAYOUT: build the body layout tree once per cycle.
+    const firstPage = this.document.pages[0];
+    const firstCtx = firstPage ? this.contexts.get(firstPage.id) : undefined;
+    if (firstPage && firstCtx) {
+      const cb = firstPage.getContentBounds();
+      const tree = this.flowingTextRenderer.layoutBody(firstCtx, {
+        x: cb.position.x,
+        y: cb.position.y,
+        width: cb.size.width,
+        height: cb.size.height
+      });
+
+      // 2. RECONCILE: the tree's pageCount is the single page requirement.
+      this.reconcilePageCount(tree.pageCount);
+    }
+
+    // 3. PAINT every page from the tree.
+    this.paintPages();
+  }
+
+  /**
+   * Add or remove document pages (and their canvases) to match the layout
+   * tree's derived page requirement.
+   */
+  private reconcilePageCount(neededPages: number): void {
+    const current = this.document.pages.length;
+    const target = Math.max(1, neededPages);
+    if (current === target) return;
+
+    if (current < target) {
+      for (let i = current; i < target; i++) {
+        this.createNewPage();
+      }
+    } else {
+      // Remove extra pages, always from the end.
+      for (let i = current - 1; i >= target; i--) {
+        this.document.removePage(this.document.pages[i].id);
+      }
+    }
+
+    // Rebuild canvases to match the new page set.
+    this.clearCanvases();
+    this.createCanvases();
+    this.setupEventListeners();
+    this.updateCanvasScale();
+
+    if (current < target) {
+      this.emit('pages-added', { newPageCount: target - current });
+    } else {
+      this.emit('pages-removed', { removedCount: current - target });
+    }
+  }
+
+  private paintPages(): void {
     this.document.pages.forEach(page => {
       const ctx = this.contexts.get(page.id);
       if (!ctx) return;
@@ -1970,14 +2052,6 @@ export class CanvasManager extends EventEmitter {
       this.render(); // Re-render to show selection highlight
     });
     
-    this.flowingTextRenderer.on('text-overflow', (data) => {
-      this.handleTextOverflow(data);
-    });
-    
-    this.flowingTextRenderer.on('content-changed', () => {
-      this.checkForEmptyPages();
-    });
-    
     this.flowingTextRenderer.on('inline-element-clicked', (data) => {
       // Ignore inline element clicks during text selection drag
       // (the event is emitted from handleRegionClick which is also used during mouse move for selection)
@@ -2009,51 +2083,6 @@ export class CanvasManager extends EventEmitter {
     });
   }
   
-  private handleTextOverflow(data: any): void {
-    // Prevent recursive overflow handling
-    if (this.isHandlingOverflow) return;
-    
-    const { pageId, totalPages } = data;
-    
-    // Create additional pages for overflow content
-    const currentPageIndex = this.document.pages.findIndex(p => p.id === pageId);
-    if (currentPageIndex === -1) return;
-    
-    // Calculate how many new pages we need
-    const existingPages = this.document.pages.length;
-    const neededPages = currentPageIndex + totalPages;
-    
-    if (neededPages <= existingPages) {
-      // We already have enough pages
-      return;
-    }
-    
-    this.isHandlingOverflow = true;
-    
-    try {
-      // Add needed pages
-      for (let i = existingPages; i < neededPages; i++) {
-        this.createNewPage();
-      }
-      
-      // Rebuild canvases for consistency
-      this.clearCanvases();
-      this.createCanvases();
-      this.setupEventListeners();
-      this.updateCanvasScale(); // Apply current zoom to newly created canvases
-
-      // Defer the render to break the synchronous call chain
-      setTimeout(() => {
-        this.isHandlingOverflow = false;
-        this.render();
-      }, 0);
-
-      this.emit('pages-added', { newPageCount: this.document.pages.length - existingPages });
-    } catch (error) {
-      this.isHandlingOverflow = false;
-      throw error;
-    }
-  }
   
   private createNewPage(): void {
     const existingPage = this.document.pages[0];
@@ -2164,56 +2193,6 @@ export class CanvasManager extends EventEmitter {
   }
   
 
-  checkForEmptyPages(): void {
-    // Don't remove pages if we're in the middle of handling overflow
-    if (this.isHandlingOverflow) return;
-    
-    // Always keep at least one page
-    if (this.document.pages.length <= 1) return;
-    
-    // Get the current text flow to determine needed pages
-    const firstPageFlowed = this.flowingTextRenderer.getFlowedPagesForPage(this.document.pages[0].id);
-    if (!firstPageFlowed) return;
-
-    // Page-spanning tables occupy pages beyond the text-flow page count (the
-    // flow model keeps a spanning table on its start page; the renderer emits
-    // its tail slices onto later pages). Those pages must be counted as
-    // needed, otherwise this remove path deletes the very page the overflow
-    // path created for the table and the tail slices have nowhere to render.
-    let tablePages = 0;
-    for (const [, obj] of this.document.bodyFlowingContent.getEmbeddedObjects()) {
-      if (obj instanceof TableObject) {
-        for (const slicePageIndex of obj.getRenderedPageIndices()) {
-          tablePages = Math.max(tablePages, slicePageIndex + 1);
-        }
-      }
-    }
-
-    const neededPages = Math.max(firstPageFlowed.length, tablePages);
-    const currentPages = this.document.pages.length;
-    
-    if (currentPages === neededPages) return; // Nothing to do
-    
-    // Remove extra pages (always from the end)
-    if (currentPages > neededPages && neededPages >= 1) {
-      for (let i = currentPages - 1; i >= neededPages; i--) {
-        this.document.removePage(this.document.pages[i].id);
-      }
-      
-      // Rebuild canvases
-      this.clearCanvases();
-      this.createCanvases();
-      this.setupEventListeners();
-      this.updateCanvasScale(); // Apply current zoom to newly created canvases
-
-      // Defer render to avoid conflicts
-      setTimeout(() => {
-        this.render();
-      }, 0);
-
-      this.emit('pages-removed', { removedCount: currentPages - neededPages });
-    }
-  }
 
   /**
    * Set whether control characters are shown.

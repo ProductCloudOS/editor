@@ -368,47 +368,46 @@ export class FlowingTextRenderer extends EventEmitter {
     });
   }
 
+  /**
+   * The layout step of the render cycle (Phase 3d): wrap the body content
+   * and build the LayoutTree. Pagination — including table slicing — happens
+   * in the tree, so pages, slices, and following-content positions are model
+   * state rather than painting side effects. The caller (CanvasManager's
+   * render cycle) reconciles the document's page count against
+   * tree.pageCount BEFORE painting; there is no overflow event round-trip.
+   */
+  layoutBody(ctx: CanvasRenderingContext2D, contentBounds: Rect): LayoutTree {
+    const body = this.document.bodyFlowingContent;
+    const lines = body.wrapContent(contentBounds.width, ctx);
+    this.layoutTree = buildLayoutTree(
+      lines,
+      {
+        contentOrigin: { x: contentBounds.x, y: contentBounds.y },
+        contentWidth: contentBounds.width,
+        availableHeightFirstPage: contentBounds.height,
+        availableHeightOtherPages: contentBounds.height
+      },
+      ctx
+    );
+
+    // Derive the legacy per-page structures that other consumers (cursor
+    // geometry, selection, region clicks) still read. These are projections
+    // of the tree, not independent computations.
+    const firstPage = this.document.pages[0];
+    if (firstPage) {
+      this.flowedPages.set(firstPage.id, this.deriveFlowedPages(this.layoutTree));
+    }
+    this.derivePageTextOffsets(this.layoutTree, contentBounds);
+
+    return this.layoutTree;
+  }
+
   renderPageFlowingText(
     page: Page,
     ctx: CanvasRenderingContext2D,
     contentBounds: Rect
   ): void {
     const pageIndex = this.document.pages.findIndex(p => p.id === page.id);
-
-    if (pageIndex === 0) {
-      // Single layout pass for the render cycle: wrap the body content and
-      // build the LayoutTree. Pagination — including table slicing — happens
-      // in the tree, so pages, slices, and following-content positions are
-      // model state rather than painting side effects.
-      const body = this.document.bodyFlowingContent;
-      const lines = body.wrapContent(contentBounds.width, ctx);
-      this.layoutTree = buildLayoutTree(
-        lines,
-        {
-          contentOrigin: { x: contentBounds.x, y: contentBounds.y },
-          contentWidth: contentBounds.width,
-          availableHeightFirstPage: contentBounds.height,
-          availableHeightOtherPages: contentBounds.height
-        },
-        ctx
-      );
-
-      // Derive the legacy per-page structures that other consumers (cursor
-      // geometry, selection, region clicks, page management) still read.
-      // These are now projections of the tree, not independent computations.
-      const flowedPages = this.deriveFlowedPages(this.layoutTree);
-      this.flowedPages.set(page.id, flowedPages);
-      this.derivePageTextOffsets(this.layoutTree, contentBounds);
-
-      // Request pages to match the tree's derived page requirement.
-      if (this.layoutTree.pageCount > 1) {
-        this.emit('text-overflow', {
-          pageId: page.id,
-          overflowPages: flowedPages.slice(1),
-          totalPages: this.layoutTree.pageCount
-        });
-      }
-    }
 
     this.renderTreePage(pageIndex, ctx, contentBounds);
 

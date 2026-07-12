@@ -144,11 +144,9 @@ export class PCEditor extends EventEmitter {
       // 3. Check if pages need to be added/removed
       if (this.canvasManager) {
         this.canvasManager.updateCanvasSizes();
+        // The render cycle reconciles the page count itself (Phase 3d);
+        // no deferred page check is needed.
         this.canvasManager.render();
-        // Defer the page check to allow reflow to complete
-        setTimeout(() => {
-          this.canvasManager.checkForEmptyPages();
-        }, 50);
       }
       // Forward to external controls (rulers)
       this.emit('settings-changed');
@@ -1152,6 +1150,11 @@ export class PCEditor extends EventEmitter {
     };
   }
 
+  /**
+   * Legacy page-list mutation. Since Phase 3d the page count is derived from
+   * the layout tree on every render cycle, so a manually added empty page is
+   * reconciled away again — use insertPageBreak() to add a durable page.
+   */
   addPage(): void {
     Logger.log('[pc-editor] addPage');
     if (!this._isReady) {
@@ -1167,6 +1170,12 @@ export class PCEditor extends EventEmitter {
     this.canvasManager.setDocument(this.document);
   }
 
+  /**
+   * Legacy page-list mutation. Since Phase 3d the page count is derived from
+   * the layout tree on every render cycle, so removing a page the content
+   * still requires is undone by reconciliation — remove the content (or its
+   * page break) instead.
+   */
   removePage(pageId: string): void {
     Logger.log('[pc-editor] removePage', pageId);
     if (!this._isReady) {
