@@ -58,6 +58,9 @@ function initializeEditor(): void {
   // Set up logging for all editor events
   setupEditorEventLogging();
 
+  // Expose the editor instance for scripted/manual testing from the console.
+  (window as unknown as { pcEditor: PCEditor }).pcEditor = editor;
+
   editor.on('ready', () => {
     Logger.log('[Editor Event] ready');
     // Insert a welcome message with demo content
