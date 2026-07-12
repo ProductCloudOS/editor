@@ -1,6 +1,6 @@
 import { Document } from '../core/Document';
 import { Page } from '../core/Page';
-import { EditorOptions, Point, PageDimensions, Size, Rect, EditingSection } from '../types';
+import { EditorOptions, Point, DocPoint, PageDimensions, Size, Rect, EditingSection } from '../types';
 import { EventEmitter } from '../events/EventEmitter';
 import { FlowingTextRenderer } from './FlowingTextRenderer';
 import { TextBoxObject, BaseEmbeddedObject } from '../objects';
@@ -503,16 +503,35 @@ export class CanvasManager extends EventEmitter {
 
   private setupEventListeners(): void {
     this.canvases.forEach((canvas, pageId) => {
-      canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e, pageId));
-      canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e, pageId));
-      canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e, pageId));
-      canvas.addEventListener('mouseleave', (e) => this.handleMouseLeave(e, pageId));
-      canvas.addEventListener('click', (e) => this.handleClick(e, pageId));
+      const dispatch = (handler: (e: MouseEvent, at: DocPoint) => void) =>
+        (e: MouseEvent) => {
+          const at = this.docPointFromEvent(e, pageId);
+          if (at) handler.call(this, e, at);
+        };
+      canvas.addEventListener('mousedown', dispatch(this.handleMouseDown));
+      canvas.addEventListener('mousemove', dispatch(this.handleMouseMove));
+      canvas.addEventListener('mouseup', dispatch(this.handleMouseUp));
+      canvas.addEventListener('mouseleave', dispatch(this.handleMouseLeave));
+      canvas.addEventListener('click', dispatch(this.handleClick));
     });
   }
 
-  private handleMouseDown(e: MouseEvent, pageId: string): void {
+  /**
+   * Resolve a DOM mouse event into a page-qualified DocPoint (Phase 2b).
+   * Page identity is resolved exactly once, here at the event boundary —
+   * below this point, coordinates without a page do not exist.
+   */
+  private docPointFromEvent(e: MouseEvent, pageId: string): DocPoint | null {
+    const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+    if (pageIndex < 0) return null;
     const point = this.getMousePosition(e);
+    return { pageIndex, pageId, x: point.x, y: point.y };
+  }
+
+  private handleMouseDown(e: MouseEvent, at: DocPoint): void {
+    const point: Point = at;
+    const pageId = at.pageId;
+
 
     // Check if clicking on a resize handle
     const handle = this.getResizeHandleAt(point, pageId);
@@ -544,7 +563,7 @@ export class CanvasManager extends EventEmitter {
     // Check if clicking inside an editing table - handle cell selection or text selection
     if (this._focusedControl instanceof TableObject) {
       const table = this._focusedControl;
-      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const pageIndex = at.pageIndex;
 
       // Single page-qualified point-in-table authority (handles slices)
       const localPoint = table.getLocalPointInSlice(pageIndex, point);
@@ -640,7 +659,7 @@ export class CanvasManager extends EventEmitter {
     // Check if clicking inside an editing text box - start text selection
     if (this.editingTextBox && this._editingTextBoxPageId === pageId) {
       const textBox = this.editingTextBox;
-      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const pageIndex = at.pageIndex;
       const ctx = this.contexts.get(pageId);
 
       if (ctx && pageIndex >= 0 && textBox.containsPointInRegion(point, pageIndex)) {
@@ -673,7 +692,7 @@ export class CanvasManager extends EventEmitter {
 
     // Check if clicking on an embedded object using HitTestManager
     // Object selection is handled in handleClick
-    const mouseDownPageIndex = this.document.pages.findIndex(p => p.id === pageId);
+    const mouseDownPageIndex = at.pageIndex;
     const hitTestManager = this.flowingTextRenderer.hitTestManager;
     const embeddedObjectHit = hitTestManager.queryByType(mouseDownPageIndex, point, 'embedded-object');
 
@@ -706,7 +725,7 @@ export class CanvasManager extends EventEmitter {
       // Use region-based click detection for unified handling
       const region = this.getRegionForActiveSection();
       const ctx = this.contexts.get(pageId);
-      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const pageIndex = at.pageIndex;
 
       if (region && ctx && pageIndex >= 0) {
         if (e.shiftKey) {
@@ -756,8 +775,10 @@ export class CanvasManager extends EventEmitter {
     this.dragStart = point;
   }
 
-  private handleMouseMove(e: MouseEvent, pageId: string): void {
-    const point = this.getMousePosition(e);
+  private handleMouseMove(e: MouseEvent, at: DocPoint): void {
+    const point: Point = at;
+    const pageId = at.pageId;
+
 
     // Emit mouse position for external controls (rulers)
     const viewportPos = this.getViewportMousePosition(e);
@@ -797,7 +818,7 @@ export class CanvasManager extends EventEmitter {
     // Handle text selection in text box
     if (this.isSelectingTextInTextBox && this.editingTextBox && this._editingTextBoxPageId === pageId) {
       const textBox = this.editingTextBox;
-      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const pageIndex = at.pageIndex;
       const ctx = this.contexts.get(pageId);
       if (ctx && pageIndex >= 0) {
         // Update cursor position (selection extends from anchor)
@@ -814,7 +835,7 @@ export class CanvasManager extends EventEmitter {
       if (table.focusedCell) {
         const cell = table.getCell(table.focusedCell.row, table.focusedCell.col);
         if (cell) {
-          const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+          const pageIndex = at.pageIndex;
           const ctx = this.contexts.get(pageId);
           if (ctx && pageIndex >= 0) {
             // Update cursor position (selection extends from anchor)
@@ -831,7 +852,7 @@ export class CanvasManager extends EventEmitter {
     if (this.isSelectingText && this.textSelectionStartPageId) {
       const region = this.getRegionForActiveSection();
       const ctx = this.contexts.get(pageId);
-      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const pageIndex = at.pageIndex;
 
       if (region && ctx && pageIndex >= 0) {
         const result = this.flowingTextRenderer.handleRegionClick(region, point, pageIndex, ctx);
@@ -876,7 +897,7 @@ export class CanvasManager extends EventEmitter {
     // Handle table cell selection drag
     if (this.isSelectingTableCells && this.tableCellSelectionStart && this.tableCellSelectionTable) {
       const table = this.tableCellSelectionTable;
-      const currentPageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const currentPageIndex = at.pageIndex;
 
       // Single page-qualified point-in-table authority (handles slices)
       const localPoint = table.getLocalPointInSlice(currentPageIndex, point);
@@ -952,7 +973,7 @@ export class CanvasManager extends EventEmitter {
     this.updateCursor(point, pageId);
   }
 
-  private handleMouseUp(_e: MouseEvent, _pageId: string): void {
+  private handleMouseUp(_e: MouseEvent, _at: DocPoint): void {
     // Finalize text selection in text box
     if (this.isSelectingTextInTextBox) {
       this.isSelectingTextInTextBox = false;
@@ -1035,7 +1056,7 @@ export class CanvasManager extends EventEmitter {
     this.resizingElementId = null;
   }
 
-  private handleMouseLeave(_e: MouseEvent, _pageId: string): void {
+  private handleMouseLeave(_e: MouseEvent, at: DocPoint): void {
     // Emit mouse leave for external controls (rulers)
     this.emit('mouse-leave');
 
@@ -1087,13 +1108,16 @@ export class CanvasManager extends EventEmitter {
     this.resizeStartPos = null;
 
     // Reset cursor since we're no longer hovering
-    const canvas = this.canvases.get(_pageId);
+    const canvas = this.canvases.get(at.pageId);
     if (canvas) {
       canvas.style.cursor = 'default';
     }
   }
 
-  private handleClick(e: MouseEvent, pageId: string): void {
+  private handleClick(_e: MouseEvent, at: DocPoint): void {
+    const point: Point = at;
+    const pageId = at.pageId;
+
     // Skip click handling if we just finished resizing - don't clear the selection
     if (this.wasResizing) {
       this.wasResizing = false;
@@ -1104,7 +1128,6 @@ export class CanvasManager extends EventEmitter {
       return;
     }
 
-    const point = this.getMousePosition(e);
     const now = Date.now();
 
     // Check for multi-click sequence (double-click, triple-click)
@@ -1128,17 +1151,17 @@ export class CanvasManager extends EventEmitter {
 
     // Handle multi-click actions
     if (newClickCount === 2) {
-      this.handleDoubleClick(point, pageId);
+      this.handleDoubleClick(at);
       return;
     } else if (newClickCount === 3) {
-      this.handleTripleClick(point, pageId);
+      this.handleTripleClick(at);
       return;
     }
 
     // Handle focused table - clicks inside are handled by mousedown
     if (this._focusedControl instanceof TableObject) {
       const table = this._focusedControl;
-      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const pageIndex = at.pageIndex;
 
       // Single page-qualified point-in-table authority (handles slices)
       const isInsideTable = table.getLocalPointInSlice(pageIndex, point) !== null;
@@ -1200,7 +1223,7 @@ export class CanvasManager extends EventEmitter {
     }
 
     // Check if we clicked on an embedded object using HitTestManager
-    const clickedPageIndex = this.document.pages.findIndex(p => p.id === pageId);
+    const clickedPageIndex = at.pageIndex;
     const hitTestManager = this.flowingTextRenderer.hitTestManager;
     const embeddedObjectHit = hitTestManager.queryByType(clickedPageIndex, point, 'embedded-object');
 
@@ -1228,7 +1251,7 @@ export class CanvasManager extends EventEmitter {
     if (bodyFlowingContent) {
       const sections = bodyFlowingContent.getRepeatingSections();
       if (sections.length > 0 && page) {
-        const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+        const pageIndex = at.pageIndex;
         const flowedPages = this.flowingTextRenderer.getFlowedPagesForPage(this.document.pages[0].id);
         if (flowedPages && flowedPages[pageIndex]) {
           const contentBounds = page.getContentBounds();
@@ -1265,7 +1288,7 @@ export class CanvasManager extends EventEmitter {
     if (bodyFlowingContent) {
       const condSections = bodyFlowingContent.getConditionalSections();
       if (condSections.length > 0 && page) {
-        const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+        const pageIndex = at.pageIndex;
         const flowedPages = this.flowingTextRenderer.getFlowedPagesForPage(this.document.pages[0].id);
         if (flowedPages && flowedPages[pageIndex]) {
           const contentBounds = page.getContentBounds();
@@ -1299,7 +1322,7 @@ export class CanvasManager extends EventEmitter {
     }
 
     // Check if we clicked on a table row loop label
-    const clickedPageIdx = this.document.pages.findIndex(p => p.id === pageId);
+    const clickedPageIdx = at.pageIndex;
     const bodyContent = this.document.bodyFlowingContent;
     if (bodyContent) {
       const embeddedObjects = bodyContent.getEmbeddedObjects();
@@ -1333,7 +1356,7 @@ export class CanvasManager extends EventEmitter {
 
     // If no regular element was clicked, try flowing text using unified region click handler
     const ctx = this.contexts.get(pageId);
-    const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+    const pageIndex = at.pageIndex;
 
     if (ctx && pageIndex >= 0 && page) {
       // Detect which section was clicked and update active section
@@ -2328,14 +2351,17 @@ export class CanvasManager extends EventEmitter {
   /**
    * Handle double-click to select word or enter text box/table editing.
    */
-  private handleDoubleClick(point: Point, pageId: string): void {
+  private handleDoubleClick(at: DocPoint): void {
+    const point: Point = at;
+    const pageId = at.pageId;
+
     const page = this.document.getPage(pageId);
     if (!page) return;
 
     // If already editing a text box, select word at click position
     if (this.editingTextBox) {
       const textBox = this.editingTextBox;
-      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const pageIndex = at.pageIndex;
       const ctx = this.contexts.get(pageId);
 
       if (textBox.containsPointInRegion(point, pageIndex) && ctx && pageIndex >= 0) {
@@ -2350,7 +2376,7 @@ export class CanvasManager extends EventEmitter {
     // If focused on a table cell, select word at click position
     if (this._focusedControl instanceof TableObject) {
       const table = this._focusedControl;
-      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const pageIndex = at.pageIndex;
       const ctx = this.contexts.get(pageId);
 
       if (table.focusedCell && ctx && pageIndex >= 0) {
@@ -2370,7 +2396,7 @@ export class CanvasManager extends EventEmitter {
 
     if (flowingContent) {
       const embeddedObjects = flowingContent.getEmbeddedObjects();
-      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const pageIndex = at.pageIndex;
       for (const [, obj] of embeddedObjects.entries()) {
         if (obj instanceof TextBoxObject && obj.renderedPosition) {
           // Check if point is inside the text box using region interface
@@ -2436,7 +2462,7 @@ export class CanvasManager extends EventEmitter {
     // If clicking in header/footer, also handle text click using unified handler
     if (targetSection === 'header' || targetSection === 'footer') {
       const ctx = this.contexts.get(pageId);
-      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const pageIndex = at.pageIndex;
       const region = targetSection === 'header'
         ? this.regionManager.getHeaderRegion()
         : this.regionManager.getFooterRegion();
@@ -2455,7 +2481,7 @@ export class CanvasManager extends EventEmitter {
     if (activeFlowingContent) {
       // Position cursor at click point first
       const ctx = this.contexts.get(pageId);
-      const pageIndex = this.document.pages.findIndex(p => p.id === pageId);
+      const pageIndex = at.pageIndex;
       const region = this.getRegionForActiveSection();
 
       if (ctx && pageIndex >= 0 && region) {
@@ -2475,7 +2501,7 @@ export class CanvasManager extends EventEmitter {
   /**
    * Handle triple-click to select paragraph.
    */
-  private handleTripleClick(_point: Point, _pageId: string): void {
+  private handleTripleClick(_at: DocPoint): void {
     // Handle text box editing - select paragraph in text box
     if (this.editingTextBox) {
       this.editingTextBox.flowingContent.selectParagraph();
